@@ -1,4 +1,6 @@
-# JonnyBot ("RuneClan Bot")
+# RuneClan Bot (repo RuneClan-Bot; formerly JonnyBot)
+
+The jar (`JonnyBot.jar`) and some code identifiers still use the old name; product text says RuneClan Bot.
 
 A Java 21 + Maven Discord bot (JDA + BotCommands) with an internal HTTP API that the RuneClans website calls. Branch from `dev` and open PRs into `dev`; `master` is the production deploy.
 
