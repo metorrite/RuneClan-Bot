@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Without this file logback logs everything at DEBUG (its built-in default), which put HikariCP pool chatter and JDA request traces in
+  the production log (T-836). INFO keeps the bot's own messages; the dev snapshot buffer (devtools/SnapshotLogBuffer) only keeps WARN+
+  anyway. The pattern is logback's default one, so log lines look as they did.
+-->
+<configuration>
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="INFO">
+    <appender-ref ref="CONSOLE" />
+  </root>
+</configuration>

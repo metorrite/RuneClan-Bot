@@ -15,13 +15,19 @@ import java.time.Duration;
 @BService
 public class DatabaseSource implements ConnectionSupplier {
 
+    /**
+     * Connections to the bot database. Five ran out during a single website page load once the bot also served hub work (T-836: the live
+     * log showed all five busy with threads waiting); ten leaves room while staying far below Postgres' default limit of 100.
+     */
+    static final int POOL_SIZE = 10;
+
     private final HikariDataSource dataSource;
     private final java.util.concurrent.atomic.LongAdder waitNanos = new java.util.concurrent.atomic.LongAdder();
     private final java.util.concurrent.atomic.LongAdder borrows = new java.util.concurrent.atomic.LongAdder();
 
     public DatabaseSource(BotConfig botConfig) {
         HikariConfig hikariConfig = createHikariConfig(botConfig.getDatabaseUrl());
-        hikariConfig.setMaximumPoolSize(5);
+        hikariConfig.setMaximumPoolSize(POOL_SIZE);
 
         this.dataSource = new HikariDataSource(hikariConfig);
     }
@@ -33,7 +39,7 @@ public class DatabaseSource implements ConnectionSupplier {
 
     @Override
     public int getMaxConnections() {
-        return 5;
+        return POOL_SIZE;
     }
 
     @Override
