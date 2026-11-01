@@ -30,7 +30,7 @@ class PlayerLinkServiceAccountsTest {
     @BeforeEach
     void setUp() {
         repository = mock(PlayerLinkRepository.class);
-        service = new PlayerLinkService(repository);
+        service = new PlayerLinkService(repository, HubLinkSync.off());
     }
 
     private static PlayerLink link(long linkId, long guildId, long userId, String rsn) {

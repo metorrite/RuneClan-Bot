@@ -244,6 +244,7 @@ has more than one replica).
 | `command-usage` | `commandusage/CommandUsageListener` | every process (flushes add up) |
 | `phishing-list` | `automod/PhishingList` | every process (each needs the list) |
 | `debouncer`, `site-invalidator` | `internal/Debouncer`, `internal/SiteInvalidator` | every process (local batching) |
+| `hub-link-sync` | `runescape/HubLinkSync` | every process (sends the link changes it made to the hub; the daily catch-up is idempotent adds, T-839) |
 | `hub-member-privacy` | `member/HubMemberPrivacy` | every process (sends the member privacy changes it saved to the hub, T-750) |
 | `panel-switches` | `runeclans/PanelSwitches` | every process (reads the Switches panel from the hub every 30 seconds for its own switches, T-817) |
 | `job-heartbeat` | `jobs/JobRepository` | every process (keeps that process's own running dashboard jobs alive, T-698) |
