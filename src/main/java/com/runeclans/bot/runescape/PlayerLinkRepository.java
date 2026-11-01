@@ -417,6 +417,20 @@ public class PlayerLinkRepository {
         }
     }
 
+    /** Every account registered with the bot, in any server, oldest first: what the hub link catch-up sends (T-839). */
+    public List<PlayerAccount> getAllAccounts() {
+        List<PlayerAccount> results = new ArrayList<>();
+        try (Connection connection = connectionSupplier.getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT " + ACCOUNT_COLUMNS + " FROM younglings.player_account ORDER BY verified_at, account_id");
+             ResultSet rs = statement.executeQuery()) {
+            while (rs.next()) results.add(mapAccount(rs));
+            return results;
+        } catch (SQLException e) {
+            log.error("Failed to list the registered accounts", e);
+            throw new RuntimeException("Failed to list registered accounts", e);
+        }
+    }
+
     /** Every account registered to this Discord user, whichever server it was registered in. */
     public List<PlayerAccount> getAccountsForUser(long discordUserId) {
         String sql = "SELECT " + ACCOUNT_COLUMNS + " FROM younglings.player_account WHERE discord_user_id = ? ORDER BY verified_at ASC";

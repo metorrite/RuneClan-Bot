@@ -90,6 +90,7 @@ public final class LaneOwners {
             Map.entry("phishing-list", Owner.EVERY),
             Map.entry("debouncer", Owner.EVERY),
             Map.entry("site-invalidator", Owner.EVERY),
+            Map.entry("hub-link-sync", Owner.EVERY), // the link changes this process made, on to the hub, and the catch-up (idempotent adds, T-839)
             Map.entry("hub-member-privacy", Owner.EVERY), // the member privacy changes this process saved, on to the hub (T-750)
             Map.entry("panel-switches", Owner.EVERY), // this process's read of the website's Switches panel from the hub (T-817)
             // the league reporter sends a finished clan-vs-clan event's result to the hub from the process that finished it (T-759)

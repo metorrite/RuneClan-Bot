@@ -19,9 +19,20 @@ public class PlayerLinkService {
     public static final Duration SELF_POLL_COOLDOWN = Duration.ofMinutes(30);
 
     private final PlayerLinkRepository repository;
+    /** The bot's links in the RuneClans hub (T-839): told after each change commits, sends on its own lane, a no-op while its switch is off. */
+    private final HubLinkSync hubLinks;
 
-    public PlayerLinkService(PlayerLinkRepository repository) {
+    public PlayerLinkService(PlayerLinkRepository repository, HubLinkSync hubLinks) {
         this.repository = repository;
+        this.hubLinks = hubLinks;
+    }
+
+    /** {@link PlayerLinkRepository#createLink}, then the hub told: the name's previous owner (staff moving it) loses it there too. */
+    private void createLink(long guildId, long discordUserId, String rsn, String method) {
+        PlayerLinkRepository.PlayerAccount before = repository.getAccountForRsn(rsn);
+        repository.createLink(guildId, discordUserId, rsn, method);
+        if (before != null && before.discordUserId() != discordUserId) hubLinks.unlinked(before.discordUserId(), before.rsn());
+        hubLinks.linked(discordUserId, rsn);
     }
 
     /** Starts a new verification attempt with a freshly-randomized appearance to apply in-game. */
@@ -91,7 +102,7 @@ public class PlayerLinkService {
         VerificationAttempt attempt = repository.getAttempt(attemptId);
         if (attempt == null || !"PENDING".equals(attempt.status())) return false;
 
-        repository.createLink(attempt.guildId(), attempt.discordUserId(), attempt.rsn(), METHOD_MAKEOVER_MAGE);
+        createLink(attempt.guildId(), attempt.discordUserId(), attempt.rsn(), METHOD_MAKEOVER_MAGE);
         repository.resolveAttempt(attemptId, "APPROVED", resolvedByUserId);
         log.info("Verification attempt {} approved by {} — linked '{}' to {}",
                 attemptId, resolvedByUserId, attempt.rsn(), attempt.discordUserId());
@@ -115,7 +126,7 @@ public class PlayerLinkService {
      * {@code ON CONFLICT}).
      */
     public void manualLink(long guildId, long discordUserId, String rsn, long adminUserId) throws PlayerLinkRepository.RsnTakenException {
-        repository.createLink(guildId, discordUserId, rsn, METHOD_ADMIN_MANUAL);
+        createLink(guildId, discordUserId, rsn, METHOD_ADMIN_MANUAL);
         log.info("RSN '{}' manually linked to {} by admin {}", rsn, discordUserId, adminUserId);
     }
 
@@ -125,7 +136,12 @@ public class PlayerLinkService {
      * this keeps the same {@code link_id} and doesn't touch verification method/timestamp.
      */
     public void renameLink(long guildId, long linkId, String newRsn) {
+        PlayerLink before = repository.getAllLinks(guildId).stream().filter(l -> l.linkId() == linkId).findFirst().orElse(null);
         repository.updateRsn(guildId, linkId, newRsn);
+        if (before != null && !before.rsn().equals(newRsn)) {
+            hubLinks.unlinked(before.discordUserId(), before.rsn());
+            hubLinks.renamedTo(before.discordUserId(), newRsn);
+        }
     }
 
     public List<PlayerLink> getLinksForUser(long guildId, long discordUserId) {
@@ -181,10 +197,11 @@ public class PlayerLinkService {
      */
     public boolean unlink(long guildId, long discordUserId, long linkId) {
         List<PlayerLink> links = repository.getLinksForUser(guildId, discordUserId);
-        boolean owns = links.stream().anyMatch(link -> link.linkId() == linkId);
-        if (!owns) return false;
+        PlayerLink owned = links.stream().filter(link -> link.linkId() == linkId).findFirst().orElse(null);
+        if (owned == null) return false;
 
         repository.deleteAccount(guildId, linkId);
+        hubLinks.unlinked(discordUserId, owned.rsn());
         return true;
     }
 
