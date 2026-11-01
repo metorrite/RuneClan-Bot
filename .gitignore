@@ -45,7 +45,9 @@ build/
 .env
 application.properties
 *.log
-/.claude/
+# local Claude settings stay out; the shared review agents in .claude/agents/ are committed
+/.claude/*
+!/.claude/agents/
 
 # Written by /devexportmembers — real Discord usernames/display names, local only.
 /discord_members_export.csv
