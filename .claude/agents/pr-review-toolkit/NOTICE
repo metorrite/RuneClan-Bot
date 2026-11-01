@@ -1,0 +1,20 @@
+PR Review Toolkit agents (vendored copy)
+
+Source:   https://github.com/anthropics/claude-plugins-official
+Path:     plugins/pr-review-toolkit/agents/
+Plugin:   pr-review-toolkit 1.0.1 (Anthropic)
+Pinned:   commit a7ba5b93db0c7c8d17f3f1d25853adca79598a1a (2026-10-30)
+Licence:  Apache License 2.0, full text in LICENSE next to this file.
+
+The five agent files here are byte-for-byte copies of the upstream files, not modified:
+code-reviewer.md, pr-test-analyzer.md, silent-failure-hunter.md, comment-analyzer.md,
+type-design-analyzer.md. code-simplifier.md is left out on purpose because it edits code,
+and reviews here are read-only.
+
+Why they are copied: plugins are not installed in cloud sessions, but agent files in a
+repository's .claude/agents/ folder are (subfolders included), so any session in this
+repository can start them as subagents by name.
+
+To update: copy the same five files and LICENSE from a newer upstream commit, keep them
+unmodified, change the commit and version above, and keep this folder identical in every
+repository that carries it.
