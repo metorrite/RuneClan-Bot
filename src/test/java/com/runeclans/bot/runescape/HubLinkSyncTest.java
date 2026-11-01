@@ -109,21 +109,31 @@ class HubLinkSyncTest {
     }
 
     @Test
-    void theCatchUpAddsWhatTheHubLacksAndEndsWhatTheBotDropped() {
+    void theCatchUpOnlyAddsAndNeverEnds() {
         accounts.add(account(ALICE, "Zezima"));
-        accounts.add(account(BOB, "Durial"));
-        hubLinks.add(hubLink(ALICE, "zezima"));
-        hubLinks.add(hubLink(BOB, "Bandos"));
-        sync().round();
-        assertEquals(2, posts.size());
+        HubLinkSync sync = sync();
+        sync.round();
+        assertEquals(1, posts.size());
         List<DataObject> adds = items(posts.get(0));
-        assertEquals(1, adds.size(), "Zezima is already in the hub");
-        assertEquals("Durial", adds.get(0).getString("rsn"));
+        assertEquals("add", adds.get(0).getString("op"));
         assertFalse(adds.get(0).hasKey("fresh"), "a catch-up never lifts a player's unlink");
         assertEquals("2026-09-01T10:00Z", adds.get(0).getString("linkedAt"));
-        List<DataObject> ends = items(posts.get(1));
-        assertEquals("end", ends.get(0).getString("op"));
-        assertEquals("Bandos", ends.get(0).getString("rsn"));
+        assertEquals(0, gets.get(), "it doesn't read the hub's links, so it can't end any");
+        // an empty account table sends nothing at all
+        accounts.clear();
+        now.set(now.get().plus(Duration.ofHours(25)));
+        sync.round();
+        assertEquals(1, posts.size());
+    }
+
+    @Test
+    void namesKeyLikeTheHub() {
+        assertEquals("zezima the 2nd", HubLinkSync.nameKey("\u00a0Zezima  The_2nd "));
+        HubLinkSync sync = sync();
+        postStatus.set(503);
+        sync.linked(ALICE, "Zezima The-2nd");
+        sync.unlinked(ALICE, "zezima\u00a0the_2nd");
+        assertEquals(1, sync.held(), "one name, as the hub sees it");
     }
 
     @Test
@@ -143,15 +153,15 @@ class HubLinkSyncTest {
     @Test
     void aCatchUpThatCantReachTheHubWaitsBeforeTryingAgain() {
         accounts.add(account(ALICE, "Zezima"));
-        getStatus.set(503);
+        postStatus.set(503);
         HubLinkSync sync = sync();
         sync.round();
         sync.round();
-        assertEquals(1, gets.get(), "not every 30 seconds");
-        getStatus.set(200);
+        assertEquals(1, posts.size(), "not every 30 seconds");
+        postStatus.set(200);
         now.set(now.get().plus(HubLinkSync.CATCH_UP_RETRY));
         sync.round();
-        assertEquals(1, posts.size());
+        assertEquals(2, posts.size());
     }
 
     @Test

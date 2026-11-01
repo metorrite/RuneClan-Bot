@@ -16,12 +16,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -37,9 +35,10 @@ import java.util.function.Supplier;
  *   <li>every link the bot makes, renames or unlinks is sent to the hub's {@code POST /v1/link/bot}, on its own lane, never in a Discord
  *       interaction or a website request. The hub keeps them as trust-only links and never lets one take a name another account holds,
  *       nor brings back one the player removed themself (a new link made in the bot, sent {@code fresh}, is their new choice).</li>
- *   <li>the catch-up, once after the switch comes on (or the bot starts) and then daily, makes the hub match the bot: it reads the hub's
- *       bot links ({@code GET /v1/link/bot}), adds every account the hub lacks and ends every bot link the bot no longer has. That copies
- *       the existing links the first time and heals any change lost to a restart or made while the switch was off.</li>
+ *   <li>the catch-up, once after the switch comes on (or the bot starts) and then daily, sends every account the bot has as an
+ *       {@code add}. It only adds (a no-op for links the hub already has): that copies the existing links the first time and heals an add
+ *       lost to a restart. It never ends a link; only an explicit unlink does, so a held unlink lost to a restart stays in the hub until the
+ *       player unlinks there or staff remove it on RuneClan Admin &gt; RuneLink.</li>
  * </ul>
  * Off, nothing is written: changes are still held (so an unlink made meanwhile goes out when the switch comes on), and the catch-up runs
  * once as a dry run (the hub counts what it would do and writes nothing) whose counts are logged, so the copy can be checked before the
@@ -172,7 +171,7 @@ public class HubLinkSync {
                 }
                 return;
             }
-            flush(); // first, so a held unlink reaches the hub before the catch-up compares
+            flush();
             Instant last;
             synchronized (this) {
                 last = caughtUpAt;
@@ -192,46 +191,22 @@ public class HubLinkSync {
     }
 
     /**
-     * Makes the hub match the bot ({@code dryRun}: the hub writes nothing and the ends are only counted). Reads the hub's bot links first and
-     * the bot's accounts after, so an account linked in between is never taken for one the bot dropped. Returns the hub's counts added up
-     * (plus {@code toEnd}, the bot links the bot no longer has), or null when the hub couldn't be reached (tried again later). A batch the
-     * hub refuses is skipped and logged. Logs counts only, never ids or names.
+     * Sends every account the bot has as an {@code add}, in batches ({@code dryRun}: the hub writes nothing). Only adds, never ends: a
+     * bot link ends only through an explicit unlink the bot made, so an empty or wrong account table, or another bot using the same key, can
+     * never end anyone's link. Adding is a no-op for a link the hub already has, and the hub never brings back one the player removed.
+     * Returns the hub's counts added up, or null when the hub couldn't be reached (tried again later); a refused batch is skipped and
+     * logged. Logs counts only, never ids or names.
      */
     DataObject catchUp(boolean dryRun) {
-        RuneClansHubClient.Answer listed = send("GET", null);
-        if (!usable(listed) || !listed.json().hasKey("links")) {
-            log.warn("Link catch-up{} couldn't read the hub's bot links ({}); trying again later.", dryRun ? " (dry run)" : "", describe(listed));
-            return null;
-        }
-        Set<String> inHub = new HashSet<>();
-        Map<String, Change> hubOnly = new LinkedHashMap<>();
-        DataArray links = listed.json().getArray("links");
-        for (int i = 0; i < links.length(); i++) {
-            DataObject l = links.getObject(i);
-            long id;
-            try {
-                id = Long.parseLong(l.getString("discordId", ""));
-            } catch (NumberFormatException e) {
-                continue;
-            }
-            String key = id + "|" + nameKey(l.getString("rsn", ""));
-            inHub.add(key);
-            hubOnly.put(key, new Change("end", id, l.getString("rsn", ""), null, false));
-        }
         List<Change> adds = new ArrayList<>();
         for (PlayerAccount a : accounts.get()) {
-            String key = a.discordUserId() + "|" + nameKey(a.rsn());
-            hubOnly.remove(key);
-            if (!inHub.contains(key)) adds.add(new Change("add", a.discordUserId(), a.rsn(), a.verifiedAt() == null ? null : a.verifiedAt().toString(), false));
+            adds.add(new Change("add", a.discordUserId(), a.rsn(), a.verifiedAt() == null ? null : a.verifiedAt().toString(), false));
         }
         Map<String, Integer> totals = new LinkedHashMap<>();
         if (!sendAll(adds, dryRun, totals)) return null;
-        totals.put("toEnd", hubOnly.size());
-        if (!dryRun && !sendAll(new ArrayList<>(hubOnly.values()), false, totals)) return null;
         DataObject out = DataObject.empty();
         totals.forEach(out::put);
-        log.info("Link catch-up{}: {} already in the hub, {} sent to add, {} bot links the bot no longer has; hub counts {}",
-                dryRun ? " (dry run, nothing written)" : "", inHub.size(), adds.size(), hubOnly.size(), out);
+        log.info("Link catch-up{}: {} accounts sent; hub counts {}", dryRun ? " (dry run, nothing written)" : "", adds.size(), out);
         return out;
     }
 
@@ -292,9 +267,10 @@ public class HubLinkSync {
         return a == null ? "no answer" : String.valueOf(a.status());
     }
 
-    /** How the hub matches names: lower case, with space, _ and - alike. */
+    /** How the hub matches names ({@code LinkCodes.normaliseRsn} then {@code rsnLookup}): spaces tidied, then lower case with _ and - as spaces. */
     static String nameKey(String rsn) {
-        return rsn.strip().toLowerCase(Locale.ROOT).replace('_', ' ').replace('-', ' ');
+        String tidy = rsn.replace('\u00a0', ' ').strip().replaceAll("\\s+", " ");
+        return tidy.toLowerCase(Locale.ROOT).replace('_', ' ').replace('-', ' ');
     }
 
     private RuneClansHubClient.Answer post(List<Change> changes, boolean dryRun) {
