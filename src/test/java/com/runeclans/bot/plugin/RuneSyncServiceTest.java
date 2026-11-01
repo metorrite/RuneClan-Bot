@@ -49,8 +49,10 @@ class RuneSyncServiceTest {
     void thePanelIsAvailableWhenOneOfTheMembersClansAllowsIt() {
         when(panel.available(USER)).thenReturn(true);
         assertTrue(service.config(USER).getBoolean("panelAvailable"));
+        when(panel.available(USER)).thenReturn(null);
+        assertTrue(service.config(USER).isNull("panelAvailable"), "T-812: Discord too slow to say: unknown, never \"not allowed\"");
         when(panel.available(USER)).thenThrow(new RuntimeException("db down"));
-        assertFalse(service.config(USER).getBoolean("panelAvailable"));
+        assertTrue(service.config(USER).isNull("panelAvailable"), "a failure is unknown too");
     }
 
     @Test

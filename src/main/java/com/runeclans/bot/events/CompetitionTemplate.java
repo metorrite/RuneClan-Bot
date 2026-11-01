@@ -52,6 +52,9 @@ public class CompetitionTemplate implements EventTemplate {
         return KEY;
     }
 
+    /** Whether "Count confirmed links only" is offered (T-552). Off while linking is code-only on trust (T-815). */
+    static final boolean CONFIRMED_LINKS_OFFERED = false;
+
     @Override
     public java.util.Set<String> fixedSettings() {
         return java.util.Set.of("skillId", "xpPerPoint", "xpSource", "confirmedLinksOnly", "wholeSpan");
@@ -83,7 +86,9 @@ public class CompetitionTemplate implements EventTemplate {
                             + "else from RuneMetrics. It can't be changed once the event exists.", EventOptions.Step.RULES, SOURCE_RUNEMETRICS,
                     List.of(new EventOptions.Choice(SOURCE_RUNEMETRICS, "RuneMetrics (public profiles)"), new EventOptions.Choice(SOURCE_PLUGIN, "RuneSync plugin"),
                             new EventOptions.Choice(SOURCE_AUTO, "Auto (RuneSync where players run it, else RuneMetrics)"))));
-            list.add(EventOptions.Option.of("config.confirmedLinksOnly", "Count confirmed links only", "Only players whose RuneLink the RuneClans hub has confirmed from "
+            // PARKED (T-815, Drake 2026-10-30): RuneLink links are taken on trust, so none is ever confirmed and this option would leave
+            // everyone out. Events that already have it keep it (PluginXpTracker still honours it).
+            if (CONFIRMED_LINKS_OFFERED) list.add(EventOptions.Option.of("config.confirmedLinksOnly", "Count confirmed links only", "Only players whose RuneLink the RuneClans hub has confirmed from "
                             + "public data score. The others are listed as not confirmed yet. It can't be changed once the event exists.", EventOptions.Step.RULES,
                     EventOptions.Type.BOOL, false).showWhen(EventOptions.When.is("config.xpSource", SOURCE_PLUGIN)));
         }

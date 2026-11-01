@@ -1,6 +1,7 @@
 package com.runeclans.bot.hubsites;
 
 import com.runeclans.bot.config.BotConfig;
+import com.runeclans.bot.runeclans.PanelSwitches;
 import com.runeclans.bot.runeclans.RuneClansHubClient;
 import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -14,7 +15,9 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Where clan sites live (runeclans-hub PHASE-2-SITES, T-505): {@code SITES_BACKEND=bot} (the default) keeps everything on the bot exactly as
@@ -23,13 +26,19 @@ import java.util.function.Function;
  * mappings keyed by the hub's site id ({@link SiteChannelMappings}), reports who holds the roles a site's rules follow
  * ({@link HubSiteReporter}), and its own site write routes answer "moved" ({@link SitesMoved}).
  * <p>
- * The switch flips only in the move run (D-18). Reading from the hub also needs the hub client ({@code RUNECLANS_HUB_ENABLED}); without it
+ * The switch is "Clan sites backend" on RuneClan Admin > Switches (T-817), read on every call; {@code SITES_BACKEND} on the bot's Railway
+ * service still wins while it is {@code bot} or {@code hub}. It flips only after the move run (D-18). Reading from the hub also needs the hub client ({@code RUNECLANS_HUB_ENABLED}); without it
  * the bot keeps reading its own tables, but its site writes still answer "moved", because the hub is then the one writer.
  */
 @BConfiguration
 public class HubSites {
     private static final Logger log = LoggerFactory.getLogger(HubSites.class);
     public static final String SETTING_ENV = "SITES_BACKEND";
+    /** The choice on RuneClan Admin > Switches (runeclans-hub {@code SwitchCatalogue.SITES_BACKEND}, T-817) and its two values. */
+    public static final String SWITCH_ID = "sites-backend";
+    static final String BOT = "bot";
+    static final String HUB = "hub";
+    static final java.util.List<String> BACKENDS = java.util.List.of(BOT, HUB);
     static final Duration FRESH = Duration.ofMinutes(10);
     /** The cache tag of every site answer; a hub {@code site.*} change empties them all (a bot is in few servers). */
     public static final String TAG = "sites";
@@ -53,35 +62,38 @@ public class HubSites {
         static final Lookup UNKNOWN = new Lookup(Status.UNKNOWN, null);
     }
 
-    private final boolean switchOn;
+    /** The switch: {@code SITES_BACKEND} on Railway while it is bot or hub, else the panel's {@code sites-backend} (PanelSwitches). */
+    private final BooleanSupplier switchOn;
     /** A cached hub read ({@link RuneClansHubClient#read}); null when the hub client is off. */
     private final Function<String, RuneClansHubClient.Read> hub;
 
     /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it. */
     @BService
-    public static HubSites hubSites(BotConfig config, RuneClansHubClient client) {
-        boolean on = switchOn(config.getSitesBackend());
+    public static HubSites hubSites(BotConfig config, RuneClansHubClient client, PanelSwitches panel) {
+        String railway = config.getSitesBackend();
+        boolean on = switchOn(railway);
         if (on && !client.enabled()) {
             log.warn("{}=hub but the hub client is off (RUNECLANS_HUB_ENABLED): site writes answer moved, and site reads stay on the bot's own tables.", SETTING_ENV);
         } else if (on) {
             log.info("Clan sites come from the RuneClans hub ({}=hub).", SETTING_ENV);
         }
-        return new HubSites(on, client.enabled() ? path -> client.read(path, FRESH, TAG) : null);
+        Supplier<String> backend = panel.choice(SWITCH_ID, railway, BACKENDS, BOT);
+        return new HubSites(() -> HUB.equals(backend.get()), client.enabled() ? path -> client.read(path, FRESH, TAG) : null);
     }
 
-    HubSites(boolean switchOn, Function<String, RuneClansHubClient.Read> hub) {
+    HubSites(BooleanSupplier switchOn, Function<String, RuneClansHubClient.Read> hub) {
         this.switchOn = switchOn;
         this.hub = hub;
     }
 
     /** {@code SITES_BACKEND=bot}: everything as before (for tests and callers that have no switch). */
     public static HubSites off() {
-        return new HubSites(false, null);
+        return new HubSites(() -> false, null);
     }
 
     /** {@code SITES_BACKEND=hub} with a stub hub (for tests); a null {@code hub} is the hub client being off. */
     public static HubSites on(Function<String, RuneClansHubClient.Read> hub) {
-        return new HubSites(true, hub);
+        return new HubSites(() -> true, hub);
     }
 
     static boolean switchOn(String raw) {
@@ -90,12 +102,12 @@ public class HubSites {
 
     /** {@code SITES_BACKEND=hub}: the hub owns the sites, so the bot's site write routes answer "moved". */
     public boolean movedToHub() {
-        return switchOn;
+        return switchOn.getAsBoolean();
     }
 
     /** {@code SITES_BACKEND=hub} and the hub client on: site lookups go to the hub. */
     public boolean readsHub() {
-        return switchOn && hub != null;
+        return hub != null && switchOn.getAsBoolean();
     }
 
     /** {@code GET /v1/guilds/{guildId}/site}. A cached copy is used while the hub is down (up to 15 minutes). */

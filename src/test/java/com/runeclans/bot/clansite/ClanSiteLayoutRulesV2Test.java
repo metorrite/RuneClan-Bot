@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -754,5 +755,72 @@ class ClanSiteLayoutRulesV2Test {
         DataObject v3 = good().put("v", 3);
         assertTrue(has(problems(v3), "another version"));
         assertNull(ClanSiteLayoutRules.clean(null, ClanSiteLayoutRulesV2.Limits.PREMIUM, new ArrayList<>()));
+    }
+    // ---------- site type (plan C-9) ----------
+
+    @Test
+    void clanOnlyListMatchesTheWebsite() throws Exception {
+        URL file = ClanSiteLayoutRulesV2Test.class.getResource("/builder-v3/kinds/clan-only.json");
+        assertNotNull(file, "the builder-v3/kinds/clan-only.json fixture is on the test classpath");
+        DataArray list = DataArray.fromJson(Files.readString(Path.of(file.toURI()), StandardCharsets.UTF_8));
+        Set<String> website = new java.util.HashSet<>();
+        for (int i = 0; i < list.length(); i++) website.add(list.getString(i));
+        assertEquals(website, ClanSiteLayoutRulesV2.CLAN_ONLY_WIDGETS, "copy packages/builder/tests/fixtures/kinds/clan-only.json and update CLAN_ONLY_WIDGETS");
+    }
+
+    @Test
+    void communitySitesRefuseClanOnlyWidgets() throws Exception {
+        Path fullFeatures = fixtures("v2").stream().filter(p -> p.getFileName().toString().equals("full-features.json")).findFirst().orElseThrow();
+        DataObject layout = DataObject.fromJson(Files.readString(fullFeatures, StandardCharsets.UTF_8));
+        // a clan website, or one with no type (every site before plan C-9), takes the roster
+        assertNotNull(ClanSiteLayoutRules.clean(layout, ClanSiteLayoutRulesV2.Limits.PREMIUM, "clan", new ArrayList<>()));
+        assertNotNull(ClanSiteLayoutRules.clean(layout, ClanSiteLayoutRulesV2.Limits.PREMIUM, null, new ArrayList<>()));
+        List<String> problems = new ArrayList<>();
+        assertNull(ClanSiteLayoutRules.clean(layout, ClanSiteLayoutRulesV2.Limits.PREMIUM, "community", problems));
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).endsWith("has a clan-only widget. Community websites have no clan roster or stats: remove it."), problems.get(0));
+        // without its clan-only widgets the same layout is a good community layout, stored as for a clan
+        List<String> removed = new ArrayList<>();
+        DataObject community = ClanSiteLayoutRulesV2.withoutClanOnly(layout, removed);
+        assertEquals(1, removed.size(), removed.toString());
+        assertNull(ClanSiteLayoutRules.clean(layout, ClanSiteLayoutRulesV2.Limits.PREMIUM, "community", new ArrayList<>()), "the original still holds it");
+        String clean = ClanSiteLayoutRules.clean(community, ClanSiteLayoutRulesV2.Limits.PREMIUM, "community", new ArrayList<>());
+        assertNotNull(clean);
+        assertEquals(ClanSiteLayoutRules.clean(community, ClanSiteLayoutRulesV2.Limits.PREMIUM, "clan", new ArrayList<>()), clean);
+        // the shape is still checked first: a broken community layout lists both kinds of problem
+        List<String> both = new ArrayList<>();
+        assertNull(ClanSiteLayoutRules.clean(DataObject.fromJson(layout.toString()).put("pages", DataArray.empty()), ClanSiteLayoutRulesV2.Limits.PREMIUM, "community", both));
+        assertTrue(has(both, "at least its Home page"), both.toString());
+    }
+
+    /** Plan C-13: {@code withoutClanOnly} takes out only clan-only widgets, names each, and leaves the original and everything else alone. */
+    @Test
+    void withoutClanOnlyTakesOutOnlyClanWidgets() {
+        String json = "{\"v\":" + ClanSiteLayoutRulesV2.VERSION + ",\"pages\":["
+                + "{\"title\":\"Home\",\"sections\":[{\"rows\":[{\"cells\":[{\"widgets\":[{\"type\":\"roster\"},{\"type\":\"text\",\"id\":\"t1\"},\"odd\"]}]}]}]},"
+                + "{\"title\":\" \",\"sections\":[{\"rows\":[{\"cells\":[{\"widgets\":[{\"type\":\"clan-stats\"}]},{\"widgets\":[]}]}]}]},"
+                + "\"not a page\"]}";
+        DataObject layout = DataObject.fromJson(json);
+        String before = layout.toString();
+        List<String> removed = new ArrayList<>();
+        DataObject out = ClanSiteLayoutRulesV2.withoutClanOnly(layout, removed);
+        assertEquals(List.of("Home: roster", "A page: clan-stats"), removed);
+        assertEquals(before, layout.toString(), "the original is left as it was");
+        DataArray home = out.getArray("pages").getObject(0).getArray("sections").getObject(0).getArray("rows").getObject(0).getArray("cells").getObject(0).getArray("widgets");
+        assertEquals(2, home.length(), "the other widgets stay, the odd entry too");
+        assertEquals("t1", home.getObject(0).getString("id"));
+        assertEquals("odd", home.getString(1));
+        DataArray second = out.getArray("pages").getObject(1).getArray("sections").getObject(0).getArray("rows").getObject(0).getArray("cells");
+        assertEquals(2, second.length(), "the cells stay");
+        assertEquals(0, second.getObject(0).getArray("widgets").length());
+        assertEquals("not a page", out.getArray("pages").getString(2));
+
+        // not v2, or nothing: returned as it is; a v2 layout without pages comes back as a copy
+        DataObject v1 = DataObject.fromJson("{\"v\":1,\"pages\":[]}");
+        assertSame(v1, ClanSiteLayoutRulesV2.withoutClanOnly(v1, removed));
+        assertNull(ClanSiteLayoutRulesV2.withoutClanOnly(null, removed));
+        DataObject noPages = DataObject.fromJson("{\"v\":" + ClanSiteLayoutRulesV2.VERSION + "}");
+        assertEquals(noPages.toString(), ClanSiteLayoutRulesV2.withoutClanOnly(noPages, removed).toString());
+        assertEquals(2, removed.size(), "nothing more was taken out");
     }
 }

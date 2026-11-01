@@ -71,6 +71,8 @@ class RequestCardsTest {
         DataObject other = entry(DataObject.empty().put("guildId", GUILD).put("feature", DataObject.empty().put("key", "discord.feed")));
         assertNull(HubSiteReporter.remappedGuild("feature.changed", other));
         assertEquals(Long.parseLong(GUILD), HubSiteReporter.remappedGuild("site.roles_changed", entry(DataObject.empty().put("guildId", GUILD))));
+        // plan C-13: a site changing kind changes which connections apply, so its roles are reported again
+        assertEquals(Long.parseLong(GUILD), HubSiteReporter.remappedGuild("site.kind.changed", entry(DataObject.empty().put("guildId", GUILD).put("kind", "clan"))));
         assertNull(HubSiteReporter.remappedGuild("request.changed", feature));
     }
 

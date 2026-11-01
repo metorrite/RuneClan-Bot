@@ -4,6 +4,7 @@ import com.runeclans.bot.beta.BetaGuildRepository;
 import com.runeclans.bot.beta.BetaGuildRepository.BetaGuild;
 import com.runeclans.bot.config.BotConfig;
 import com.runeclans.bot.runeclans.HubWriteQueue;
+import com.runeclans.bot.runeclans.PanelSwitches;
 import com.runeclans.bot.runeclans.RuneClansHubClient;
 import com.runeclans.bot.siteaccess.SiteSwitchRepository;
 import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
@@ -22,12 +23,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
  * Where the access gates come from (runeclans-hub PLATFORM-DESIGN B-1.4): the beta servers, the access grants and the site switches.
- * With {@code RUNECLANS_HUB_ACCESS=on} and the hub client on, they are read from the hub's {@code /v1/access/...} (kept 10 minutes, emptied
+ * With the switch on (RuneClan Admin > Switches "Beta access from the API", or {@code RUNECLANS_HUB_ACCESS=on}, which wins while set) and the
+ * hub client on, they are read from the hub's {@code /v1/access/...} (kept 10 minutes, emptied
  * by the hub's {@code access.changed}); while the hub can't answer, its last answer is used up to 15 minutes, then the bot's own tables
  * until the move. Off, the bot's own tables, exactly as before.
  * <p>
@@ -38,11 +41,14 @@ import java.util.function.Supplier;
 public class GateSource {
     private static final Logger log = LoggerFactory.getLogger(GateSource.class);
     public static final String SETTING_ENV = "RUNECLANS_HUB_ACCESS";
+    /** The switch on RuneClan Admin > Switches (runeclans-hub {@code SwitchCatalogue.HUB_ACCESS}, T-817). */
+    public static final String SWITCH_ID = "hub-access";
     static final Duration FRESH = Duration.ofMinutes(10);
     static final String TAG = "access";
     static final String VERIFIED_PATH = "/v1/clans/bot-verified";
 
-    private final boolean on;
+    /** The switch, read on every check: the panel's {@code hub-access} unless {@code RUNECLANS_HUB_ACCESS} holds it (PanelSwitches). */
+    private final BooleanSupplier on;
     /** A cached hub read ({@link RuneClansHubClient#read}); null when the hub client is off. */
     private final Function<String, RuneClansHubClient.Read> hub;
     private final Supplier<List<BetaGuild>> ownBeta;
@@ -54,15 +60,16 @@ public class GateSource {
 
     /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it. */
     @BService
-    public static GateSource gateSource(BotConfig config, RuneClansHubClient hub, BetaGuildRepository beta, AccessGrantRepository grants, SiteSwitchRepository switches) {
-        boolean on = on(config.getRuneClansSetting(SETTING_ENV));
-        if (on && !hub.enabled()) log.warn("{} is on but the hub client is off (RUNECLANS_HUB_ENABLED): the gates come from the bot's own tables.", SETTING_ENV);
-        else if (on) log.info("Access gates come from the RuneClans hub.");
-        return new GateSource(on, hub.enabled() ? path -> hub.read(path, FRESH, TAG) : null,
+    public static GateSource gateSource(BotConfig config, RuneClansHubClient hub, PanelSwitches panel, BetaGuildRepository beta, AccessGrantRepository grants,
+                                        SiteSwitchRepository switches) {
+        String railway = config.getRuneClansSetting(SETTING_ENV);
+        if (on(railway) && !hub.enabled()) log.warn("{} is on but the hub client is off (RUNECLANS_HUB_ENABLED): the gates come from the bot's own tables.", SETTING_ENV);
+        else if (on(railway)) log.info("Access gates come from the RuneClans hub.");
+        return new GateSource(panel.toggle(SWITCH_ID, railway), hub.enabled() ? path -> hub.read(path, FRESH, TAG) : null,
                 hub.enabled() ? body -> hub.write("POST", VERIFIED_PATH, body, GateSource::verifiedSent) : null, beta::all, grants::all, switches::all);
     }
 
-    GateSource(boolean on, Function<String, RuneClansHubClient.Read> hub, Function<String, HubWriteQueue.Result> verifiedWriter, Supplier<List<BetaGuild>> ownBeta,
+    GateSource(BooleanSupplier on, Function<String, RuneClansHubClient.Read> hub, Function<String, HubWriteQueue.Result> verifiedWriter, Supplier<List<BetaGuild>> ownBeta,
                Supplier<List<AccessGrant>> ownGrants, Supplier<Map<String, Boolean>> ownSwitches) {
         this.on = on;
         this.hub = hub;
@@ -74,16 +81,17 @@ public class GateSource {
 
     /** The bot's own tables only, as with the switch off (for tests); a null supplier is an empty table. */
     public static GateSource ownTables(Supplier<List<BetaGuild>> beta, Supplier<List<AccessGrant>> grants, Supplier<Map<String, Boolean>> switches) {
-        return new GateSource(false, null, null, beta == null ? List::of : beta, grants == null ? List::of : grants, switches == null ? Map::of : switches);
+        return new GateSource(() -> false, null, null, beta == null ? List::of : beta, grants == null ? List::of : grants, switches == null ? Map::of : switches);
     }
 
+    /** A Railway value holding the switch on ({@link PanelSwitches#hold}). */
     static boolean on(String raw) {
-        return raw != null && (raw.strip().equalsIgnoreCase("on") || raw.strip().equalsIgnoreCase("true"));
+        return Boolean.TRUE.equals(PanelSwitches.hold(raw));
     }
 
     /** True when the gates are read from the hub. */
     public boolean fromHub() {
-        return on && hub != null;
+        return hub != null && on.getAsBoolean();
     }
 
     /** The beta servers. */

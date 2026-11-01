@@ -62,7 +62,16 @@ public final class ClanSiteLayoutRules {
      * migrates v1 when it next saves, never the bot), and a v1 layout is checked exactly as before. {@code limits} only applies to v2.
      */
     public static String clean(DataObject layout, ClanSiteLayoutRulesV2.Limits limits, List<String> problems) {
-        if (layout != null && layout.getInt("v", -1) == ClanSiteLayoutRulesV2.VERSION) return ClanSiteLayoutRulesV2.clean(layout, limits, problems);
+        return clean(layout, limits, null, problems);
+    }
+
+    /**
+     * {@link #clean(DataObject, ClanSiteLayoutRulesV2.Limits, List)} for a site of {@code kind} ("clan", "community", or null for a clan
+     * site): a community website may hold no clan-only widget (plan C-9). Only layout v2 is checked for it: builder v2 (v1) has no
+     * community sites.
+     */
+    public static String clean(DataObject layout, ClanSiteLayoutRulesV2.Limits limits, String kind, List<String> problems) {
+        if (layout != null && layout.getInt("v", -1) == ClanSiteLayoutRulesV2.VERSION) return ClanSiteLayoutRulesV2.clean(layout, limits, kind, problems);
         int before = problems.size();
         if (layout == null) {
             problems.add("Send the layout.");

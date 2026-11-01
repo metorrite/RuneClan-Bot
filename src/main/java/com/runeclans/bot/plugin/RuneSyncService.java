@@ -74,12 +74,13 @@ public class RuneSyncService {
      * shown (one of the member's clans switched it on, T-206), the oldest client version still accepted, and how often to send.
      */
     public DataObject config(long userId) {
-        boolean panelAvailable;
+        // T-812: null = Discord was too slow to say ("unknown"); RuneSync then keeps what it last knew and asks again soon
+        Boolean panelAvailable;
         try {
             panelAvailable = panel.available(userId);
         } catch (RuntimeException e) {
             log.warn("Couldn't tell whether user {} may see the clan panel", userId, e);
-            panelAvailable = false;
+            panelAvailable = null;
         }
         return DataObject.empty().put("consent", categoryKeys(plugins.consent(userId))).put("panelAvailable", panelAvailable)
                 .put("minClientVersion", minClientVersion()).put("sendEverySeconds", SEND_EVERY_SECONDS);

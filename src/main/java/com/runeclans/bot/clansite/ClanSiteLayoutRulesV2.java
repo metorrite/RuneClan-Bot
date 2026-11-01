@@ -8,6 +8,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -171,8 +172,99 @@ public final class ClanSiteLayoutRulesV2 {
         return count;
     }
 
-    /** The layout to store, or null with the reasons in {@code problems}. */
+    /**
+     * The widget types a community website may not hold (plan C-9, docs/CLAN-AND-COMMUNITY-SITES.md section 7 in the RuneClan repo): the
+     * website's {@code CLAN_ONLY_WIDGETS} ({@code packages/builder/src/v3/siteKind.ts}), whose copy is the shared fixture
+     * {@code builder-v3/kinds/clan-only.json}. A test fails when the two differ.
+     */
+    public static final Set<String> CLAN_ONLY_WIDGETS = Set.of(
+            "activity-feed", "adventure-log", "application-form", "boss-detail", "boss-grid", "citadel-chart", "citadel-grid", "clan-goals",
+            "clan-history", "clan-stats", "clan-top", "coffer", "compare", "drop-log", "hall-of-fame", "item-detail", "joins-chart", "joins-weekly",
+            "kill-tracker", "leaderboard", "leaderboard-race", "member-adventure-log", "member-badges", "member-card", "member-citadel",
+            "member-directory", "member-gains", "member-points", "member-recap", "member-skills", "member-xp-chart", "member-xp-split", "milestones",
+            "period-bar", "rank-breakdown", "rank-ladder", "rare-drops", "recap", "recap-picker", "roster", "season-standings", "skill-leaders",
+            "spotlight", "stat-tiles", "top-list", "top-xp", "weekly-recap", "wrapped-recap", "xp-chart");
+
+    /** The site type that holds no clan: {@link #clean(DataObject, Limits, String, List)} refuses clan-only widgets for it. */
+    public static final String COMMUNITY = "community";
+
+    /** The layout to store, or null with the reasons in {@code problems}: a clan website's (every site before plan C-9). */
     public static String clean(DataObject layout, Limits limits, List<String> problems) {
+        return clean(layout, limits, null, problems);
+    }
+
+    /**
+     * The layout to store for a site of {@code kind} ("clan", "community", or null for a clan site), or null with the reasons in
+     * {@code problems}. A community website may hold no clan-only widget (plan C-9); each one is a problem, worded as the website words it.
+     */
+    public static String clean(DataObject layout, Limits limits, String kind, List<String> problems) {
+        int before = problems.size();
+        String out = shape(layout, limits, problems);
+        if (COMMUNITY.equals(kind) && layout != null) clanOnlyWidgets(layout, problems);
+        return problems.size() == before ? out : null;
+    }
+
+    /** One problem per clan-only widget in the layout, under its page's label (only called for a community website). */
+    static void clanOnlyWidgets(DataObject layout, List<String> problems) {
+        DataArray pages = layout.optArray("pages").orElse(null);
+        if (pages == null) return;
+        for (int p = 0; p < pages.length(); p++) {
+            if (!pages.isType(p, DataType.OBJECT)) continue;
+            DataObject page = pages.getObject(p);
+            String title = page.getString("title", "").strip();
+            String label = title.isEmpty() ? "A page" : "The page \"" + title + "\"";
+            for (DataObject section : objects(page, "sections"))
+                for (DataObject row : objects(section, "rows"))
+                    for (DataObject cell : objects(row, "cells"))
+                        for (DataObject widget : objects(cell, "widgets"))
+                            if (CLAN_ONLY_WIDGETS.contains(widget.getString("type", "")))
+                                problems.add(label + " has a clan-only widget. Community websites have no clan roster or stats: remove it.");
+        }
+    }
+
+    /**
+     * A copy of the layout with every clan-only widget taken out (plan C-13, a clan site going back to a community; the hub's
+     * {@code ClanSiteLayoutRulesV2.withoutClanOnly}, kept in step): the cells stay, so the page keeps its shape. {@code removed} gets one
+     * "page title: widget type" line per widget taken out. A null layout, or one that isn't v2, is returned as it is (the same
+     * instance). Not called by the bot itself today (it holds only clan sites): it is the hub's rule, kept here so the two stay in step.
+     */
+    public static DataObject withoutClanOnly(DataObject layout, List<String> removed) {
+        if (layout == null || layout.getInt("v", -1) != VERSION) return layout;
+        DataObject copy = DataObject.fromJson(layout.toString());
+        DataArray pages = copy.optArray("pages").orElse(null);
+        if (pages == null) return copy;
+        for (int p = 0; p < pages.length(); p++) {
+            if (!pages.isType(p, DataType.OBJECT)) continue;
+            DataObject page = pages.getObject(p);
+            String title = page.getString("title", "").strip();
+            for (DataObject section : objects(page, "sections"))
+                for (DataObject row : objects(section, "rows"))
+                    for (DataObject cell : objects(row, "cells")) {
+                        DataArray widgets = cell.optArray("widgets").orElse(null);
+                        if (widgets == null) continue;
+                        List<Object> raw = widgets.toList();
+                        DataArray kept = DataArray.empty();
+                        for (int w = 0; w < widgets.length(); w++) {
+                            String type = widgets.isType(w, DataType.OBJECT) ? widgets.getObject(w).getString("type", "") : "";
+                            if (CLAN_ONLY_WIDGETS.contains(type)) removed.add((title.isEmpty() ? "A page" : title) + ": " + type);
+                            else kept.add(raw.get(w));
+                        }
+                        cell.put("widgets", kept);
+                    }
+        }
+        return copy;
+    }
+
+    private static List<DataObject> objects(DataObject parent, String key) {
+        DataArray array = parent.optArray(key).orElse(null);
+        if (array == null) return List.of();
+        List<DataObject> out = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) if (array.isType(i, DataType.OBJECT)) out.add(array.getObject(i));
+        return out;
+    }
+
+    /** The layout's shape checked and rebuilt from the known fields, or null with the reasons in {@code problems}. */
+    private static String shape(DataObject layout, Limits limits, List<String> problems) {
         int before = problems.size();
         if (layout == null) {
             problems.add("Send the layout.");
@@ -659,7 +751,7 @@ public final class ClanSiteLayoutRulesV2 {
         Set<String> pageIds = new HashSet<>();
         DataArray pages = out.getArray("pages");
         for (int i = 0; i < pages.length(); i++) pageIds.add(pages.getObject(i).getString("id", ""));
-        List<DataObject> links = new java.util.ArrayList<>();
+        List<DataObject> links = new ArrayList<>();
         DataObject header = out.getObject("header");
         DataArray nav = header.getArray("nav");
         for (int i = 0; i < nav.length(); i++) {

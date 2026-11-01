@@ -174,9 +174,9 @@ class PluginXpTrackerTest {
         assertFalse(CompetitionTemplate.confirmedLinksOnly(DataObject.fromJson("{\"confirmedLinksOnly\":true}")));
         CompetitionTemplate.offerPluginSource(true);
         CompetitionTemplate template = new CompetitionTemplate();
-        var option = template.options().stream().filter(o -> o.path().equals("config.confirmedLinksOnly")).findFirst().orElseThrow();
-        assertEquals(false, option.standard());
-        assertTrue(template.fixedSettings().contains("confirmedLinksOnly"));
+        assertFalse(template.options().stream().anyMatch(o -> o.path().equals("config.confirmedLinksOnly")),
+                "T-815: not offered while links are taken on trust (nobody would score)");
+        assertTrue(template.fixedSettings().contains("confirmedLinksOnly"), "an event that already has it keeps it fixed");
     }
 
     @Test

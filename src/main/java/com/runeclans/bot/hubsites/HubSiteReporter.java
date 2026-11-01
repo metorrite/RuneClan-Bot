@@ -37,7 +37,8 @@ import java.util.concurrent.TimeUnit;
  *   <li>on a member's role change, the holders of the mapped roles that changed ({@link RoleReports}: gathered for a few seconds, one
  *   report per role)</li>
  *   <li>when a server's role mappings change on the hub ({@code site.roles_changed}, or {@code feature.changed} for
- *   {@code requests.discord}, whose request handler roles join them: T-734), the holders of every mapped role there again</li>
+ *   {@code requests.discord}, whose request handler roles join them: T-734; or {@code site.kind.changed}, since a clan site uses the
+ *   clan's connections and a community site its own: T-741), the holders of every mapped role there again</li>
  * </ul>
  * Writes go through the hub client's queue, so a hub that is briefly down gets them a little later. Off: nothing here runs.
  */
@@ -51,6 +52,8 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
     private volatile JDA jda;
     private final RoleReports reports;
     private final CapabilityReports capabilities;
+    /** When to declare: every shard's ready (as before T-817), and once when the panel moves clan sites to the hub while the bot runs. */
+    private final Declarer declarer;
 
     public HubSiteReporter(HubSites sites, RuneClansHubClient hub) {
         this.sites = sites;
@@ -58,16 +61,57 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
         this.reports = new RoleReports(sites::mappedRoles, this::holders, this::send,
                 (delay, task) -> lane.schedule(task, delay.toMillis(), TimeUnit.MILLISECONDS));
         this.capabilities = new CapabilityReports((path, body) -> hub.write("PUT", path, body, HubSiteReporter::done));
+        // the Switches panel can move clan sites to the hub while the bot runs (T-817): declare then, not only on start
+        this.declarer = new Declarer(sites::readsHub, () -> jda != null, this::declareAll);
+        lane.scheduleWithFixedDelay(declarer::tick, 30, 30, TimeUnit.SECONDS);
     }
 
     @Override
     public void onReady(ReadyEvent event) {
         jda = event.getJDA();
-        if (!sites.readsHub()) return;
-        lane.execute(() -> {
-            capabilities.start(Shards.guilds(event.getJDA()).stream().map(Guild::getIdLong).toList(), PrivilegedIntents.presence(), PrivilegedIntents.messageContent());
+        lane.execute(declarer::ready);
+    }
+
+    /**
+     * When to declare RuneClan Bot's capabilities and role holders to the hub. {@link #ready}: on every shard's {@code ReadyEvent} while clan
+     * sites come from the hub, as before T-817 (the last shard to be ready covers every server; a new session declares again). {@link #tick}:
+     * every 30 seconds, once after the Switches panel moves clan sites to the hub while the bot runs, and again after any move back and forth.
+     */
+    static final class Declarer {
+        private final java.util.function.BooleanSupplier readsHub;
+        private final java.util.function.BooleanSupplier discordReady;
+        private final Runnable declare;
+        private final java.util.concurrent.atomic.AtomicBoolean declared = new java.util.concurrent.atomic.AtomicBoolean();
+
+        Declarer(java.util.function.BooleanSupplier readsHub, java.util.function.BooleanSupplier discordReady, Runnable declare) {
+            this.readsHub = readsHub;
+            this.discordReady = discordReady;
+            this.declare = declare;
+        }
+
+        void ready() {
+            if (!readsHub.getAsBoolean()) return;
+            declared.set(true);
+            declare.run();
+        }
+
+        void tick() {
+            if (!readsHub.getAsBoolean()) {
+                declared.set(false); // back on the bot: declare again if they move once more
+                return;
+            }
+            if (discordReady.getAsBoolean() && declared.compareAndSet(false, true)) declare.run();
+        }
+    }
+
+    /** Declares capabilities for every server the bot is in and reports their role holders. Runs on the lane. */
+    private void declareAll() {
+        JDA ready = jda;
+        if (ready == null) return;
+        try {
+            capabilities.start(Shards.guilds(ready).stream().map(Guild::getIdLong).toList(), PrivilegedIntents.presence(), PrivilegedIntents.messageContent());
             int roles = 0;
-            for (Guild guild : Shards.guilds(event.getJDA())) {
+            for (Guild guild : Shards.guilds(ready)) {
                 try {
                     roles += reports.all(guild.getIdLong());
                 } catch (RuntimeException e) {
@@ -75,7 +119,9 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
                 }
             }
             log.info("RuneClans hub: declared capabilities and reported {} mapped role(s)", roles);
-        });
+        } catch (RuntimeException e) {
+            log.warn("Declaring RuneClan Bot's capabilities to the hub failed: {}", e.getClass().getSimpleName());
+        }
     }
 
     @Override
@@ -118,7 +164,8 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
 
     /** The server whose role mappings this hub change may have changed, or null. */
     static Long remappedGuild(String kind, DataObject data) {
-        if (data == null || !(kind.equals("site.roles_changed") || kind.equals("feature.changed"))) return null;
+        // site.kind.changed (plan C-13): a clan site uses the clan's connections, a community site its own, so the mapped roles may change
+        if (data == null || !(kind.equals("site.roles_changed") || kind.equals("feature.changed") || kind.equals("site.kind.changed"))) return null;
         DataObject inner = data.optObject("data").orElse(null);
         if (inner == null) return null;
         if (kind.equals("feature.changed")) {

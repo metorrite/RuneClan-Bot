@@ -1,5 +1,8 @@
 package com.runeclans.bot.plugin;
 
+import com.runeclans.bot.discord.DiscordLookups;
+import com.runeclans.bot.discord.DiscordLookups.MemberLookup;
+import com.runeclans.bot.discord.DiscordLookups.Outcome;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.events.BingoBoardImage;
 import com.runeclans.bot.events.BingoBoardView;
@@ -59,6 +62,41 @@ public class RuneSyncPanelService {
 
     private record Cached(Instant at, DataObject answer) {}
 
+    /**
+     * T-812: how long a known answer to "which of the member's clans allow the panel" is reused. The member lookup goes to Discord for
+     * anyone not in the bot's member cache (which holds online members only), so it is kept a while; an answer Discord was too slow to
+     * give is never kept.
+     */
+    static final Duration CLANS_CACHE = Duration.ofMinutes(5);
+
+    /** The member's panel clans, and whether Discord was too slow to answer for some of them (then the list may be short). */
+    record Clans(List<Guild> guilds, boolean unsure) {}
+
+    /** What the panel needs from Discord; a seam so tests need no gateway. */
+    interface Discord {
+        /** Every server the bot is in. */
+        List<Guild> guilds();
+
+        /** The member in each of {@code guilds}, asked together within one short time limit. */
+        List<MemberLookup> members(List<Guild> guilds, long userId);
+    }
+
+    private record KnownClans(Instant at, List<Long> guildIds) {}
+
+    private final Map<Long, KnownClans> knownClans = new ConcurrentHashMap<>();
+    private volatile Discord discord = new Discord() {
+        @Override
+        public List<Guild> guilds() {
+            JDA current = jda;
+            return current == null ? List.of() : Shards.guilds(current);
+        }
+
+        @Override
+        public List<MemberLookup> members(List<Guild> guilds, long userId) {
+            return DiscordLookups.memberInEach(guilds, userId, DiscordLookups.BUDGET);
+        }
+    };
+
     public RuneSyncPanelService(RuneSyncRepository repository, EventRepository events, EventService eventService, PointsRepository points,
                                 PluginRepository plugins) {
         this.repository = repository;
@@ -73,39 +111,84 @@ public class RuneSyncPanelService {
         this.jda = event.getJda();
     }
 
-    /** Whether any of the member's servers allows the panel: RuneSync's config says {@code panelAvailable} from this. */
-    public boolean available(long userId) {
-        return !clans(userId).isEmpty();
+    /** For tests: Discord as a stand-in. */
+    void discord(Discord stand) {
+        this.discord = stand;
     }
 
-    /** The member's clans (servers JonnyBot shares with them) that have switched the in-game panel on. */
-    List<Guild> clans(long userId) {
-        JDA current = jda;
-        if (current == null) return List.of();
-        User user = Shards.user(current, userId);
-        if (user == null) return List.of();
+    /**
+     * Whether any of the member's servers allows the panel: RuneSync's config says {@code panelAvailable} from this. {@code null} when
+     * Discord was too slow to say and nothing is known yet ("unknown", never "not allowed": T-812).
+     */
+    public Boolean available(long userId) {
+        Clans clans = clans(userId, Instant.now());
+        if (!clans.guilds().isEmpty()) return true;
+        return clans.unsure() ? null : false;
+    }
+
+    /**
+     * The member's clans (servers the bot shares with them) that have switched the in-game panel on. Since T-812 this asks Discord for
+     * members the bot's cache doesn't hold (anyone offline or Invisible), all panel servers at once within {@link DiscordLookups#BUDGET},
+     * so a website or plugin request never waits long. A known answer is reused for {@link #CLANS_CACHE}; when Discord is slow, the last
+     * known answer stands, and a slow answer is never remembered.
+     */
+    Clans clans(long userId, Instant now) {
+        KnownClans known = knownClans.get(userId);
+        if (known != null && known.at().plus(CLANS_CACHE).isAfter(now)) return new Clans(guildsById(known.guildIds()), false);
+        java.util.Set<Long> panelOn = repository.clanPanelGuilds();
+        if (panelOn.isEmpty()) return remember(userId, now, List.of());
+        List<Guild> candidates = new ArrayList<>();
+        for (Guild guild : discord.guilds()) if (panelOn.contains(guild.getIdLong())) candidates.add(guild);
+        if (candidates.isEmpty()) return remember(userId, now, List.of());
+        List<MemberLookup> found = discord.members(candidates, userId);
         List<Guild> on = new ArrayList<>();
-        for (Guild guild : Shards.mutualGuilds(user)) {
-            if (repository.clanPanelOn(guild.getIdLong())) on.add(guild);
+        boolean slow = false;
+        for (int i = 0; i < candidates.size() && i < found.size(); i++) {
+            Outcome outcome = found.get(i).outcome();
+            if (outcome == Outcome.FOUND) on.add(candidates.get(i));
+            else if (outcome == Outcome.SLOW) slow = true;
         }
-        return on;
+        if (!slow) return remember(userId, now, on);
+        if (known != null) {
+            // Discord was slow: the last known answer stands (plus any server found just now), and nothing new is remembered.
+            List<Guild> merged = new ArrayList<>(guildsById(known.guildIds()));
+            for (Guild g : on) if (!known.guildIds().contains(g.getIdLong())) merged.add(g);
+            return new Clans(merged, merged.isEmpty());
+        }
+        return new Clans(on, true);
+    }
+
+    private Clans remember(long userId, Instant now, List<Guild> on) {
+        knownClans.put(userId, new KnownClans(now, on.stream().map(Guild::getIdLong).toList()));
+        if (knownClans.size() > 5_000) knownClans.entrySet().removeIf(e -> e.getValue().at().plus(CLANS_CACHE).isBefore(now));
+        return new Clans(on, false);
+    }
+
+    private List<Guild> guildsById(List<Long> ids) {
+        if (ids.isEmpty()) return List.of();
+        List<Guild> out = new ArrayList<>();
+        for (Guild g : discord.guilds()) if (ids.contains(g.getIdLong())) out.add(g);
+        return out;
     }
 
     /** The panel's data for this member, at most 60 seconds old. */
     public DataObject panel(long userId, Instant now) {
         Cached hit = cache.get(userId);
         if (hit != null && hit.at().plus(CACHE).isAfter(now)) return hit.answer();
+        Clans found = clans(userId, now);
         DataArray clans = DataArray.empty();
-        for (Guild guild : clans(userId)) {
+        for (Guild guild : found.guilds()) {
             try {
                 clans.add(clan(guild.getIdLong(), guild.getName(), userId));
             } catch (RuntimeException e) {
                 log.warn("Couldn't build the RuneSync panel for server {}", guild.getId(), e);
             }
         }
-        DataObject answer = DataObject.empty().put("available", !clans.isEmpty()).put("clans", clans).put("generatedAt", now.toString())
+        boolean unknown = clans.isEmpty() && found.unsure();
+        DataObject answer = DataObject.empty().put("available", unknown ? null : !clans.isEmpty()).put("clans", clans).put("generatedAt", now.toString())
                 .put("cacheSeconds", CACHE.toSeconds());
-        cache.put(userId, new Cached(now, answer));
+        // T-812: an answer Discord was too slow for is not kept, so the next ask tries again
+        if (!found.unsure()) cache.put(userId, new Cached(now, answer));
         if (cache.size() > 5_000) cache.entrySet().removeIf(e -> e.getValue().at().plus(CACHE).isBefore(now));
         return answer;
     }
@@ -199,5 +282,6 @@ public class RuneSyncPanelService {
     /** The clan switch changed: cached answers for anyone may be wrong now. */
     public void forget() {
         cache.clear();
+        knownClans.clear();
     }
 }

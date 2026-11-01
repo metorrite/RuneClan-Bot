@@ -74,7 +74,14 @@ public class RsLinkAuth {
     private final Verifier verifier;
 
     public RsLinkAuth(BotConfig config, RuneClansHubClient hub) {
-        this.verifier = new Verifier(hub.enabled() ? hubTransport(hub) : httpTransport(config), Clock.systemUTC());
+        boolean legacy = !hub.enabled();
+        if (legacy) {
+            // T-811: players link on runeclans.com, whose links live in the RuneClans hub; without the hub client every RuneSync upload
+            // and the clan page fail quietly (panelAvailable=false), so say so once at start.
+            log.warn("RuneSync assertions are checked against the bot's own RuneLink keys because the hub client is off (RUNECLANS_HUB_ENABLED, "
+                    + "RUNECLANS_HUB_URL, RUNECLANS_HUB_API_KEY). Links made on runeclans.com can't be verified until it is on (docs/DEV-SETUP.md 3c).");
+        }
+        this.verifier = new Verifier(legacy ? httpTransport(config) : hubTransport(hub), Clock.systemUTC(), legacy);
     }
 
     /**
@@ -118,9 +125,34 @@ public class RsLinkAuth {
 
         private record Cached(Optional<Identity> identity, Instant until) {}
 
+        /** T-811: how often "an assertion signed with a key this bot doesn't know" is logged while the hub client is off. */
+        static final Duration UNKNOWN_KEY_WARN_EVERY = Duration.ofHours(1);
+        /** True while assertions are checked against the bot's own keys (no hub client): an unknown key id then likely means a hub link. */
+        private final boolean legacy;
+        private volatile Instant lastUnknownKeyWarning = null;
+        /** How many times the unknown-key warning was logged (for tests). */
+        volatile int unknownKeyWarnings;
+
         Verifier(Transport transport, Clock clock) {
+            this(transport, clock, false);
+        }
+
+        Verifier(Transport transport, Clock clock, boolean legacy) {
             this.transport = transport;
             this.clock = clock;
+            this.legacy = legacy;
+        }
+
+        /** T-811: an assertion signed with a key this bot's own link service doesn't have, without the hub client: say why, at most hourly. */
+        private void warnUnknownKey(Instant now) {
+            if (!legacy) return;
+            Instant last = lastUnknownKeyWarning;
+            if (last != null && last.plus(UNKNOWN_KEY_WARN_EVERY).isAfter(now)) return;
+            lastUnknownKeyWarning = now;
+            unknownKeyWarnings++;
+            log.warn("A RuneSync upload carried a RuneLink assertion signed with a key the bot's own link service doesn't have, so it was refused. "
+                    + "Links made on runeclans.com live in the RuneClans hub: turn the hub client on (RUNECLANS_HUB_ENABLED, RUNECLANS_HUB_URL, "
+                    + "RUNECLANS_HUB_API_KEY). Logged at most once an hour.");
         }
 
         /**
@@ -150,7 +182,10 @@ public class RsLinkAuth {
                 DataObject claims = DataObject.fromJson(b64.decode(parts[1]));
                 if (!"EdDSA".equals(header.getString("alg", null))) return false;
                 PublicKey key = key(header.getString("kid", ""), now);
-                if (key == null) return false;
+                if (key == null) {
+                    warnUnknownKey(now);
+                    return false;
+                }
                 Signature verifier = Signature.getInstance("Ed25519");
                 verifier.initVerify(key);
                 verifier.update((parts[0] + "." + parts[1]).getBytes(StandardCharsets.US_ASCII));

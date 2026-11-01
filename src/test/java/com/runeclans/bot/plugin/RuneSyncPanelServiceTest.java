@@ -11,16 +11,23 @@ import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
 import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.points.PointsRepository;
+import com.runeclans.bot.discord.DiscordLookups.MemberLookup;
+import com.runeclans.bot.discord.DiscordLookups.Outcome;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -167,7 +174,106 @@ class RuneSyncPanelServiceTest {
     @Test
     void withoutDiscordNoClanIsAvailable() {
         when(repository.clanPanelOn(anyLong())).thenReturn(true);
-        assertFalse(service.available(ME));
+        when(repository.clanPanelGuilds()).thenReturn(Set.of(GUILD));
+        assertEquals(Boolean.FALSE, service.available(ME));
         assertFalse(service.panel(ME, NOW).getBoolean("available"));
+    }
+
+    // ---------- T-812: members the bot's cache doesn't hold (offline or Invisible) ----------
+
+    /** Discord as a stand-in: the bot's servers, and what a member lookup answers for each, counting the asks. */
+    private static final class FakeDiscord implements RuneSyncPanelService.Discord {
+        final List<Guild> guilds;
+        Outcome answer = Outcome.FOUND;
+        int asks;
+
+        FakeDiscord(Guild... guilds) {
+            this.guilds = List.of(guilds);
+        }
+
+        @Override
+        public List<Guild> guilds() {
+            return guilds;
+        }
+
+        @Override
+        public List<MemberLookup> members(List<Guild> asked, long userId) {
+            asks++;
+            List<MemberLookup> out = new ArrayList<>();
+            for (Guild g : asked) out.add(new MemberLookup(answer, answer == Outcome.FOUND ? mock(Member.class) : null));
+            return out;
+        }
+    }
+
+    private static Guild guild(long id, String name) {
+        Guild g = mock(Guild.class);
+        when(g.getIdLong()).thenReturn(id);
+        when(g.getName()).thenReturn(name);
+        when(g.getId()).thenReturn(Long.toString(id));
+        return g;
+    }
+
+    @Test
+    void anOfflineMemberIsFoundThroughDiscordInPanelServersOnly() {
+        Guild panelOn = guild(GUILD, "Younglings"), panelOff = guild(200L, "Other clan");
+        FakeDiscord discord = new FakeDiscord(panelOn, panelOff);
+        service.discord(discord);
+        when(repository.clanPanelGuilds()).thenReturn(Set.of(GUILD));
+        when(points.settings(GUILD)).thenReturn(new PointsRepository.Settings(GUILD, false, "points", null));
+
+        assertEquals(Boolean.TRUE, service.available(ME), "found through Discord, not the online-only cache");
+        assertEquals(List.of(panelOn), service.clans(ME, NOW).guilds(), "only servers that allow the panel are asked or listed");
+        DataObject panel = service.panel(ME, NOW);
+        assertTrue(panel.getBoolean("available"));
+        assertEquals("Younglings", panel.getArray("clans").getObject(0).getString("name"));
+    }
+
+    @Test
+    void aKnownAnswerIsReusedForFiveMinutesThenAskedAgain() {
+        FakeDiscord discord = new FakeDiscord(guild(GUILD, "Younglings"));
+        service.discord(discord);
+        when(repository.clanPanelGuilds()).thenReturn(Set.of(GUILD));
+        service.clans(ME, NOW);
+        service.clans(ME, NOW.plus(RuneSyncPanelService.CLANS_CACHE).minusSeconds(1));
+        assertEquals(1, discord.asks, "inside five minutes the known answer is reused");
+        discord.answer = Outcome.ABSENT;
+        assertTrue(service.clans(ME, NOW.plus(RuneSyncPanelService.CLANS_CACHE).plusSeconds(1)).guilds().isEmpty(), "after it, Discord is asked again");
+        assertEquals(2, discord.asks);
+    }
+
+    @Test
+    void aSlowDiscordIsUnknownNeverNotAllowedAndIsNotRemembered() {
+        FakeDiscord discord = new FakeDiscord(guild(GUILD, "Younglings"));
+        discord.answer = Outcome.SLOW;
+        service.discord(discord);
+        when(repository.clanPanelGuilds()).thenReturn(Set.of(GUILD));
+        when(points.settings(GUILD)).thenReturn(new PointsRepository.Settings(GUILD, false, "points", null));
+
+        assertNull(service.available(ME), "unknown, not \"not allowed\"");
+        assertTrue(service.panel(ME, NOW).isNull("available"));
+        discord.answer = Outcome.FOUND;
+        assertEquals(Boolean.TRUE, service.available(ME), "the slow answer wasn't kept: the next ask tries again");
+        assertTrue(service.panel(ME, NOW.plusSeconds(1)).getBoolean("available"), "nor was the slow panel answer");
+    }
+
+    @Test
+    void whenDiscordIsSlowTheLastKnownAnswerStands() {
+        FakeDiscord discord = new FakeDiscord(guild(GUILD, "Younglings"));
+        service.discord(discord);
+        when(repository.clanPanelGuilds()).thenReturn(Set.of(GUILD));
+        assertEquals(1, service.clans(ME, NOW).guilds().size());
+        discord.answer = Outcome.SLOW;
+        RuneSyncPanelService.Clans later = service.clans(ME, NOW.plus(RuneSyncPanelService.CLANS_CACHE).plusSeconds(1));
+        assertEquals(1, later.guilds().size(), "still allowed");
+        assertFalse(later.unsure());
+    }
+
+    @Test
+    void noServerAllowsThePanelSoDiscordIsNeverAsked() {
+        FakeDiscord discord = new FakeDiscord(guild(GUILD, "Younglings"));
+        service.discord(discord);
+        when(repository.clanPanelGuilds()).thenReturn(Set.of());
+        assertEquals(Boolean.FALSE, service.available(ME));
+        assertEquals(0, discord.asks);
     }
 }

@@ -222,6 +222,20 @@ public class RuneSyncRepository {
         }
     }
 
+    /** The servers that allow the in-game clan panel (T-812: one query instead of one per server the bot is in). */
+    public java.util.Set<Long> clanPanelGuilds() {
+        try (Connection c = connectionSupplier.getConnection();
+             PreparedStatement s = c.prepareStatement("SELECT guild_id FROM younglings.plugin_guild_settings WHERE clan_panel")) {
+            java.util.Set<Long> out = new java.util.HashSet<>();
+            try (ResultSet rs = s.executeQuery()) {
+                while (rs.next()) out.add(rs.getLong(1));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read which clans allow the panel", e);
+        }
+    }
+
     public void setClanPanel(long guildId, boolean on, long actorId, Instant at) {
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement("""
                 INSERT INTO younglings.plugin_guild_settings (guild_id, clan_panel, updated_at, updated_by) VALUES (?, ?, ?, ?)

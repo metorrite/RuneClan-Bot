@@ -115,4 +115,34 @@ class RsLinkAuthTest {
         serviceDown = false;
         assertEquals("Zezima", auth.authenticate(a).orElseThrow().rsn(), "nothing was cached while it was down");
     }
+
+    @Test
+    void withoutTheHubClientAnUnknownKeyIsLoggedAtMostHourly() throws Exception {
+        // T-811: a hub-signed assertion checked against the bot's own keys fails; the log says why, once an hour, never silently
+        Instant[] now = {NOW};
+        Clock moving = new Clock() {
+            @Override public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now[0]; }
+        };
+        RsLinkAuth.Transport keysOnly = (method, path, body) -> {
+            byte[] encoded = key.getPublic().getEncoded();
+            String x = Base64.getUrlEncoder().withoutPadding().encodeToString(Arrays.copyOfRange(encoded, encoded.length - 32, encoded.length));
+            return new RsLinkAuth.Answer(200, DataObject.empty().put("keys", DataArray.empty().add(DataObject.empty()
+                    .put("kty", "OKP").put("crv", "Ed25519").put("kid", "k1").put("x", x))));
+        };
+        RsLinkAuth.Verifier legacy = new RsLinkAuth.Verifier(keysOnly, moving, true);
+        assertTrue(legacy.authenticate(assertion(otherKey, "hub-key", "runesync", later())).isEmpty());
+        assertEquals(1, legacy.unknownKeyWarnings);
+        now[0] = NOW.plus(RsLinkAuth.Verifier.UNKNOWN_KEY_WARN_EVERY).minusSeconds(1);
+        assertTrue(legacy.authenticate(assertion(otherKey, "hub-key", "runesync", later() + 7200)).isEmpty());
+        assertEquals(1, legacy.unknownKeyWarnings, "not again within the hour");
+        now[0] = NOW.plus(RsLinkAuth.Verifier.UNKNOWN_KEY_WARN_EVERY).plusSeconds(1);
+        assertTrue(legacy.authenticate(assertion(otherKey, "hub-key", "runesync", later() + 7300)).isEmpty());
+        assertEquals(2, legacy.unknownKeyWarnings, "again after it");
+
+        RsLinkAuth.Verifier withHub = new RsLinkAuth.Verifier(keysOnly, moving, false);
+        assertTrue(withHub.authenticate(assertion(otherKey, "hub-key", "runesync", later() + 7400)).isEmpty());
+        assertEquals(0, withHub.unknownKeyWarnings, "with the hub client an unknown key is just a bad assertion");
+    }
 }

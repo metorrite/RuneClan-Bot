@@ -63,7 +63,7 @@ class GateSourceTest {
     }
 
     private static GateSource source(boolean on, Stub hub) {
-        return new GateSource(on, hub, null, () -> OWN_BETA, () -> OWN_GRANTS, () -> OWN_SWITCHES);
+        return new GateSource(() -> on, hub, null, () -> OWN_BETA, () -> OWN_GRANTS, () -> OWN_SWITCHES);
     }
 
     @Test
@@ -151,13 +151,13 @@ class GateSourceTest {
             sent.add(body);
             return new HubWriteQueue.Result(HubWriteQueue.Outcome.QUEUED, null);
         };
-        GateSource gates = new GateSource(true, new Stub(), writer, () -> OWN_BETA, () -> OWN_GRANTS, () -> OWN_SWITCHES);
+        GateSource gates = new GateSource(() -> true, new Stub(), writer, () -> OWN_BETA, () -> OWN_GRANTS, () -> OWN_SWITCHES);
         assertTrue(gates.clanVerified("Iron Legion", USER));
         DataObject body = DataObject.fromJson(sent.get(0));
         assertEquals("Iron Legion", body.getString("name"));
         assertEquals(Long.toString(USER), body.getString("verifiedBy"));
 
-        GateSource refused = new GateSource(true, new Stub(), b -> new HubWriteQueue.Result(HubWriteQueue.Outcome.REFUSED, null), () -> OWN_BETA, () -> OWN_GRANTS,
+        GateSource refused = new GateSource(() -> true, new Stub(), b -> new HubWriteQueue.Result(HubWriteQueue.Outcome.REFUSED, null), () -> OWN_BETA, () -> OWN_GRANTS,
                 () -> OWN_SWITCHES);
         assertFalse(refused.clanVerified("Iron Legion", USER), "refused: the bot's own copy still has it");
         assertFalse(gates.clanVerified(null, USER));
@@ -169,5 +169,24 @@ class GateSourceTest {
         assertFalse(GateSource.on("off"));
         assertTrue(GateSource.on(" on "));
         assertTrue(GateSource.on("TRUE"));
+    }
+
+    @Test
+    void theBotsGatesFollowThePanelsBetaAccessSwitchUnlessRailwayHoldsIt() {
+        com.runeclans.bot.config.BotConfig config = org.mockito.Mockito.mock(com.runeclans.bot.config.BotConfig.class);
+        RuneClansHubClient hub = org.mockito.Mockito.mock(RuneClansHubClient.class);
+        org.mockito.Mockito.when(hub.enabled()).thenReturn(true);
+        com.runeclans.bot.beta.BetaGuildRepository beta = org.mockito.Mockito.mock(com.runeclans.bot.beta.BetaGuildRepository.class);
+        com.runeclans.bot.access.AccessGrantRepository grants = org.mockito.Mockito.mock(com.runeclans.bot.access.AccessGrantRepository.class);
+        com.runeclans.bot.siteaccess.SiteSwitchRepository switches = org.mockito.Mockito.mock(com.runeclans.bot.siteaccess.SiteSwitchRepository.class);
+        com.runeclans.bot.runeclans.PanelSwitches panelOn = com.runeclans.bot.runeclans.PanelSwitches.of(Map.of(GateSource.SWITCH_ID, "on"));
+        com.runeclans.bot.runeclans.PanelSwitches panelOff = com.runeclans.bot.runeclans.PanelSwitches.of(Map.of(GateSource.SWITCH_ID, "off"));
+
+        assertTrue(GateSource.gateSource(config, hub, panelOn, beta, grants, switches).fromHub(), "Railway unset: the panel's on");
+        assertFalse(GateSource.gateSource(config, hub, panelOff, beta, grants, switches).fromHub(), "Railway unset: the panel's off");
+        org.mockito.Mockito.when(config.getRuneClansSetting(GateSource.SETTING_ENV)).thenReturn("no");
+        assertFalse(GateSource.gateSource(config, hub, panelOn, beta, grants, switches).fromHub(), "any Railway value but an on word holds it off");
+        org.mockito.Mockito.when(config.getRuneClansSetting(GateSource.SETTING_ENV)).thenReturn("on");
+        assertTrue(GateSource.gateSource(config, hub, panelOff, beta, grants, switches).fromHub(), "Railway's on holds it on");
     }
 }
