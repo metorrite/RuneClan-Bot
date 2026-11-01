@@ -245,6 +245,7 @@ has more than one replica).
 | `phishing-list` | `automod/PhishingList` | every process (each needs the list) |
 | `debouncer`, `site-invalidator` | `internal/Debouncer`, `internal/SiteInvalidator` | every process (local batching) |
 | `hub-member-privacy` | `member/HubMemberPrivacy` | every process (sends the member privacy changes it saved to the hub, T-750) |
+| `panel-switches` | `runeclans/PanelSwitches` | every process (reads the Switches panel from the hub every 30 seconds for its own switches, T-817) |
 | `job-heartbeat` | `jobs/JobRepository` | every process (keeps that process's own running dashboard jobs alive, T-698) |
 | `event-export-expiry` | `events/EventExportRepository` | api (database only: deletes expired wrap-up exports, T-698) |
 | `leagues` | `leagues/LeagueReporter`, `leagues/LeagueFeedPosts`, `leagues/LeagueCommand` | every process (reports a finished clan-vs-clan event's result to the hub from the process that finished it, T-759; turns the hub's league feed into outbox jobs and answers `/league` off the request thread, T-760: the posts themselves run through the Discord outbox in the shard's process) |
