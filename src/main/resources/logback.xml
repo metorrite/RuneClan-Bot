@@ -2,7 +2,8 @@
 <!--
   Without this file logback logs everything at DEBUG (its built-in default), which put HikariCP pool chatter and JDA request traces in
   the production log (T-836). INFO keeps the bot's own messages; the dev snapshot buffer (devtools/SnapshotLogBuffer) only keeps WARN+
-  anyway. The pattern is logback's default one, so log lines look as they did.
+  anyway. The pattern is logback's default one, so log lines look as they did. LOG_LEVEL (an environment variable or -DLOG_LEVEL=...)
+  sets another level, e.g. DEBUG while chasing a problem locally (docs/DEV-SETUP.md section 3c).
 -->
 <configuration>
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
@@ -10,7 +11,7 @@
       <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n</pattern>
     </encoder>
   </appender>
-  <root level="INFO">
+  <root level="${LOG_LEVEL:-INFO}">
     <appender-ref ref="CONSOLE" />
   </root>
 </configuration>
