@@ -140,7 +140,7 @@ public class PlayerLinkService {
         repository.updateRsn(guildId, linkId, newRsn);
         if (before != null && !before.rsn().equals(newRsn)) {
             hubLinks.unlinked(before.discordUserId(), before.rsn());
-            hubLinks.linked(before.discordUserId(), newRsn);
+            hubLinks.renamedTo(before.discordUserId(), newRsn);
         }
     }
 
