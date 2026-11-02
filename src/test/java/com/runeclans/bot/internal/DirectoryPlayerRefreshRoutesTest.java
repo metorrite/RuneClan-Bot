@@ -260,4 +260,10 @@ class DirectoryPlayerRefreshRoutesTest {
         String name = "Player " + (char) ('a' + DirectoryPlayerRefreshRoutes.GLOBAL_PER_MINUTE % 26) + DirectoryPlayerRefreshRoutes.GLOBAL_PER_MINUTE;
         assertEquals(200, refresher.refresh(ask(name)).status(), "a minute later there is room again, and the refused name wasn't marked");
     }
+
+    @Test
+    void theSiteWideCapStaysUnderTheRuneMetricsBudget() {
+        // RuneMetrics allows about 10 requests a minute for every tier together; refreshes jump the queue, so they get a small share
+        assertTrue(DirectoryPlayerRefreshRoutes.GLOBAL_PER_MINUTE <= 5);
+    }
 }

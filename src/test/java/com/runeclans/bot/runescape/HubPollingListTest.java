@@ -12,6 +12,9 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -134,5 +137,31 @@ class HubPollingListTest {
         }, new MovingClock());
         assertEquals(0, list.groups().size());
         assertEquals(HubPollingList.MAX_PAGES, calls[0]);
+    }
+
+    @Test
+    void theLastListIsReadWithoutWaitingForASlowHubRead() throws Exception {
+        CountDownLatch reading = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        HubPollingList list = new HubPollingList(path -> {
+            reading.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return page(null, "Clanner", "clan", "Friend", "community");
+        }, new MovingClock());
+        CompletableFuture<HubPollingList.Groups> slow = CompletableFuture.supplyAsync(list::groups);
+        try {
+            assertTrue(reading.await(5, TimeUnit.SECONDS));
+            // the web request's check (Refresh) must not wait behind the hub page read
+            HubPollingList.Groups known = CompletableFuture.supplyAsync(list::lastKnown).get(1, TimeUnit.SECONDS);
+            assertTrue(known.clan().isEmpty(), "nothing read yet");
+        } finally {
+            release.countDown();
+        }
+        assertEquals(List.of("Clanner"), slow.get(5, TimeUnit.SECONDS).clan());
+        assertEquals(List.of("Clanner"), list.lastKnown().clan());
     }
 }

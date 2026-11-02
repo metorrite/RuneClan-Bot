@@ -55,7 +55,7 @@ public class DirectoryPlayerRefreshRoutes implements DirectoryRouteModule {
     static final int DEFAULT_MINUTES = 30;
     static final Duration WAIT_FOR_POLL = Duration.ofSeconds(2);
     /** The most refreshes the whole site may start in one minute, whoever asks: RuneMetrics' budget belongs to every tier. */
-    static final int GLOBAL_PER_MINUTE = 30;
+    static final int GLOBAL_PER_MINUTE = 5;
 
     /** What the route needs from the rest of the bot; the real one reads the database, a test passes its own. */
     interface Deps {
