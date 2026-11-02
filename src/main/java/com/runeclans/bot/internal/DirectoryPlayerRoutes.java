@@ -69,6 +69,11 @@ public class DirectoryPlayerRoutes implements DirectoryRouteModule {
             }
 
             @Override
+            public boolean hiddenAnywhere(String rsn) {
+                return siteApi.hidesFromRankingsAnywhere(rsn);
+            }
+
+            @Override
             public int maxRankOrder(long guildId) {
                 return points.getRanksOrdered(guildId).stream().mapToInt(RankConfigRow::rankOrder).max().orElse(0);
             }
@@ -104,6 +109,16 @@ public class DirectoryPlayerRoutes implements DirectoryRouteModule {
                 return siteApi.visibleMember(guildId, rsn);
             }
         };
+    }
+
+    /** Whether {@code GET players/{rsn}} shows this name (the same cached answer), for the Refresh route: a hidden name stays unknown there too. */
+    boolean shown(String rsn) {
+        String clean = DirectoryPlayerLogic.cleanRsn(rsn);
+        if (clean == null) return false;
+        return cache.get(CACHE_PREFIX + clean.toLowerCase(Locale.ROOT), TTL_MILLIS, () -> {
+            DataObject built = DirectoryPlayerLogic.answer(clean, source, OffsetDateTime.now(ZoneOffset.UTC));
+            return built == null ? null : built.put("generatedAt", Instant.now().toString());
+        }) != null;
     }
 
     @Override

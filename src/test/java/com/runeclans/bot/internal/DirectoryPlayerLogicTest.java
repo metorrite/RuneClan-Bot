@@ -39,6 +39,7 @@ class DirectoryPlayerLogicTest {
         final Map<Long, ClanProfile> profiles = new HashMap<>();
         final Map<Long, String> clanNames = new HashMap<>();
         final Set<String> hidden = new HashSet<>();
+        final Set<String> hiddenAnywhere = new HashSet<>();
         final List<StatsSnapshotRow> snapshots = new ArrayList<>();
         final Map<Long, List<SkillValue>> skills = new HashMap<>();
 
@@ -61,6 +62,11 @@ class DirectoryPlayerLogicTest {
         public MemberRow visibleMember(long guildId, String rsn) {
             if (hidden.contains(guildId + ":" + rsn.toLowerCase())) return null;
             return rosters.getOrDefault(guildId, List.of()).stream().filter(m -> m.rsn().equalsIgnoreCase(rsn.trim())).findFirst().orElse(null);
+        }
+
+        @Override
+        public boolean hiddenAnywhere(String rsn) {
+            return hiddenAnywhere.contains(rsn.toLowerCase());
         }
 
         @Override
@@ -204,6 +210,50 @@ class DirectoryPlayerLogicTest {
         assertEquals(200, gains.getLong("day"), "since the snapshot 30 hours ago");
         assertEquals(500, gains.getLong("week"), "since the one 40 days ago (the newest at or before a week ago)");
         assertEquals(500, gains.getLong("month"));
+    }
+
+    @Test
+    void aPlayerInNoClanStillGetsTheirStatsOnceTheBotPolledThem() {
+        Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Someone Else", NOW);
+        assertNull(DirectoryPlayerLogic.answer("Loner", fake, NOW), "never polled: nothing to show");
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        DataObject answer = DirectoryPlayerLogic.answer("Loner", fake, NOW);
+        assertEquals("Loner", answer.getString("rsn"));
+        assertEquals(0, answer.getArray("clans").length(), "every linked player is tracked, clan or not (Drake 2026-11-02)");
+        assertEquals(9_000, answer.getObject("stats").getLong("totalXp"));
+    }
+
+    @Test
+    void aHiddenMemberStaysHiddenEvenWithStats() {
+        Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Shy", NOW);
+        fake.hidden.add(GUILD_A + ":shy");
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        assertNull(DirectoryPlayerLogic.answer("Shy", fake, NOW));
+    }
+
+    @Test
+    void aMemberOfAClanTheDirectoryDoesNotListStaysUnknown() {
+        for (Visibility v : List.of(Visibility.UNLISTED, Visibility.PRIVATE)) {
+            Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", v, "Player", NOW);
+            fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+            assertNull(DirectoryPlayerLogic.answer("Player", fake, NOW), v + ": the clan keeps its members to itself");
+        }
+        Fake suspended = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Player", NOW);
+        suspended.profiles.put(GUILD_A, profile(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, Instant.EPOCH));
+        suspended.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        assertNull(DirectoryPlayerLogic.answer("Player", suspended, NOW), "suspended");
+        Fake unverified = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Player", NOW);
+        unverified.clanNames.put(GUILD_A, "Renamed since");
+        unverified.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        assertNull(DirectoryPlayerLogic.answer("Player", unverified, NOW), "no longer verified");
+    }
+
+    @Test
+    void aPlayerWhoHidSomewhereStaysHiddenAfterLeavingTheClan() {
+        Fake fake = new Fake();
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        fake.hiddenAnywhere.add("leaver");
+        assertNull(DirectoryPlayerLogic.answer("Leaver", fake, NOW));
     }
 
     @Test
