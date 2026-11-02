@@ -53,7 +53,9 @@ import java.util.Set;
  *       before {@link #LINKED_ANCHOR_UTC} UTC, 30 minutes ahead of RuneScape's own daily reset — that keeps the day's
  *       numbers as current as reasonably possible without cutting it too close.</li>
  * </ul>
- * Players nobody has linked and no registered clan lists are not polled at all. Every name is in one tier only ({@link #tiers}), and the
+ * A tracked name with no stats at all (a new link, or one linked before anything polled it) is polled within minutes by the "first polls"
+ * job ({@link FirstPolls}, Drake 2026-11-02: everyone is polled once on linking). Players nobody has linked and no registered clan lists are
+ * not polled at all. Every name is in one tier only ({@link #tiers}), and the
  * engine merges a name already queued at another tier, so nobody is polled twice in a short window (Drake's rule, plan C-8 Q-6).
  * <p>
  * Each run works out its list afresh, so a server that registers a clan, or a player who links, joins the next run
@@ -67,6 +69,8 @@ public class RosterPollScheduler {
 
     private static final Duration CLAN_INITIAL_DELAY = Duration.ofMinutes(2);
     private static final LocalTime LINKED_ANCHOR_UTC = LocalTime.of(23, 30);
+    /** How often the "first polls" job looks for tracked names with no stats yet (a new link waits at most this plus the hub list's keep). */
+    static final Duration FIRST_POLL_EVERY = Duration.ofMinutes(2);
 
     private final ClanMemberRepository clanMemberRepository;
     private final ClanSyncService clanSyncService;
@@ -75,9 +79,13 @@ public class RosterPollScheduler {
     private final BotConfig botConfig;
     private final Premium premiumGuilds;
     private final HubPollingList hubList;
+    private final PlayerLinkRepository links;
+    private final FirstPolls firstPolls = new FirstPolls(java.time.Clock.systemUTC());
 
     public RosterPollScheduler(ClanMemberRepository clanMemberRepository, ClanSyncService clanSyncService, PlayerLinkService linkService,
-                                PollCoordinator pollCoordinator, BotConfig botConfig, Premium premiumGuilds, RuneClansHubClient hub) {
+                                PollCoordinator pollCoordinator, BotConfig botConfig, Premium premiumGuilds, RuneClansHubClient hub,
+                                PlayerLinkRepository links) {
+        this.links = links;
         this.premiumGuilds = premiumGuilds;
         this.hubList = HubPollingList.from(hub);
         this.clanMemberRepository = clanMemberRepository;
@@ -117,10 +125,24 @@ public class RosterPollScheduler {
                 firstRun, communityWindow, communityWindow.dividedBy(2), () -> tiers(jda).community()));
         pollCoordinator.schedule(new PollJob("other linked players", PollPriority.LINKED, linkedWindow,
                 durationUntilNextUtc(LINKED_ANCHOR_UTC), linkedWindow, linkedWindow.dividedBy(2), () -> tiers(jda).linked()));
+        // Drake 2026-11-02: a player is polled once on linking, then on their tier's cycle. Any tracked name with no stats at all is polled
+        // within minutes, at the clan tier's place in the queue (behind button presses), which also backfills links nobody polled yet
+        pollCoordinator.schedule(new PollJob("first polls", PollPriority.CLAN, FIRST_POLL_EVERY,
+                firstRun, Duration.ZERO, Duration.ofDays(3650), this::firstPollTargets));
 
         log.info("Roster poll jobs registered: players in a registered clan are spread across every {}; community players across every {}; " +
                         "other linked players across every {}, first cycle ending near {} UTC.",
                 clanWindow, communityWindow, linkedWindow, LINKED_ANCHOR_UTC);
+    }
+
+    /** Every tracked name (the hub's polling list and the /rsn accounts) that has no stats snapshot yet ({@link FirstPolls}). */
+    private List<String> firstPollTargets() {
+        HubPollingList.Groups hub = hubList.groups();
+        List<String> names = new ArrayList<>(hub.clan());
+        names.addAll(hub.community());
+        names.addAll(hub.linked());
+        names.addAll(linkService.getAllAccountRsns());
+        return firstPolls.due(names, keys -> links.getLatestSnapshots(keys).keySet());
     }
 
     /** The servers the bot is in that have a clan set up. Their rosters are the first tier. */

@@ -20,7 +20,7 @@ import java.util.function.Function;
  * one group, so the poll tiers can track every linked player and not only the clans of the bot's servers and its own {@code /rsn} accounts.
  * <p>
  * The list is read whole (page by page) at most once per {@link #KEEP}, so the three tiers that ask for it within one cycle share one read.
- * When the hub client is off, or the hub answers 404 (its switch "Track every linked player" is off, the default), the list is empty and the
+ * When the hub client is off, or the hub answers 404 (an older hub that still had the "Track every linked player" switch, off), the list is empty and the
  * tiers poll what they polled before; that is logged once per change, not every run. When the hub can't be reached the last list is used
  * while it is under {@link #STALE_AFTER} old, then nothing.
  */
@@ -99,7 +99,7 @@ final class HubPollingList {
         if (off) {
             last = Groups.EMPTY;
             okAt = null;
-            note(State.OFF, "The hub's polling list is off (switch \"Track every linked player\", or RUNECLANS_HUB_ENABLED): only the bot's own clans and /rsn accounts are polled.");
+            note(State.OFF, "The hub's polling list can't be used (RUNECLANS_HUB_ENABLED off, or the hub answered 404/403): only the bot's own clans and /rsn accounts are polled.");
             return last;
         }
         note(State.UNREACHABLE, "The hub's polling list can't be read just now; the last list is used for up to " + STALE_AFTER.toHours() + " hours.");

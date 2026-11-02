@@ -207,6 +207,34 @@ class DirectoryPlayerLogicTest {
     }
 
     @Test
+    void aPlayerInNoClanStillGetsTheirStatsOnceTheBotPolledThem() {
+        Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Someone Else", NOW);
+        assertNull(DirectoryPlayerLogic.answer("Loner", fake, NOW), "never polled: nothing to show");
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        DataObject answer = DirectoryPlayerLogic.answer("Loner", fake, NOW);
+        assertEquals("Loner", answer.getString("rsn"));
+        assertEquals(0, answer.getArray("clans").length(), "every linked player is tracked, clan or not (Drake 2026-11-02)");
+        assertEquals(9_000, answer.getObject("stats").getLong("totalXp"));
+    }
+
+    @Test
+    void aHiddenMemberStaysHiddenEvenWithStats() {
+        Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Shy", NOW);
+        fake.hidden.add(GUILD_A + ":shy");
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        assertNull(DirectoryPlayerLogic.answer("Shy", fake, NOW));
+    }
+
+    @Test
+    void aMemberOfAnUnlistedClanGetsStatsWithoutTheClan() {
+        Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.UNLISTED, "Player", NOW);
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        DataObject answer = DirectoryPlayerLogic.answer("Player", fake, NOW);
+        assertEquals(0, answer.getArray("clans").length(), "the unlisted clan isn't named");
+        assertEquals(9_000, answer.getObject("stats").getLong("totalXp"));
+    }
+
+    @Test
     void aPlayerWithNoSnapshotYetHasNoStats() {
         Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.PUBLIC, "Player", NOW);
         DataObject answer = DirectoryPlayerLogic.answer("Player", fake, NOW);

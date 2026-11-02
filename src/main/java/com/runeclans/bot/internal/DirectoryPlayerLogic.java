@@ -91,8 +91,12 @@ final class DirectoryPlayerLogic {
 
     /** The clans that may show this player, the most recently polled first (then by name). */
     static List<Membership> memberships(String rsn, Source source) {
+        return memberships(rsn, source, source.guildsWithActiveMember(rsn));
+    }
+
+    private static List<Membership> memberships(String rsn, Source source, List<Long> guilds) {
         List<Membership> out = new ArrayList<>();
-        for (long guildId : source.guildsWithActiveMember(rsn)) {
+        for (long guildId : guilds) {
             ClanProfile profile = source.profile(guildId).orElse(null);
             if (profile == null || profile.slug() == null || profile.slug().isBlank()) continue;
             if (ProfileRules.listing(profile, source.clanName(guildId)) != ProfileRules.Listing.LISTED) continue;
@@ -105,10 +109,21 @@ final class DirectoryPlayerLogic {
         return out;
     }
 
-    /** The whole answer, or null when no included clan has the player (the route answers 404, as for a name nobody knows). */
+    /**
+     * The whole answer, or null (the route answers 404, as for a name nobody knows). A player in no clan the bot tracks still gets their stats
+     * with no clans (Drake 2026-11-02: every linked player is tracked, clan or not); null when the bot has never polled them, or when a clan has
+     * them but hides their member page, so a hidden member still looks like a name nobody knows.
+     */
     static DataObject answer(String rsn, Source source, OffsetDateTime now) {
-        List<Membership> memberships = memberships(rsn, source);
-        if (memberships.isEmpty()) return null;
+        List<Long> guilds = source.guildsWithActiveMember(rsn);
+        List<Membership> memberships = memberships(rsn, source, guilds);
+        if (memberships.isEmpty()) {
+            for (long guildId : guilds) {
+                if (source.visibleMember(guildId, rsn) == null) return null;
+            }
+            DataObject stats = stats(rsn, source, now);
+            return stats == null ? null : DataObject.empty().put("rsn", rsn).put("clans", DataArray.empty()).put("stats", stats);
+        }
         String name = memberships.getFirst().row().rsn();
         DataArray clans = DataArray.empty();
         for (Membership m : memberships) {
