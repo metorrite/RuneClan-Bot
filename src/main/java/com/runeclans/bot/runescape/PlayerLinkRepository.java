@@ -984,6 +984,27 @@ public class PlayerLinkRepository {
         }
     }
 
+    /** Which of these names (lower-cased) have any stats snapshot at all: the "first polls" check, lighter than {@link #getLatestSnapshots}. */
+    public java.util.Set<String> namesWithSnapshot(java.util.Collection<String> rsns) {
+        java.util.Set<String> results = new java.util.HashSet<>();
+        if (rsns.isEmpty()) return results;
+        String sql = """
+                SELECT n AS key FROM unnest(?::text[]) AS n
+                WHERE EXISTS (SELECT 1 FROM younglings.player_stats_snapshot s WHERE LOWER(s.rsn) = n)
+                """;
+        try (Connection connection = connectionSupplier.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setArray(1, connection.createArrayOf("text", rsns.stream().map(r -> r.toLowerCase(java.util.Locale.ROOT)).distinct().toArray()));
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) results.add(rs.getString("key"));
+            }
+            return results;
+        } catch (SQLException e) {
+            log.error("Failed to check which of {} names have a snapshot", rsns.size(), e);
+            throw new RuntimeException("Failed to check for stats snapshots", e);
+        }
+    }
+
     /**
      * The most recent snapshot of each of these names at once (a name that has never been polled is missing from the answer), keyed by the lower-cased name. One
      * query for a whole roster instead of one per player.
