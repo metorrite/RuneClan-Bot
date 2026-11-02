@@ -20,7 +20,8 @@ import java.util.function.Function;
  * backfills anyone linked earlier who was never polled.
  * <p>
  * A name RuneMetrics can't answer for (a private profile, a name change) stays without a snapshot, so a name is offered again only after
- * {@link #RETRY}. That memory lives in the bot's process: a restart offers every unpolled name once more, which is harmless.
+ * {@link #RETRY}. That memory lives in the bot's process: a restart offers every unpolled name once more. Each run offers at most the number
+ * it is given, so a big backlog (a restart, or many links at once) drains a few names at a time instead of crowding out the clan tier.
  */
 final class FirstPolls {
     /** How long before a name that still has no snapshot is offered again. */
@@ -35,9 +36,9 @@ final class FirstPolls {
 
     /**
      * The names of {@code names} (once each, first spelling, compared ignoring case) that have no snapshot and were not offered within
-     * {@link #RETRY}; they count as offered now. {@code polled} answers which of the lower-cased names it is given have any snapshot.
+     * {@link #RETRY}, at most {@code max} of them; those count as offered now. {@code polled} answers which of the lower-cased names it is given have any snapshot.
      */
-    synchronized List<String> due(Collection<String> names, Function<Collection<String>, Set<String>> polled) {
+    synchronized List<String> due(Collection<String> names, Function<Collection<String>, Set<String>> polled, int max) {
         Map<String, String> unique = new LinkedHashMap<>();
         for (String raw : names) {
             if (raw == null || raw.isBlank()) continue;
@@ -54,6 +55,7 @@ final class FirstPolls {
         offered.keySet().removeIf(key -> have.contains(key) || !unique.containsKey(key));
         List<String> out = new ArrayList<>();
         for (Map.Entry<String, String> e : unique.entrySet()) {
+            if (out.size() >= max) break;
             if (have.contains(e.getKey())) continue;
             Instant at = offered.get(e.getKey());
             if (at != null && now.isBefore(at.plus(RETRY))) continue;

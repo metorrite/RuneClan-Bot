@@ -270,6 +270,11 @@ public class SiteApi {
         return route.equals("member/recap") ? recapGate.answer(guildId, guild == null, answer, RecapGate.viewer(exchange)) : answer;
     }
 
+    /** {@link MemberProfileRepository#hidesFromRankingsAnywhere}: hidden from the rankings on any server, current member or not. */
+    boolean hidesFromRankingsAnywhere(String rsn) {
+        return rsn != null && !rsn.isBlank() && profiles.hidesFromRankingsAnywhere(rsn);
+    }
+
     /**
      * The roster row for {@code rsn} when a clan site may show that member on their own (member page, member recap, skill series, T-369):
      * a current member of this server's clan who hasn't hidden themselves from the rankings. {@code null} otherwise, and the route answers 404,

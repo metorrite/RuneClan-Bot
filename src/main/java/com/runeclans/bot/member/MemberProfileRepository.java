@@ -302,6 +302,24 @@ public class MemberProfileRepository {
     }
 
     /**
+     * Whether this RuneScape name hid itself from the rankings on any server, current member or not (T-846): a player who hid on a clan's site
+     * and then left that clan stays hidden on their runeclans.com profile too.
+     */
+    public boolean hidesFromRankingsAnywhere(String rsn) {
+        String sql = "SELECT 1 FROM younglings.player_link l JOIN younglings.member_profile p ON p.guild_id = l.guild_id AND p.discord_user_id = l.discord_user_id "
+                + "WHERE LOWER(l.rsn) = LOWER(?) AND p.hide_from_leaderboards LIMIT 1";
+        try (Connection c = connectionSupplier.getConnection();
+             PreparedStatement s = c.prepareStatement(sql)) {
+            s.setString(1, rsn.strip());
+            try (ResultSet rs = s.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw fail("read whether a player hides anywhere", e);
+        }
+    }
+
+    /**
      * Lower-cased RuneScape names whose owners hid them from rankings ({@code leaderboards = true}) or hid their adventure log. When the
      * server's {@link PrivacyDefaults} hide that by default, also every current clan member whose name isn't linked to someone who chose
      * their own privacy toggles (T-395): a member who never chose (or never linked) follows the default.

@@ -71,6 +71,13 @@ public class RosterPollScheduler {
     private static final LocalTime LINKED_ANCHOR_UTC = LocalTime.of(23, 30);
     /** How often the "first polls" job looks for tracked names with no stats yet (a new link waits at most this plus the hub list's keep). */
     static final Duration FIRST_POLL_EVERY = Duration.ofMinutes(2);
+    /** The most names one "first polls" run submits, spread over its two minutes, so a backlog never crowds out the clan tier. */
+    static final int FIRST_POLLS_PER_RUN = 10;
+    /**
+     * A first poll counts as done by any poll newer than this: long enough to skip a name something else just polled, short enough that a
+     * name RuneMetrics answered "private" for is really asked again after {@link FirstPolls#RETRY} (the engine remembers definite answers).
+     */
+    static final Duration FIRST_POLL_MAX_AGE = Duration.ofHours(1);
 
     private final ClanMemberRepository clanMemberRepository;
     private final ClanSyncService clanSyncService;
@@ -126,9 +133,9 @@ public class RosterPollScheduler {
         pollCoordinator.schedule(new PollJob("other linked players", PollPriority.LINKED, linkedWindow,
                 durationUntilNextUtc(LINKED_ANCHOR_UTC), linkedWindow, linkedWindow.dividedBy(2), () -> tiers(jda).linked()));
         // Drake 2026-11-02: a player is polled once on linking, then on their tier's cycle. Any tracked name with no stats at all is polled
-        // within minutes, at the clan tier's place in the queue (behind button presses), which also backfills links nobody polled yet
-        pollCoordinator.schedule(new PollJob("first polls", PollPriority.CLAN, FIRST_POLL_EVERY,
-                firstRun, Duration.ZERO, Duration.ofDays(3650), this::firstPollTargets));
+        // within minutes, a few per run spread over the run and queued behind the clan tier, which also backfills links nobody polled yet
+        pollCoordinator.schedule(new PollJob("first polls", PollPriority.COMMUNITY, FIRST_POLL_EVERY,
+                firstRun, FIRST_POLL_EVERY, FIRST_POLL_MAX_AGE, this::firstPollTargets));
 
         log.info("Roster poll jobs registered: players in a registered clan are spread across every {}; community players across every {}; " +
                         "other linked players across every {}, first cycle ending near {} UTC.",
@@ -142,7 +149,21 @@ public class RosterPollScheduler {
         names.addAll(hub.community());
         names.addAll(hub.linked());
         names.addAll(linkService.getAllAccountRsns());
-        return firstPolls.due(names, keys -> links.getLatestSnapshots(keys).keySet());
+        return firstPolls.due(names, links::namesWithSnapshot, FIRST_POLLS_PER_RUN);
+    }
+
+    /**
+     * Whether the bot tracks this name (T-846, the Refresh button): a {@code /rsn} account or in the hub's last polling list. Never asks the
+     * hub, so a web request doesn't wait on it.
+     */
+    public boolean tracked(String rsn) {
+        if (rsn == null || rsn.isBlank()) return false;
+        String key = rsn.strip().toLowerCase(Locale.ROOT);
+        HubPollingList.Groups hub = hubList.lastKnown();
+        for (List<String> list : List.of(hub.clan(), hub.community(), hub.linked(), linkService.getAllAccountRsns())) {
+            for (String name : list) if (name.strip().toLowerCase(Locale.ROOT).equals(key)) return true;
+        }
+        return false;
     }
 
     /** The servers the bot is in that have a clan set up. Their rosters are the first tier. */
