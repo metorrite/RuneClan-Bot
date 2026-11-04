@@ -46,7 +46,7 @@ final class HubPollingList {
 
     private final Function<String, RuneClansHubClient.Answer> get;
     private final Clock clock;
-    private Groups last = Groups.EMPTY;
+    private volatile Groups last = Groups.EMPTY;
     private Instant readAt;
     private Instant okAt;
     private State logged;
@@ -63,7 +63,7 @@ final class HubPollingList {
     }
 
     /** The last list read, without asking the hub (for a web request that must not wait on it); empty before the first read. */
-    synchronized Groups lastKnown() {
+    Groups lastKnown() {
         return last;
     }
 
