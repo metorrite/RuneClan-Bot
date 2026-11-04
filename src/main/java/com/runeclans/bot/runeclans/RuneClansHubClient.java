@@ -154,6 +154,12 @@ public class RuneClansHubClient {
         return writes.submit(new HubWriteQueue.Write(method, path, body, done));
     }
 
+    /** {@link #write}, replacing any held write with the same {@code supersedeKey} (see {@link HubWriteQueue.Write}). */
+    public HubWriteQueue.Result write(String method, String path, String body, Consumer<HubWriteQueue.Result> done, String supersedeKey) {
+        if (!enabled()) return new HubWriteQueue.Result(HubWriteQueue.Outcome.REFUSED, null);
+        return writes.submit(new HubWriteQueue.Write(method, path, body, done, supersedeKey));
+    }
+
     /** Sends the held writes (the feed lane runs this every 10 seconds). Returns how many were sent. */
     public int drainWrites() {
         return enabled() ? writes.drain() : 0;

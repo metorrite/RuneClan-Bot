@@ -42,7 +42,7 @@ class FormsAdminApiTest {
     void setUp() {
         repository = mock(WebFormRepository.class);
         tickets = mock(TicketRepository.class);
-        api = new FormsAdminApi(repository, tickets);
+        api = new FormsAdminApi(repository, tickets, com.runeclans.bot.hubcommunity.HubCommunity.off(), null, null);
         guild = mock(Guild.class);
         when(guild.getIdLong()).thenReturn(GUILD);
         actor = mock(Member.class);

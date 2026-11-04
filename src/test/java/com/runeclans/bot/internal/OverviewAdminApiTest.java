@@ -39,7 +39,7 @@ class OverviewAdminApiTest {
     void setUp() {
         notices = mock(NoticeRepository.class);
         owners = mock(BotOwners.class);
-        api = new OverviewAdminApi(mock(AdminOpsApi.class), mock(TicketRepository.class), mock(SiteStatsRepository.class), mock(PollService.class), notices, owners);
+        api = new OverviewAdminApi(mock(AdminOpsApi.class), mock(TicketRepository.class), mock(SiteStatsRepository.class), mock(PollService.class), mock(com.runeclans.bot.commands.signup.SignupService.class), notices, owners);
 
         guild = mock(Guild.class);
         when(guild.getJDA()).thenReturn(mock(JDA.class));

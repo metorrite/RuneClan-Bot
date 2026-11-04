@@ -50,10 +50,14 @@ public class FormsPublicApi {
     private final RateLimiter submits = new RateLimiter(3, 20_000);
     private final RateLimiter reads = new RateLimiter(30, 1_000);
 
-    public FormsPublicApi(WebFormRepository repository, WebFormService service) {
+    public FormsPublicApi(WebFormRepository repository, WebFormService service, com.runeclans.bot.hubcommunity.HubCommunity community) {
+        this.community = community;
         this.repository = repository;
         this.service = service;
     }
+
+    /** Polls, signups, groups and forms live on the hub ({@code hub-community}): answers are sent there, not here. */
+    private final com.runeclans.bot.hubcommunity.HubCommunity community;
 
     /** Called after the shared secret has been checked. */
     public void handle(HttpExchange exchange, JDA jda) throws IOException {
@@ -63,6 +67,11 @@ public class FormsPublicApi {
             String method = exchange.getRequestMethod().toUpperCase();
             if (parts.length < 2 || parts.length > 3) {
                 InternalApiServer.sendJson(exchange, 404, DataObject.empty().put("error", "Not found"));
+                return;
+            }
+            if (method.equals("POST") && community.onHub()) {
+                // hub-community: forms and their answers are the hub's; the website sends answers there (ticket F3)
+                InternalApiServer.sendJson(exchange, 409, DataObject.empty().put("error", "Forms are answered on RuneClans now. Reload the page and try again.").put("moved", "hub"));
                 return;
             }
             long guildId = parseId(parts[0]);

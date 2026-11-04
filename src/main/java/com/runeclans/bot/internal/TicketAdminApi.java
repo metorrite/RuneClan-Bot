@@ -237,6 +237,9 @@ public class TicketAdminApi {
                 body.put("problems", problems);
             }
             InternalApiServer.sendJson(exchange, e.status, body);
+        } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+            // hub-community: the hub's answer, in words an admin can read
+            InternalApiServer.sendJson(exchange, e.httpStatus(), DataObject.empty().put("error", e.getMessage()));
         } catch (BadRequest e) {
             InternalApiServer.sendJson(exchange, 400, DataObject.empty().put("error", e.getMessage()));
         } catch (DiscordLookups.Slow e) {

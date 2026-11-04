@@ -50,6 +50,7 @@ public class PollCloser {
 
     void closeDue(JDA jda) {
         if (AutoPostRouter.diverting()) return; // closing a poll edits and announces in the real channel
+        if (polls.onHub()) return; // hub-community: the hub closes timed polls and the feed shows them ended (HubCommunityFeed)
         for (long pollId : settings.due(OffsetDateTime.now())) {
             var poll = polls.getSessionById(pollId);
             Guild guild = poll == null ? null : Shards.guild(jda, poll.guildId());
