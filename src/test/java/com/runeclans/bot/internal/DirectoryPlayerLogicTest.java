@@ -40,6 +40,7 @@ class DirectoryPlayerLogicTest {
         final Map<Long, String> clanNames = new HashMap<>();
         final Set<String> hidden = new HashSet<>();
         final Set<String> hiddenAnywhere = new HashSet<>();
+        final Set<String> linked = new HashSet<>();
         final List<StatsSnapshotRow> snapshots = new ArrayList<>();
         final Map<Long, List<SkillValue>> skills = new HashMap<>();
 
@@ -67,6 +68,11 @@ class DirectoryPlayerLogicTest {
         @Override
         public boolean hiddenAnywhere(String rsn) {
             return hiddenAnywhere.contains(rsn.toLowerCase());
+        }
+
+        @Override
+        public boolean linked(String rsn) {
+            return linked.contains(rsn.toLowerCase());
         }
 
         @Override
@@ -246,6 +252,28 @@ class DirectoryPlayerLogicTest {
         unverified.clanNames.put(GUILD_A, "Renamed since");
         unverified.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
         assertNull(DirectoryPlayerLogic.answer("Player", unverified, NOW), "no longer verified");
+    }
+
+    @Test
+    void aLinkedPlayerOnTheRosterOfAnUnlistedClanStillGetsTheirStatsWithNoClans() {
+        // ABabyMe on live 2026-11-02: linked, polled, on a roster the directory doesn't list, and the profile said "No hiscores yet"
+        for (Visibility v : List.of(Visibility.UNLISTED, Visibility.PRIVATE)) {
+            Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", v, "Player", NOW);
+            fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+            fake.linked.add("player");
+            DataObject answer = DirectoryPlayerLogic.answer("Player", fake, NOW);
+            assertEquals(0, answer.getArray("clans").length(), v + ": the clan stays unnamed");
+            assertEquals(9_000, answer.getObject("stats").getLong("totalXp"));
+        }
+    }
+
+    @Test
+    void aLinkedPlayerWhoHidSomewhereStaysHidden() {
+        Fake fake = new Fake().clan(GUILD_A, "alpha", "Alpha", Visibility.UNLISTED, "Player", NOW);
+        fake.snapshots.add(snapshot(1, NOW.minusMinutes(3), 9_000));
+        fake.linked.add("player");
+        fake.hiddenAnywhere.add("player");
+        assertNull(DirectoryPlayerLogic.answer("Player", fake, NOW));
     }
 
     @Test

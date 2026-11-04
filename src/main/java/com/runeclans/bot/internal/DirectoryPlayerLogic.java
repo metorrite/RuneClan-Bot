@@ -62,6 +62,9 @@ final class DirectoryPlayerLogic {
         /** {@link SiteApi#hidesFromRankingsAnywhere}: the player hid from the rankings on some server, current member or not. */
         boolean hiddenAnywhere(String rsn);
 
+        /** {@link com.runeclans.bot.runescape.RosterPollScheduler#tracked}: the name is linked (RuneLink in the hub, or {@code /rsn}). */
+        boolean linked(String rsn);
+
         /** The highest rank order of the server's clan ranks. */
         int maxRankOrder(long guildId);
 
@@ -113,16 +116,18 @@ final class DirectoryPlayerLogic {
     }
 
     /**
-     * The whole answer, or null (the route answers 404, as for a name nobody knows). A player in no clan the bot tracks at all still gets their
-     * stats with no clans (Drake 2026-11-02: every linked player is tracked, clan or not), unless they hid from the rankings on some server
-     * (even one they left) or the bot never polled them. A member of a clan the directory doesn't list (private, unlisted, suspended,
-     * unverified) or that hides them answers null as before, so nothing a clan keeps to itself shows here.
+     * The whole answer, or null (the route answers 404, as for a name nobody knows). A player no listed clan shows still gets their stats with no
+     * clans (Drake 2026-11-02: every linked player is tracked, clan or not), unless they hid from the rankings on some server (even one they
+     * left) or the bot never polled them. A name that is NOT linked and is only on the roster of a clan the directory doesn't list (private,
+     * unlisted, suspended, unverified) or that hides them answers null, so nothing a clan keeps to itself shows here; a linked player's own
+     * stats choice is the hub's, which the website applies, and {@code clans: []} says nothing about the clan.
      */
     static DataObject answer(String rsn, Source source, OffsetDateTime now) {
         List<Long> guilds = source.guildsWithActiveMember(rsn);
         List<Membership> memberships = memberships(rsn, source, guilds);
         if (memberships.isEmpty()) {
-            if (!guilds.isEmpty() || source.hiddenAnywhere(rsn)) return null;
+            if (source.hiddenAnywhere(rsn)) return null;
+            if (!guilds.isEmpty() && !source.linked(rsn)) return null;
             DataObject stats = stats(rsn, source, now);
             return stats == null ? null : DataObject.empty().put("rsn", rsn).put("clans", DataArray.empty()).put("stats", stats);
         }

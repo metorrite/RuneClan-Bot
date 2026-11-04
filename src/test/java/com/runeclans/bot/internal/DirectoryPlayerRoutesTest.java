@@ -60,7 +60,7 @@ class DirectoryPlayerRoutesTest {
         points = mock(ClanPointsRepository.class);
         jda = mock(JDA.class);
         cache = new SiteCache();
-        routes = new DirectoryPlayerRoutes(profiles, service, siteApi, stats, links, points, cache);
+        routes = new DirectoryPlayerRoutes(profiles, service, siteApi, stats, links, points, cache, mock(com.runeclans.bot.runescape.RosterPollScheduler.class));
     }
 
     private void listedClanWith(String rsn) {

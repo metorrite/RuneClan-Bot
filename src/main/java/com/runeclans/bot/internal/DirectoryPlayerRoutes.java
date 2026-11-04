@@ -7,6 +7,7 @@ import com.runeclans.bot.internal.SiteStatsRepository.MemberRow;
 import com.runeclans.bot.runescape.ClanPointsRepository;
 import com.runeclans.bot.runescape.ClanPointsRepository.RankConfigRow;
 import com.runeclans.bot.runescape.PlayerLinkRepository;
+import com.runeclans.bot.runescape.RosterPollScheduler;
 import com.runeclans.bot.runescape.PlayerLinkRepository.StatsSnapshotRow;
 import com.runeclans.bot.runescape.SkillValue;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -45,7 +46,7 @@ public class DirectoryPlayerRoutes implements DirectoryRouteModule {
     private final SiteCache cache;
 
     public DirectoryPlayerRoutes(ClanProfileRepository profiles, ClanProfileService service, SiteApi siteApi, SiteStatsRepository stats,
-                                 PlayerLinkRepository links, ClanPointsRepository points, SiteCache cache) {
+                                 PlayerLinkRepository links, ClanPointsRepository points, SiteCache cache, RosterPollScheduler tracker) {
         this.cache = cache;
         this.source = new DirectoryPlayerLogic.Source() {
             @Override
@@ -71,6 +72,11 @@ public class DirectoryPlayerRoutes implements DirectoryRouteModule {
             @Override
             public boolean hiddenAnywhere(String rsn) {
                 return siteApi.hidesFromRankingsAnywhere(rsn);
+            }
+
+            @Override
+            public boolean linked(String rsn) {
+                return tracker.tracked(rsn);
             }
 
             @Override
