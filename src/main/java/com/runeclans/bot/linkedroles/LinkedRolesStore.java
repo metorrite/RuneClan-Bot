@@ -3,6 +3,9 @@ package com.runeclans.bot.linkedroles;
 import com.runeclans.bot.database.SchemaBootstrapper;
 import com.runeclans.bot.linkedroles.RoleMetadata.Profile;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
+import com.runeclans.bot.runescape.stats.StatsBackend;
+import com.runeclans.bot.runescape.stats.StatsBackends;
+import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +26,7 @@ import java.util.function.LongPredicate;
  * {@link TokenBox} (never stored or logged in clear), the RuneLink name the website found for them, and what was last sent to Discord. Plus
  * the read-only lookup of what the bot knows about a person (linked name, levels, clan) from the RuneScape tables it already keeps.
  */
-@BService
+@BConfiguration
 public class LinkedRolesStore {
     private static final Logger log = LoggerFactory.getLogger(LinkedRolesStore.class);
 
@@ -32,6 +35,23 @@ public class LinkedRolesStore {
                       String lastFingerprint, Instant lastPushedAt, Instant createdAt, boolean rsLinkConfirmed) {}
 
     private final ConnectionSupplier db;
+
+    /** Stats reads answer from the hub while it polls, else from this class's own SQL (T-851, {@link StatsBackends}). */
+    private volatile StatsBackends stats = StatsBackends.none();
+
+    /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it. */
+    @BService
+    public static LinkedRolesStore linkedRolesStore(ConnectionSupplier db, StatsBackends backends) {
+        LinkedRolesStore store = new LinkedRolesStore(db);
+        store.stats = backends;
+        return store;
+    }
+
+    /** Reads from {@code backends} while the hub polls (tests). */
+    public LinkedRolesStore withStats(StatsBackends backends) {
+        this.stats = backends;
+        return this;
+    }
 
     public LinkedRolesStore(ConnectionSupplier db) {
         this.db = db;
@@ -145,6 +165,15 @@ public class LinkedRolesStore {
      * that {@code listed} says is publicly listed.
      */
     public Profile profile(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed) {
+        StatsBackend hub = stats.hub();
+        Profile fromTables = profileFromTables(userId, rsLinkRsn, rsLinkSince, listed, hub != null);
+        if (hub == null || fromTables.rsn() == null) return fromTables;
+        // T-851: the levels come from the hub while it polls, read after the database connection is back in the pool
+        var latest = hub.latest(fromTables.rsn());
+        return latest == null ? fromTables : new Profile(fromTables.rsn(), fromTables.linkedSince(), latest.totalLevel(), latest.combatLevel(), fromTables.clanMember());
+    }
+
+    private Profile profileFromTables(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed, boolean levelsFromHub) {
         try (Connection c = db.getConnection()) {
             String rsn = null;
             Instant since = null;
@@ -170,7 +199,7 @@ public class LinkedRolesStore {
 
             Integer total = null;
             Integer combat = null;
-            try (PreparedStatement s = c.prepareStatement(
+            if (!levelsFromHub) try (PreparedStatement s = c.prepareStatement(
                     "SELECT total_level, combat_level FROM younglings.player_stats_snapshot WHERE LOWER(rsn) = LOWER(?) ORDER BY snapshot_at DESC LIMIT 1")) {
                 s.setString(1, rsn);
                 try (ResultSet rs = s.executeQuery()) {

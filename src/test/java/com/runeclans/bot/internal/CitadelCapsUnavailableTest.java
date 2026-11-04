@@ -49,10 +49,10 @@ class CitadelCapsUnavailableTest {
 
     @Test
     void capsFollowTheRuneMetricsSwitch() {
-        Clock before = Clock.fixed(RuneMetricsSwitch.SUNSET.minusSeconds(60), ZoneOffset.UTC);
-        Clock after = Clock.fixed(RuneMetricsSwitch.SUNSET, ZoneOffset.UTC);
-        assertTrue(RuneMetricsSwitch.fromEnv(k -> null, before).getAsBoolean(), "auto: counted until the sunset");
-        assertFalse(RuneMetricsSwitch.fromEnv(k -> null, after).getAsBoolean(), "auto: unavailable from the sunset");
+        Clock before = Clock.fixed(java.time.Instant.parse("2026-11-09T00:00:00Z"), ZoneOffset.UTC);
+        Clock after = Clock.fixed(java.time.Instant.parse("2027-01-01T00:00:00Z"), ZoneOffset.UTC);
+        assertTrue(RuneMetricsSwitch.fromEnv(k -> null, before).getAsBoolean(), "auto: counted");
+        assertTrue(RuneMetricsSwitch.fromEnv(k -> null, after).getAsBoolean(), "auto: still counted, no stop date (plan D-1)");
         assertTrue(RuneMetricsSwitch.fromEnv(k -> "on", after).getAsBoolean());
         assertFalse(RuneMetricsSwitch.fromEnv(k -> "off", before).getAsBoolean());
     }

@@ -78,8 +78,7 @@ public class RuneScapeApiClient {
     public ProfileResult fetchProfileResult(String rsn) {
         if (!runeMetricsOn.getAsBoolean()) {
             if (loggedSwitchedOff.compareAndSet(false, true)) {
-                log.warn("RuneMetrics is switched off (RUNEMETRICS, or its {} retirement date has passed): profile polls now answer 'unavailable' without asking.",
-                        RuneMetricsSwitch.SUNSET);
+                log.warn("RuneMetrics is switched off (RUNEMETRICS=off): profile polls now answer 'unavailable' without asking.");
             }
             return new ProfileResult.Unavailable();
         }

@@ -245,9 +245,10 @@ public class RsAdminInteractionListener extends ListenerAdapter {
         String rsn = event.getValue("lookup_rsn").getAsString().trim();
         event.deferReply(true).queue();
 
-        ProfileResult result = pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable();
-        event.getHook().editOriginalComponents(List.of(buildLookupCard(guild, rsn, result))).useComponentsV2(true)
+        Lookup lookup = lookup(rsn, event.getUser().getIdLong());
+        event.getHook().editOriginalComponents(List.of(buildLookupCard(guild, rsn, lookup.result()))).useComponentsV2(true)
                 .setAllowedMentions(EnumSet.noneOf(Message.MentionType.class)).queue();
+        noteAfter(event.getHook(), lookup);
     }
 
     /**
@@ -771,12 +772,31 @@ public class RsAdminInteractionListener extends ListenerAdapter {
 
     // --- Per-player actions ---
 
+    /**
+     * A fresh look at one player for the lookup card: the bot's own poll, or, while the hub polls (T-851), the hub's Refresh on behalf of the admin
+     * who pressed plus the hub's newest snapshot (the refresh itself lands within a minute; press Update again to see it).
+     */
+    /** What a lookup found, and (while the hub polls) what the hub said about refreshing it, for a toast under the card; null when nothing needs saying. */
+    private record Lookup(ProfileResult result, String note) {}
+
+    private Lookup lookup(String rsn, long pressedBy) {
+        if (!statsService.hubPolls()) return new Lookup(pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable(), null);
+        com.runeclans.bot.runescape.stats.HubRefresh.Result viaHub = statsService.refreshViaHub(rsn, pressedBy);
+        return new Lookup(statsService.latestAsResult(rsn), com.runeclans.bot.runescape.stats.HubRefresh.describe(viaHub, rsn));
+    }
+
+    private static void noteAfter(net.dv8tion.jda.api.interactions.InteractionHook hook, Lookup lookup) {
+        if (lookup.note() == null) return;
+        hook.sendMessageComponents(List.of(Containers.toast(Containers.INFO, lookup.note()))).useComponentsV2(true).setEphemeral(true).queue();
+    }
+
     /** Reached from a Player Lookup card's "Update" button — re-renders that same card, not the admin panel (which no longer shows any one player inline anyway). */
     private void doPollOne(ComponentInteraction event, Guild guild, String rsn) {
         event.deferEdit().queue();
-        ProfileResult result = pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable();
-        event.getHook().editOriginalComponents(List.of(buildLookupCard(guild, rsn, result)))
+        Lookup lookup = lookup(rsn, event.getUser().getIdLong());
+        event.getHook().editOriginalComponents(List.of(buildLookupCard(guild, rsn, lookup.result())))
                 .useComponentsV2(true).setAllowedMentions(EnumSet.noneOf(Message.MentionType.class)).queue();
+        noteAfter(event.getHook(), lookup);
     }
 
     private void doSeedTestData(ComponentInteraction event, Guild guild, String rsn) {

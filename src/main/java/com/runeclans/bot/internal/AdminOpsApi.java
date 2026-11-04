@@ -165,8 +165,14 @@ public class AdminOpsApi {
                 .put("polling", DataObject.empty().put("rosterSize", rows.size()).put("refreshedRecently", polledRecently).put("stale", stale).put("newestRefresh", iso(newestPoll))
                         .put("cycleSeconds", pollCycle().toSeconds()).put("rateLimitedQueue", slowedQueue()).put("delaySeconds", Math.round(polls.status().engine().intervalMs() / 1000.0))
                         .put("queue", pollingStatus()))
-                .put("data", DataObject.empty().put("newestActivity", iso(store.newestActivity())).put("firstSnapshot", iso(stats.firstSnapshotAt(guildId))))
+                .put("data", DataObject.empty().put("newestActivity", iso(newestActivity(guildId))).put("firstSnapshot", iso(stats.firstSnapshotAt(guildId))))
                 .put("scheduledPending", store.scheduled(guildId, 0).size());
+    }
+
+    /** The newest adventure-log line known: the bot's table, or while the hub polls (T-851) the newest of this clan's members' lines on the hub. */
+    private OffsetDateTime newestActivity(long guildId) {
+        if (!polls.hubPolls()) return store.newestActivity();
+        return store.lastActivity(guildId).values().stream().filter(java.util.Objects::nonNull).max(Comparator.naturalOrder()).orElse(null);
     }
 
     // ---------- polling ----------
@@ -206,10 +212,16 @@ public class AdminOpsApi {
     /**
      * Queues one player for an immediate poll from the dashboard, ahead of the background work. Returns as soon as it is
      * queued, because a poll can wait behind other interactive ones; the dashboard watches {@code polling} for the result.
+     * While the hub polls, {@code queued} is false with a {@code status} of WAIT, UNKNOWN or UNAVAILABLE when the hub didn't take it.
      */
-    DataObject pollPlayer(String rsn) {
+    DataObject pollPlayer(String rsn, long pressedBy) {
         String name = rsn == null ? "" : rsn.trim();
         if (name.isEmpty() || name.length() > 12) throw new ApiError(400, Text.en("dashboard.that_isn_t_a_valid_runescape"));
+        if (polls.hubPolls()) {
+            // T-851: the hub polls; its Refresh queues the poll (or says how long to wait) on behalf of the admin who pressed
+            var r = polls.refreshViaHub(name, pressedBy);
+            return DataObject.empty().put("queued", r.queued()).put("rsn", name).put("status", r.outcome().name()).put("retryAfterSeconds", r.retryAfterSeconds());
+        }
         polls.submit(com.runeclans.bot.runescape.polling.PollRequest.interactive(name, "dashboard"));
         return DataObject.empty().put("queued", true).put("rsn", name);
     }

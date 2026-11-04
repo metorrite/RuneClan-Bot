@@ -557,7 +557,7 @@ public class TicketAdminApi {
                 }
                 if (parts.length == 2 && parts[1].equals("poll")) {
                     requireMethod(method, "POST");
-                    return ops.pollPlayer(body(exchange).getString("rsn", ""));
+                    return ops.pollPlayer(body(exchange).getString("rsn", ""), actor.getIdLong());
                 }
                 return null;
             }

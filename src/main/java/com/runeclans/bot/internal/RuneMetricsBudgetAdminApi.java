@@ -118,7 +118,8 @@ public class RuneMetricsBudgetAdminApi implements AdminRouteExtension {
             history.add(DataObject.empty().put("day", row.day().toString()).put("tier", row.priority().name()).put("sent", row.counts().sent()).put("reused", row.counts().reused())
                     .put("rateLimited", row.counts().rateLimited()).put("failed", row.counts().failed()).put("gaveUp", row.counts().gaveUp()));
         }
-        return DataObject.empty().put("tiers", tiers).put("servers", servers).put("history", history)
+        // T-851: while the hub polls, these counters stay at zero; the numbers live on the hub's /admin/polling (RuneClan Admin's RuneMetrics tab)
+        return DataObject.empty().put("hubPolls", coordinator.hubPolls()).put("tiers", tiers).put("servers", servers).put("history", history)
                 .put("pace", DataObject.empty().put("intervalSeconds", Math.round(engine.intervalMs() / 1000.0)).put("requestsLastMinute", engine.requestsLastMinute())
                         .put("requestsLast10Minutes", engine.requestsLast10Minutes()).put("slowedBy", engine.multiplier()).put("queued", engine.queued()))
                 .put("capacityPerDay", Math.round(capacityPerDay)).put("clanDemandPerDay", Math.round(totalClanDemand)).put("day", today.day().toString());

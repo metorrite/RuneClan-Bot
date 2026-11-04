@@ -149,7 +149,16 @@ public class RuneClansFeedPoller {
                 RuneClansHubClient.Answer a = hub.feed(cursor, PAGE);
                 if (a == null || !a.ok() || a.json() == null) return passed;
                 DataArray data = a.json().getArray("data");
-                if (!firstRun) passed += handle(data);
+                if (!firstRun) {
+                    passed += handle(data);
+                    for (HubFeedListener l : listeners) {
+                        try {
+                            l.onHubFeedPage();
+                        } catch (RuntimeException ex) {
+                            log.warn("A hub feed listener failed at the end of a page: {}", ex.getClass().getSimpleName());
+                        }
+                    }
+                }
                 cursor = a.json().getString("nextCursor", cursor);
                 if (cursor != null && !cursor.equals(known)) {
                     saveCursor.accept(cursor);

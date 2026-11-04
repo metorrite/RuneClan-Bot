@@ -2,6 +2,9 @@ package com.runeclans.bot.runescape;
 
 import com.runeclans.bot.internal.SiteInvalidator;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
+import com.runeclans.bot.runescape.stats.StatsBackend;
+import com.runeclans.bot.runescape.stats.StatsBackends;
+import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,12 +18,29 @@ import java.util.ArrayList;
 import java.util.List;
 import com.runeclans.bot.config.BotBrand;
 
-@BService
+@BConfiguration
 public class PlayerLinkRepository {
     private static final Logger log = LoggerFactory.getLogger(PlayerLinkRepository.class);
 
     private final ConnectionSupplier connectionSupplier;
 
+
+    /** Stats reads answer from the hub while it polls, else from this class's own SQL (T-851, {@link StatsBackends}). */
+    private volatile StatsBackends stats = StatsBackends.none();
+
+    /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it. The bot's own tables answer until the hub polls. */
+    @BService
+    public static PlayerLinkRepository playerLinkRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer, StatsBackends backends) {
+        PlayerLinkRepository repository = new PlayerLinkRepository(connectionSupplier, initializer);
+        repository.stats = backends;
+        return repository;
+    }
+
+    /** Reads from {@code backends} while the hub polls (tests). */
+    public PlayerLinkRepository withStats(StatsBackends backends) {
+        this.stats = backends;
+        return this;
+    }
     public PlayerLinkRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer) {
         this.connectionSupplier = connectionSupplier;
     }
@@ -803,6 +823,8 @@ public class PlayerLinkRepository {
 
     /** Per-skill breakdown for one snapshot, ordered by skill ID (the game's own skill order). */
     public List<SkillValue> getSkillsForSnapshot(long snapshotId) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.skillsForSnapshot(snapshotId);
         String sql = """
                 SELECT skill_id, level, xp, rank
                 FROM younglings.player_skill_snapshot
@@ -833,6 +855,8 @@ public class PlayerLinkRepository {
 
     /** Every snapshot since {@code since}, oldest first — used to find "first vs. latest this period" totals. */
     public List<StatsSnapshotRow> getSnapshotsSince(String rsn, java.time.OffsetDateTime since) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.snapshotsSince(rsn, since);
         String sql = """
                 SELECT snapshot_id, snapshot_at, total_level, total_xp, combat_level,
                        quests_complete, quests_started, quests_not_started
@@ -862,6 +886,8 @@ public class PlayerLinkRepository {
 
     /** Every skill's XP at every poll since {@code since}, oldest first — grouped/reduced in Java to find per-skill gains over the period. */
     public List<SkillHistoryPoint> getAllSkillsXpHistorySince(String rsn, java.time.OffsetDateTime since) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.allSkillsXpHistorySince(rsn, since);
         String sql = """
                 SELECT sk.skill_id, s.snapshot_at, sk.xp
                 FROM younglings.player_skill_snapshot sk
@@ -897,6 +923,8 @@ public class PlayerLinkRepository {
 
     /** Activities recorded since {@code since}, oldest first — the monthly recap's data source for "times capped" and "most challenged". */
     public List<PlayerActivity> getActivitiesSince(String rsn, java.time.OffsetDateTime since) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.activitiesSince(rsn, since);
         String sql = """
                 SELECT activity_date, activity_text, activity_details
                 FROM younglings.player_activity
@@ -928,6 +956,8 @@ public class PlayerLinkRepository {
 
     /** One skill's XP at each poll since {@code since}, oldest first — the XP-over-time chart's data source. */
     public List<SkillXpPoint> getSkillXpHistory(String rsn, int skillId, java.time.OffsetDateTime since) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.skillXpHistory(rsn, skillId, since);
         String sql = """
                 SELECT s.snapshot_at, sk.xp
                 FROM younglings.player_skill_snapshot sk
@@ -960,6 +990,8 @@ public class PlayerLinkRepository {
 
     /** Most recent snapshot for {@code rsn}, or {@code null} if it's never been polled. */
     public StatsSnapshotRow getLatestSnapshot(String rsn) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.latest(rsn);
         String sql = """
                 SELECT snapshot_id, snapshot_at, total_level, total_xp, combat_level,
                        quests_complete, quests_started, quests_not_started
@@ -1010,6 +1042,8 @@ public class PlayerLinkRepository {
      * query for a whole roster instead of one per player.
      */
     public java.util.Map<String, StatsSnapshotRow> getLatestSnapshots(java.util.Collection<String> rsns) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.latestMany(rsns);
         java.util.Map<String, StatsSnapshotRow> results = new java.util.HashMap<>();
         if (rsns.isEmpty()) return results;
         String sql = """
@@ -1038,6 +1072,8 @@ public class PlayerLinkRepository {
 
     /** Every snapshot for {@code rsn}, most recent first, capped at {@code limit} — the trend/history view's data source. */
     public List<StatsSnapshotRow> getSnapshotHistory(String rsn, int limit) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.history(rsn, limit);
         String sql = """
                 SELECT snapshot_id, snapshot_at, total_level, total_xp, combat_level,
                        quests_complete, quests_started, quests_not_started
@@ -1131,6 +1167,8 @@ public class PlayerLinkRepository {
 
     /** Most recently *recorded* activities for {@code rsn} (i.e. by when we first saw them, not the in-game date string). */
     public List<PlayerActivity> getRecentActivities(String rsn, int limit) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.recentActivities(rsn, limit);
         String sql = """
                 SELECT activity_date, activity_text, activity_details
                 FROM younglings.player_activity

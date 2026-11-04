@@ -63,7 +63,13 @@ public class PollCoordinator {
 
     public record Status(PollEngine.Status engine, List<JobStatus> jobs) {}
 
-    public PollCoordinator(RuneScapeStatsService statsService, PlayerLinkRepository repository, BotConfig config) {
+    /** True while the hub polls (T-851): nothing is queued and the jobs submit nobody, so the bot's RuneMetrics counters stay at zero. */
+    private final java.util.function.BooleanSupplier hubPolls;
+    private final RuneScapeStatsService statsService;
+
+    public PollCoordinator(RuneScapeStatsService statsService, PlayerLinkRepository repository, BotConfig config, com.runeclans.bot.runescape.stats.StatsBackends backends) {
+        this.hubPolls = backends::hubPolls;
+        this.statsService = statsService;
         this.engine = new PollEngine(
                 statsService::fetchAndStore,
                 rsn -> {
@@ -80,16 +86,32 @@ public class PollCoordinator {
     // ---------------------------------------------------------------- one-off requests
 
     public CompletableFuture<PollOutcome> submit(PollRequest request) {
-        return engine.submit(request);
+        return submitAll(List.of(request)).get(0);
     }
 
     public List<CompletableFuture<PollOutcome>> submitAll(List<PollRequest> requests) {
+        if (hubPolls.getAsBoolean()) {
+            // the hub polls: no request goes out and nothing is counted; callers that need a poll now ask the hub's Refresh instead (HubRefresh)
+            List<CompletableFuture<PollOutcome>> none = new ArrayList<>(requests.size());
+            for (int i = 0; i < requests.size(); i++) none.add(CompletableFuture.completedFuture(PollOutcome.cancelled()));
+            return none;
+        }
         return engine.submitAll(requests);
+    }
+
+    /** True while the hub polls instead of the bot. */
+    public boolean hubPolls() {
+        return hubPolls.getAsBoolean();
+    }
+
+    /** While the hub polls: asks the hub's Refresh for {@code rsn} on behalf of {@code discordId} (T-851), instead of queueing a bot poll. */
+    public com.runeclans.bot.runescape.stats.HubRefresh.Result refreshViaHub(String rsn, long discordId) {
+        return statsService.refreshViaHub(rsn, discordId);
     }
 
     /** Submits one request and waits for it, for callers that are handling a button press and need the answer to reply with. */
     public PollOutcome pollAndWait(PollRequest request, Duration timeout) {
-        return awaitAll(List.of(engine.submit(request)), timeout).get(0);
+        return awaitAll(List.of(submit(request)), timeout).get(0);
     }
 
     /** {@link #pollAndWait} for a person who pressed something: front of the line, a real poll, {@link #INTERACTIVE_WAIT} patience. */
@@ -143,6 +165,11 @@ public class PollCoordinator {
     private void runJob(JobState state) {
         PollJob job = state.job;
         try {
+            if (hubPolls.getAsBoolean()) {
+                state.lastRunAt = System.currentTimeMillis();
+                state.lastSubmitted = 0;
+                return;
+            }
             List<String> rsns = job.targets().get();
             state.lastRunAt = System.currentTimeMillis();
             state.lastSubmitted = rsns.size();

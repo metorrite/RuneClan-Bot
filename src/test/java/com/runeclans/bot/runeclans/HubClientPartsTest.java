@@ -80,6 +80,27 @@ class HubClientPartsTest {
     }
 
     @Test
+    void aCallNeverOutlivesTheWebsitesPatience() {
+        assertEquals(Duration.ofSeconds(8), RuneClansHubClient.REQUEST_TIMEOUT, "the website gives up on the bot after 8 seconds");
+    }
+
+    @Test
+    void aReadWithItsOwnBudgetIsTriedOnceWithoutTheSleeps() {
+        List<Duration> waits = new ArrayList<>();
+        AtomicInteger calls = new AtomicInteger();
+        HubRetry down = new HubRetry((m, p, b) -> {
+            calls.incrementAndGet();
+            return new RuneClansHubClient.Answer(503, null);
+        }, waits::add);
+        assertEquals(503, RuneClansHubClient.withoutRetries(() -> down.call("GET", "/v1/x", null)).status());
+        assertEquals(1, calls.get(), "one try inside withoutRetries");
+        assertTrue(waits.isEmpty(), "and no sleep");
+        calls.set(0);
+        assertEquals(503, down.call("GET", "/v1/x", null).status());
+        assertEquals(1 + HubRetry.BACKOFF.size(), calls.get(), "outside it, the retries are back");
+    }
+
+    @Test
     void retriesOnlyWhatIsSafeToRepeat() {
         List<Duration> waits = new ArrayList<>();
         AtomicInteger calls = new AtomicInteger();
