@@ -3,7 +3,7 @@ package com.runeclans.bot.commands.signup;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.discord.Pagination;
-import com.runeclans.bot.signup.SignupRepository;
+import com.runeclans.bot.signup.SignupStore;
 import com.runeclans.bot.util.TtlCache;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.JDA;
@@ -52,9 +52,10 @@ public class SignupService {
     // user at a time. Never persisted: abandoned drafts just sit here harmlessly until finished,
     // cancelled, or the bot restarts (same tradeoff TeamformingService makes for its own staged state).
     private final Map<Long, SubmissionDraft> submissionDraftsByUserId = new ConcurrentHashMap<>();
-    private final SignupRepository signupRepository;
+    private final SignupStore signupRepository;
 
-    public SignupService(SignupRepository signupRepository) {
+    /** {@code signupRepository}: the bot's own tables or the hub, by the {@code hub-community} switch ({@code hubcommunity.CommunityStores}). */
+    public SignupService(SignupStore signupRepository) {
         this.signupRepository = signupRepository;
         loadOpenSignupsFromDatabase();
     }
@@ -247,6 +248,17 @@ public class SignupService {
 
     public void cancelSubmissionDraft(long userId) {
         submissionDraftsByUserId.remove(userId);
+    }
+
+    /** Signups live on the RuneClans hub right now ({@code hub-community}): the hub keeps them and runs their upkeep. */
+    public boolean onHub() {
+        return signupRepository.hub();
+    }
+
+    /** Forgets a sheet this process has cached (the hub feed said it changed), so the next look reads it again. */
+    public void forget(long signupId) {
+        activeSignupsById.remove(signupId);
+        recentMisses.remove(signupId);
     }
 
     // --- Status ---
@@ -471,6 +483,28 @@ public class SignupService {
             }
         }
 
+        deleteMessages(guild, signupId);
+
+        signupRepository.deleteSignupForAdminArchive(signupId);
+        activeSignupsById.remove(signupId);
+        log.info("Deleted signup {} '{}'", signupId, session.title());
+    }
+
+    /**
+     * A sheet deleted somewhere else (the website, with {@code hub-community} on): the hub has no sheet left to read, so this takes its
+     * Discord messages down without looking it up, and forgets it.
+     */
+    public void removeDeleted(Guild guild, long signupId) {
+        SignupSession cached = activeSignupsById.get(signupId);
+        if (cached != null && cached.type() == SignupType.GROUP && cached.groupRoleId() != null) {
+            Role role = guild.getRoleById(cached.groupRoleId());
+            if (role != null) role.delete().queue(null, failure -> log.warn("Could not delete group role {} for signup {}", cached.groupRoleId(), signupId));
+        }
+        deleteMessages(guild, signupId);
+        forget(signupId);
+    }
+
+    private void deleteMessages(Guild guild, long signupId) {
         List<SignupMessage> messages = signupRepository.getActiveMessages(signupId);
 
         for (SignupMessage signupMessage : messages) {
@@ -490,10 +524,6 @@ public class SignupService {
                     }
             );
         }
-
-        signupRepository.deleteSignupForAdminArchive(signupId);
-        activeSignupsById.remove(signupId);
-        log.info("Deleted signup {} '{}'", signupId, session.title());
     }
 
     // --- Maintenance (dev bulk-close, auto-close, purge) ---

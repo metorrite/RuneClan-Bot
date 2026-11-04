@@ -52,7 +52,7 @@ class FormsPublicApiTest {
         when(jda.getGuildById(GUILD)).thenReturn(guild);
         WebFormRepository repository = mock(WebFormRepository.class);
         when(repository.get(FORM)).thenReturn(Optional.of(new Form(FORM, GUILD, "apply", "Apply", "", true, null, null, null, false, 0, List.of())));
-        api = new FormsPublicApi(repository, mock(WebFormService.class));
+        api = new FormsPublicApi(repository, mock(WebFormService.class), com.runeclans.bot.hubcommunity.HubCommunity.off());
     }
 
     @AfterEach

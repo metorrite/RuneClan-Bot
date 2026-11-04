@@ -89,8 +89,10 @@ public class CommunityAdminApi {
         if (problem != null) throw new ApiError(400, problem);
 
         GuildMessageChannel channel = postableChannel(guild, body.getString("channelId", ""), GuildMessageChannel.class);
-        long pollId = polls.createPoll(guild, channel, title, anonymous, multiple, options, actor.getIdLong());
-        if (hours != null) community.scheduleClose(pollId, java.time.OffsetDateTime.now().plusHours(hours));
+        // on the hub the poll carries its end time and the hub closes it; on the bot's own tables the poll closer does
+        java.time.Instant closesAt = hours == null ? null : java.time.Instant.now().plus(java.time.Duration.ofHours(hours));
+        long pollId = polls.createPoll(guild, channel, title, anonymous, multiple, options, actor.getIdLong(), closesAt);
+        if (hours != null && !polls.onHub()) community.scheduleClose(pollId, java.time.OffsetDateTime.now().plusHours(hours));
         cache.invalidate("polls");
         log.info("Dashboard: {} created a poll '{}' in #{}", actor.getId(), title, channel.getName());
         return DataObject.empty().put("created", true);
@@ -109,6 +111,7 @@ public class CommunityAdminApi {
 
     /** The sheets as an admin sees them: the same list as the public page, but with who is who (Discord ids included). */
     DataObject signupList(Guild guild) {
+        if (signups.onHub()) return hubSignupList(guild);
         DataArray array = DataArray.empty();
         for (var sheet : stats.activeSignups(guild.getIdLong())) {
             SignupSession session = signups.getSessionById(sheet.id());
@@ -118,6 +121,24 @@ public class CommunityAdminApi {
             }
             array.add(DataObject.empty().put("id", Long.toString(sheet.id())).put("title", sheet.title()).put("type", session == null ? "QUEUE" : session.type().name())
                     .put("paused", !"ACTIVE".equalsIgnoreCase(sheet.status())).put("entries", entries));
+        }
+        return DataObject.empty().put("signups", array);
+    }
+
+    /** {@link #signupList} while the hub keeps the sheets ({@code hub-community}): the same shape, read through the signup service. */
+    private DataObject hubSignupList(Guild guild) {
+        DataArray array = DataArray.empty();
+        List<SignupSession> sheets = new ArrayList<>(signups.getVisibleSignups(guild.getIdLong()));
+        java.util.Collections.reverse(sheets); // newest first, as the bot's own list
+        for (SignupSession session : sheets.subList(0, Math.min(20, sheets.size()))) {
+            DataArray entries = DataArray.empty();
+            int position = 1;
+            for (SignupEntry entry : signups.getEntries(session.signupId())) {
+                entries.add(DataObject.empty().put("userId", Long.toString(entry.userId())).put("name", entryName(guild, session, entry.userId(), entry.username()))
+                        .put("position", position++));
+            }
+            array.add(DataObject.empty().put("id", Long.toString(session.signupId())).put("title", session.title()).put("type", session.type().name())
+                    .put("paused", !signups.isSignupActive(session.signupId())).put("entries", entries));
         }
         return DataObject.empty().put("signups", array);
     }

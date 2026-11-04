@@ -12,7 +12,7 @@ import java.sql.*;
 import java.util.*;
 
 @BService
-public class PollRepository {
+public class PollRepository implements PollStore {
     private static final Logger log = LoggerFactory.getLogger(PollRepository.class);
 
     private final ConnectionSupplier connectionSupplier;
@@ -49,6 +49,7 @@ public class PollRepository {
 
     // --- Poll CRUD ---
 
+    @Override
     public long createPoll(long guildId, long channelId, String title, boolean anonymous,
                             boolean multipleVotes, long createdByUserId) {
         String sql = """
@@ -75,6 +76,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public long addOption(long pollId, int optionNumber, String label) {
         String sql = """
                 INSERT INTO younglings.poll_option (poll_id, option_number, label)
@@ -96,6 +98,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public void saveMessageId(long pollId, long messageId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -110,6 +113,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public List<PollSession> getAllActivePolls() {
         String sql = """
                 SELECT poll_id, guild_id, channel_id, message_id, title, anonymous, multiple_votes, status, created_by_user_id
@@ -136,6 +140,7 @@ public class PollRepository {
     }
 
     /** The active polls of one server: the {@code /poll} panel and the website list read this, so a poll made by another process shows up too. */
+    @Override
     public List<PollSession> getActivePolls(long guildId) {
         String sql = """
                 SELECT poll_id, guild_id, channel_id, message_id, title, anonymous, multiple_votes, status, created_by_user_id
@@ -157,6 +162,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public PollSession getPollById(long pollId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -192,6 +198,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public List<PollOption> getOptions(long pollId) {
         String sql = """
                 SELECT option_id, poll_id, option_number, label
@@ -215,6 +222,7 @@ public class PollRepository {
 
     // --- Voting ---
 
+    @Override
     public boolean addVote(long pollId, long optionId, long userId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -231,6 +239,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public boolean removeVote(long pollId, long optionId, long userId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -247,6 +256,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public void removeAllVotesForUser(long pollId, long userId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -261,6 +271,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public boolean hasVotedForOption(long pollId, long optionId, long userId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -274,6 +285,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public boolean hasVotedInPoll(long pollId, long userId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -287,6 +299,7 @@ public class PollRepository {
     }
 
     /** The option ids {@code userId} currently has a vote on in this poll. */
+    @Override
     public java.util.Set<Long> getUserVotes(long pollId, long userId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -304,6 +317,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public Map<Long, Integer> getVoteCounts(long pollId) {
         Map<Long, Integer> counts = new HashMap<>();
         try (Connection connection = connectionSupplier.getConnection();
@@ -319,6 +333,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public Map<Long, List<Long>> getVotersByOption(long pollId) {
         Map<Long, List<Long>> voters = new LinkedHashMap<>();
         try (Connection connection = connectionSupplier.getConnection();
@@ -337,6 +352,7 @@ public class PollRepository {
         }
     }
 
+    @Override
     public void closePoll(long pollId) {
         try (Connection connection = connectionSupplier.getConnection();
              PreparedStatement statement = connection.prepareStatement(

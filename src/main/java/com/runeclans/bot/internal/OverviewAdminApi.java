@@ -32,10 +32,13 @@ public class OverviewAdminApi {
     private final TicketRepository tickets;
     private final SiteStatsRepository siteStats;
     private final PollService polls;
+    private final com.runeclans.bot.commands.signup.SignupService signups;
     private final NoticeRepository notices;
     private final BotOwners owners;
 
-    public OverviewAdminApi(AdminOpsApi ops, TicketRepository tickets, SiteStatsRepository siteStats, PollService polls, NoticeRepository notices, BotOwners owners) {
+    public OverviewAdminApi(AdminOpsApi ops, TicketRepository tickets, SiteStatsRepository siteStats, PollService polls,
+                            com.runeclans.bot.commands.signup.SignupService signups, NoticeRepository notices, BotOwners owners) {
+        this.signups = signups;
         this.ops = ops;
         this.tickets = tickets;
         this.siteStats = siteStats;
@@ -68,7 +71,7 @@ public class OverviewAdminApi {
 
         DataObject result = DataObject.empty()
                 .put("members", members)
-                .put("community", DataObject.empty().put("openSignups", siteStats.countActiveSignups(guildId)).put("openPolls", polls.activePolls(guildId).size()))
+                .put("community", DataObject.empty().put("openSignups", openSignups(guildId)).put("openPolls", polls.activePolls(guildId).size()))
                 .put("health", healthSummary(health))
                 .put("notices", noticeList())
                 .put("isOwner", isOwner(guild, actor.getIdLong()));
@@ -151,5 +154,11 @@ public class OverviewAdminApi {
 
     private void requireOwner(Guild guild, Member actor) {
         if (!isOwner(guild, actor.getIdLong())) throw new ApiError(403, Text.of(guild, "dashboard.only_the_bot_owner_can_post"));
+    }
+
+    /** Open sheets, capped at 20 as the dashboard's list: from the hub while it keeps them ({@code hub-community}), else the bot's tables. */
+    private int openSignups(long guildId) {
+        if (signups.onHub()) return Math.min(20, signups.getVisibleSignups(guildId).size());
+        return siteStats.countActiveSignups(guildId);
     }
 }

@@ -68,6 +68,7 @@ public class PollInteractionListener extends ListenerAdapter {
                 handlePanelButton(event, id);
             }
         } catch (Exception e) {
+            if (com.runeclans.bot.hubcommunity.HubCommunityReplies.reply(event, e)) return;
             log.error("Unhandled exception in poll button interaction '{}'", id, e);
             Containers.replyError(event);
         }
@@ -80,6 +81,7 @@ public class PollInteractionListener extends ListenerAdapter {
         try {
             handleCreateModal(event);
         } catch (Exception e) {
+            if (com.runeclans.bot.hubcommunity.HubCommunityReplies.reply(event, e)) return;
             log.error("Unhandled exception in poll modal interaction", e);
             Containers.replyError(event);
         }

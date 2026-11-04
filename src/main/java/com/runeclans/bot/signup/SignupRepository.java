@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.OptionalLong;
 
 @BService
-public class SignupRepository {
+public class SignupRepository implements SignupStore {
     private static final Logger log = LoggerFactory.getLogger(SignupRepository.class);
 
     private final ConnectionSupplier connectionSupplier;
@@ -64,6 +64,7 @@ public class SignupRepository {
 
     // --- Signup CRUD ---
 
+    @Override
     public long createSignup(long guildId, String title, SignupType type, String notificationMessage,
                               String submissionFieldLabel, Integer maxSignups, long createdByUserId,
                               Long groupRoleId) {
@@ -115,6 +116,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public void updateGroupRoleId(long signupId, long roleId) {
         String sql = """
                 UPDATE younglings.signup
@@ -137,6 +139,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public List<SignupSession> getOpenSignups() {
         String sql = """
                 SELECT signup_id, guild_id, title, notification_message, max_signups,
@@ -166,6 +169,7 @@ public class SignupRepository {
     }
 
     /** One open (not deleted) signup by id, or null: the load-through behind {@code SignupService.getSessionById}. */
+    @Override
     public SignupSession getOpenSignupById(long signupId) {
         String sql = """
                 SELECT signup_id, guild_id, title, notification_message, max_signups,
@@ -191,6 +195,7 @@ public class SignupRepository {
     }
 
     /** Signups untouched (no new entries) since before {@code cutoff} — candidates for auto-close. */
+    @Override
     public List<SignupSession> getInactiveSignups(Instant cutoff) {
         String sql = """
                 SELECT signup_id, guild_id, title, notification_message, max_signups,
@@ -223,6 +228,7 @@ public class SignupRepository {
     }
 
     /** Hard-deletes (cascading to entries/messages) signups soft-deleted before {@code cutoff}. Returns the count purged. */
+    @Override
     public int purgeDeletedBefore(Instant cutoff) {
         String sql = """
                 DELETE FROM younglings.signup
@@ -245,6 +251,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public String getSignupStatus(long signupId) {
         String sql = """
                 SELECT status
@@ -268,6 +275,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public void deleteSignupForAdminArchive(long signupId) {
         String updateSignupSql = """
                 UPDATE younglings.signup
@@ -317,6 +325,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public void setSignupStatus(long signupId, String status) {
         String sql = """
                 UPDATE younglings.signup
@@ -341,6 +350,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public void softDeleteSignup(long signupId) {
         String sql = """
                 UPDATE younglings.signup
@@ -378,6 +388,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public List<SignupSession> getVisibleSignups(long guildId) {
         String sql = """
                 SELECT signup_id, guild_id, title, notification_message, max_signups,
@@ -409,6 +420,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public List<SignupSession> searchVisibleSignups(long guildId, String query) {
         String sql = """
                 SELECT signup_id, guild_id, title, notification_message, max_signups,
@@ -445,6 +457,7 @@ public class SignupRepository {
 
     // --- Entry management ---
 
+    @Override
     public int getEntryCount(long signupId) {
         String sql = "SELECT COUNT(*) FROM younglings.signup_entry WHERE signup_id = ?";
         try (Connection connection = connectionSupplier.getConnection();
@@ -468,6 +481,7 @@ public class SignupRepository {
      * (there's no DB-level unique constraint backing this since SUBMISSION signups intentionally
      * allow multiple entries per user).
      */
+    @Override
     public boolean addEntry(long signupId, long discordUserId, String rsn, String submissionValue,
                              long addedByUserId, SignupType type) {
         String insertSql = """
@@ -567,6 +581,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public boolean removeEntryByUserId(long signupId, long discordUserId) {
         String sql = """
                 DELETE FROM younglings.signup_entry
@@ -596,6 +611,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public List<SignupEntry> getEntries(long signupId) {
         String sql = """
                 SELECT discord_user_id, rsn, submission_value
@@ -625,11 +641,13 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public SignupEntry getFirstEntry(long signupId) {
         List<SignupEntry> entries = getEntries(signupId);
         return entries.isEmpty() ? null : entries.getFirst();
     }
 
+    @Override
     public SignupEntry next(long signupId) {
         String deleteSql = """
                 DELETE FROM younglings.signup_entry
@@ -669,10 +687,12 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public SignupEntry removeFirst(long signupId) {
         return next(signupId);
     }
 
+    @Override
     public SignupEntry skipFirst(long signupId) {
         String selectSql = """
                 SELECT entry_id
@@ -735,6 +755,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public void clearEntries(long signupId) {
         String sql = """
                 DELETE FROM younglings.signup_entry
@@ -777,6 +798,7 @@ public class SignupRepository {
 
     // --- Message management ---
 
+    @Override
     public void saveMessage(long signupId, long guildId, long channelId, long messageId, String messageType) {
         String sql = """
                 INSERT INTO younglings.signup_message
@@ -808,6 +830,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public List<SignupMessage> getActiveMessages(long signupId) {
         String sql = """
                 SELECT message_id, signup_id, guild_id, channel_id, message_type
@@ -837,6 +860,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public List<SignupMessage> getActivePingMessages(long signupId) {
         String sql = """
                 SELECT message_id, signup_id, guild_id, channel_id, message_type
@@ -867,6 +891,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public SignupMessage getFirstActivePublicMessage(long signupId) {
         String sql = """
                 SELECT message_id, signup_id, guild_id, channel_id, message_type
@@ -897,6 +922,7 @@ public class SignupRepository {
         }
     }
 
+    @Override
     public void markMessageInactive(long messageId) {
         String sql = """
                 UPDATE younglings.signup_message

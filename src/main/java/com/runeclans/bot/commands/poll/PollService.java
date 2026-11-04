@@ -1,6 +1,6 @@
 package com.runeclans.bot.commands.poll;
 
-import com.runeclans.bot.poll.PollRepository;
+import com.runeclans.bot.poll.PollStore;
 import com.runeclans.bot.util.TtlCache;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.components.container.Container;
@@ -44,9 +44,10 @@ public class PollService {
     private final Map<Long, PollSession> activePollsById = new ConcurrentHashMap<>();
     private final Map<Long, List<PollOption>> optionsByPollId = new ConcurrentHashMap<>();
     private final TtlCache<Long, Boolean> recentMisses = new TtlCache<>(MISS_TTL);
-    private final PollRepository pollRepository;
+    private final PollStore pollRepository;
 
-    public PollService(PollRepository pollRepository) {
+    /** {@code pollRepository}: the bot's own tables or the hub, by the {@code hub-community} switch ({@code hubcommunity.CommunityStores}). */
+    public PollService(PollStore pollRepository) {
         this.pollRepository = pollRepository;
         loadActivePolls();
     }
@@ -69,13 +70,27 @@ public class PollService {
     /** @return the new poll's id */
     public long createPoll(Guild guild, GuildMessageChannel channel, String title, boolean anonymous,
                            boolean multipleVotes, List<String> optionLabels, long createdByUserId) {
-        long pollId = pollRepository.createPoll(
-                guild.getIdLong(), channel.getIdLong(), title, anonymous, multipleVotes, createdByUserId);
+        return createPoll(guild, channel, title, anonymous, multipleVotes, optionLabels, createdByUserId, null);
+    }
 
+    /**
+     * As above, with an end time: on the hub ({@code hub-community}) the hub closes it then; on the bot's own tables the caller schedules
+     * the close ({@code CommunitySettings.scheduleClose}), so {@code closesAt} is not used there.
+     */
+    public long createPoll(Guild guild, GuildMessageChannel channel, String title, boolean anonymous,
+                           boolean multipleVotes, List<String> optionLabels, long createdByUserId, java.time.Instant closesAt) {
+        long pollId;
         List<PollOption> options = new ArrayList<>();
-        for (int i = 0; i < optionLabels.size(); i++) {
-            long optionId = pollRepository.addOption(pollId, i + 1, optionLabels.get(i));
-            options.add(new PollOption(optionId, pollId, i + 1, optionLabels.get(i)));
+        if (pollRepository.hub()) {
+            PollStore.Created created = pollRepository.create(guild.getIdLong(), channel.getIdLong(), title, anonymous, multipleVotes, optionLabels, createdByUserId, closesAt);
+            pollId = created.pollId();
+            options.addAll(created.options());
+        } else {
+            pollId = pollRepository.createPoll(guild.getIdLong(), channel.getIdLong(), title, anonymous, multipleVotes, createdByUserId);
+            for (int i = 0; i < optionLabels.size(); i++) {
+                long optionId = pollRepository.addOption(pollId, i + 1, optionLabels.get(i));
+                options.add(new PollOption(optionId, pollId, i + 1, optionLabels.get(i)));
+            }
         }
 
         PollSession session = new PollSession(pollId, guild.getIdLong(), channel.getIdLong(),
@@ -234,6 +249,8 @@ public class PollService {
         PollSession session = getSessionById(pollId);
         if (session == null || !"ACTIVE".equalsIgnoreCase(session.status())) return VoteResult.POLL_CLOSED;
 
+        if (pollRepository.hub()) return toggleOnHub(session, optionId, userId);
+
         boolean alreadyVotedThis = pollRepository.hasVotedForOption(pollId, optionId, userId);
 
         if (alreadyVotedThis) {
@@ -250,6 +267,35 @@ public class PollService {
 
         pollRepository.addVote(pollId, optionId, userId);
         return VoteResult.ADDED;
+    }
+
+    /** The hub's side of {@link #toggleVote}: the member's whole answer in one write, so the poll never shows a half-made switch. */
+    private VoteResult toggleOnHub(PollSession session, long optionId, long userId) {
+        java.util.Set<Long> mine = new java.util.LinkedHashSet<>(pollRepository.getUserVotes(session.pollId(), userId));
+        VoteResult result;
+        if (mine.remove(optionId)) {
+            result = VoteResult.REMOVED;
+        } else if (!session.multipleVotes()) {
+            result = mine.isEmpty() ? VoteResult.ADDED : VoteResult.SWITCHED;
+            mine = java.util.Set.of(optionId);
+        } else {
+            mine.add(optionId);
+            result = VoteResult.ADDED;
+        }
+        pollRepository.setVotes(session.pollId(), userId, mine);
+        return result;
+    }
+
+    /** Polls live on the RuneClans hub right now ({@code hub-community}): the hub closes timed polls itself. */
+    public boolean onHub() {
+        return pollRepository.hub();
+    }
+
+    /** Forgets a poll this process has cached (the hub feed said it changed or went), so the next look reads it again. */
+    public void forget(long pollId) {
+        activePollsById.remove(pollId);
+        optionsByPollId.remove(pollId);
+        recentMisses.remove(pollId);
     }
 
     // --- Message updates ---
@@ -285,7 +331,25 @@ public class PollService {
         if (session == null) return;
 
         pollRepository.closePoll(pollId);
+        showClosed(guild, session);
+    }
 
+    /**
+     * Shows a poll as ended on its message and drops it from the cache, without closing it in the store: the hub closed it already (its
+     * end time, or the website), and the feed said so.
+     */
+    public void showClosed(Guild guild, long pollId) {
+        PollSession session = activePollsById.get(pollId);
+        if (session == null) session = pollRepository.getPollById(pollId);
+        if (session == null) {
+            forget(pollId);
+            return;
+        }
+        showClosed(guild, withPostedMessage(session));
+    }
+
+    private void showClosed(Guild guild, PollSession session) {
+        long pollId = session.pollId();
         if (session.messageId() != null) {
             GuildMessageChannel channel = guild.getChannelById(GuildMessageChannel.class, session.channelId());
             if (channel != null) {

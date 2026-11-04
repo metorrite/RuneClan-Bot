@@ -63,7 +63,7 @@ class FormsSiteApplicationTest {
         when(repository.get(CLOSED_FORM)).thenReturn(Optional.of(new Form(CLOSED_FORM, GUILD, "old", "Old", "", false, null, 1L, null, false, 0, List.of())));
         service = mock(WebFormService.class);
         when(service.submitFromSite(any(), anyLong(), anyLong(), anyList(), anyList(), any())).thenReturn(new WebFormService.Outcome(1, false, List.of("A note.")));
-        api = new FormsPublicApi(repository, service);
+        api = new FormsPublicApi(repository, service, com.runeclans.bot.hubcommunity.HubCommunity.off());
     }
 
     private record Reply(int status, DataObject body) {}
