@@ -182,7 +182,7 @@ public final class HubSignupStore implements SignupStore {
         if (type == SignupType.QUEUE && name != null && RSN.matcher(name).matches()) body.put("rsn", name);
         if (submissionValue != null && !submissionValue.isBlank()) body.put("submissionValue", submissionValue);
         try {
-            hub.memberWrite("POST", "/v1/signups/" + hubId + "/entries", body);
+            hub.memberWrite("POST", "/v1/signups/" + hubId + "/entries", body, entryKey(hubId, discordUserId));
         } catch (HubCommunityProblem p) {
             if (p.kind() == HubCommunityProblem.Kind.REFUSED && p.status() == 409 && NOT_ADDED.contains(p.code())) return false;
             if (p.kind() == HubCommunityProblem.Kind.QUEUED && name != null && !name.isEmpty()) maps.saveSignupName(signupId, discordUserId, name);
@@ -198,7 +198,7 @@ public final class HubSignupStore implements SignupStore {
     public boolean removeEntryByUserId(long signupId, long discordUserId) {
         UUID hubId = hubId(signupId).orElseThrow(HubSignupStore::gone);
         try {
-            DataObject json = hub.memberWrite("DELETE", "/v1/signups/" + hubId + "/entries?playerId=" + discordUserId, null);
+            DataObject json = hub.memberWrite("DELETE", "/v1/signups/" + hubId + "/entries?playerId=" + discordUserId, null, entryKey(hubId, discordUserId));
             return json.getInt("removed", 0) > 0;
         } finally {
             recent.remove(hubId);
@@ -336,6 +336,11 @@ public final class HubSignupStore implements SignupStore {
     }
 
     /** The bot's words for the hub's status: open is ACTIVE, closed is PAUSED. */
+    /** One member's place on one sheet: a newer join or leave replaces an older one still held. */
+    static String entryKey(UUID hubId, long discordUserId) {
+        return "signup-entry:" + hubId + ":" + discordUserId;
+    }
+
     static String botStatus(String hubStatus) {
         return "ACTIVE".equalsIgnoreCase(hubStatus) ? "ACTIVE" : "PAUSED";
     }

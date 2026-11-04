@@ -118,7 +118,7 @@ public class HubCommunityJobs implements DiscordJobHandler {
         return DataObject.empty().put("refreshed", true);
     }
 
-    private DataObject group(Guild guild, String kind, UUID hubId) {
+    DataObject group(Guild guild, String kind, UUID hubId) {
         Optional<DataObject> found = hub.find("/v1/groups/" + hubId);
         Optional<HubCommunityMaps.GroupPost> post = maps.groupPost(hubId);
         if (found.isEmpty()) {

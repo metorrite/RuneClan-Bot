@@ -248,9 +248,13 @@ public class PollInteractionListener extends ListenerAdapter {
             return;
         }
 
+        // on the hub a vote is a few hub calls: acknowledge the click first, so Discord's 3 seconds never run out while they happen
+        boolean deferred = pollService.onHub();
+        if (deferred) event.deferReply(true).queue(ok -> {}, fail -> {});
+
         PollSession session = pollService.getSessionById(pollId);
         if (session == null || !"ACTIVE".equalsIgnoreCase(session.status())) {
-            Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "poll.this_poll_is_no_longer_active"));
+            answer(event, deferred, Containers.WARNING, null, Text.of(event, "poll.this_poll_is_no_longer_active"));
             return;
         }
 
@@ -261,14 +265,14 @@ public class PollInteractionListener extends ListenerAdapter {
                 .orElse(null);
 
         if (option == null) {
-            Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "poll.this_poll_option_no_longer_exists"));
+            answer(event, deferred, Containers.WARNING, null, Text.of(event, "poll.this_poll_option_no_longer_exists"));
             return;
         }
 
         PollService.VoteResult result = pollService.toggleVote(pollId, option.optionId(), event.getUser().getIdLong());
 
         if (result == PollService.VoteResult.POLL_CLOSED) {
-            Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "poll.this_poll_is_no_longer_active"));
+            answer(event, deferred, Containers.WARNING, null, Text.of(event, "poll.this_poll_is_no_longer_active"));
             return;
         }
 
@@ -282,8 +286,23 @@ public class PollInteractionListener extends ListenerAdapter {
         pollService.updateMessage(event.getGuild(), pollId);
 
         // The poll itself looks the same to everyone, so the reply is where you see your own picks.
-        Containers.replyThenDelete(event, Containers.SUCCESS, Duration.ofSeconds(8),
+        answer(event, deferred, Containers.SUCCESS, Duration.ofSeconds(8),
                 feedback + "\n" + describeMine(pollService.myVoteLines(pollId, event.getUser().getIdLong())));
+    }
+
+    /**
+     * A private answer to the click: a reply, or, when the click was already acknowledged (a hub vote defers first), the deferred reply
+     * filled in. Deleted after {@code after} when given.
+     */
+    private static void answer(ButtonInteractionEvent event, boolean deferred, java.awt.Color accent, Duration after, String... lines) {
+        if (!deferred) {
+            if (after == null) Containers.replyEphemeral(event, accent, lines);
+            else Containers.replyThenDelete(event, accent, after, lines);
+            return;
+        }
+        var edit = event.getHook().editOriginalComponents(List.of(Containers.toast(accent, lines))).useComponentsV2(true);
+        if (after == null) edit.queue(ok -> {}, fail -> {});
+        else edit.delay(after).flatMap(m -> event.getHook().deleteOriginal()).queue(ok -> {}, fail -> {});
     }
 
     /** The My Votes button: a private, short-lived list of what you've picked in this poll. */

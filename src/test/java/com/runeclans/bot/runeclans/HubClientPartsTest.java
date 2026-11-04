@@ -210,6 +210,28 @@ class HubClientPartsTest {
     }
 
     @Test
+    void aNewerWriteForTheSameAnswerReplacesAHeldOne() {
+        TestClock clock = new TestClock();
+        AtomicReference<RuneClansHubClient.Answer> hub = new AtomicReference<>(null);
+        List<String> sent = new ArrayList<>();
+        HubWriteQueue queue = new HubWriteQueue((m, p, b) -> {
+            RuneClansHubClient.Answer a = hub.get();
+            if (a != null && a.ok()) sent.add(b);
+            return a;
+        }, clock, 10);
+        List<HubWriteQueue.Outcome> toldA = new ArrayList<>();
+
+        // vote A is held while the hub is down; vote B (same member, same poll) goes through: A must never land after it
+        queue.submit(new HubWriteQueue.Write("POST", "/v1/polls/p/votes", "A", r -> toldA.add(r.outcome()), "p:member"));
+        queue.submit(new HubWriteQueue.Write("POST", "/v1/other", "other", null)); // another write, no key: kept
+        hub.set(ok("x"));
+        assertEquals(HubWriteQueue.Outcome.SENT, queue.submit(new HubWriteQueue.Write("POST", "/v1/polls/p/votes", "B", null, "p:member")).outcome());
+        assertEquals(List.of(HubWriteQueue.Outcome.REFUSED), toldA, "the replaced write's owner is told it won't be sent");
+        assertEquals(1, queue.drain());
+        assertEquals(List.of("B", "other"), sent);
+    }
+
+    @Test
     void writesWaitWhileTheHubIsDown() {
         TestClock clock = new TestClock();
         AtomicReference<RuneClansHubClient.Answer> hub = new AtomicReference<>(null);

@@ -60,10 +60,10 @@ class HubCommunityProblemTest {
         assertEquals(4, client.send("PATCH", "/v1/signups/x", DataObject.empty(), 3L).getInt("rev"));
         assertEquals(Map.of("If-Match", "3"), fake.calls.getFirst().headers());
         assertTrue(client.find("/v1/nothing").isEmpty(), "a 404 read is empty, not a problem");
-        HubCommunityProblem refused = assertThrows(HubCommunityProblem.class, () -> client.memberWrite("POST", "/v1/polls/p/votes", DataObject.empty()));
+        HubCommunityProblem refused = assertThrows(HubCommunityProblem.class, () -> client.memberWrite("POST", "/v1/polls/p/votes", DataObject.empty(), "k"));
         assertEquals("This poll is closed.", refused.getMessage());
         fake.holdWrites = true;
-        HubCommunityProblem queued = assertThrows(HubCommunityProblem.class, () -> client.memberWrite("POST", "/v1/polls/p/votes", DataObject.empty()));
+        HubCommunityProblem queued = assertThrows(HubCommunityProblem.class, () -> client.memberWrite("POST", "/v1/polls/p/votes", DataObject.empty(), "k"));
         assertEquals(HubCommunityProblem.Kind.QUEUED, queued.kind());
     }
 

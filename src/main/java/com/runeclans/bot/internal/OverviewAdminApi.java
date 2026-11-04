@@ -71,7 +71,7 @@ public class OverviewAdminApi {
 
         DataObject result = DataObject.empty()
                 .put("members", members)
-                .put("community", DataObject.empty().put("openSignups", openSignups(guildId)).put("openPolls", polls.activePolls(guildId).size()))
+                .put("community", community(guildId))
                 .put("health", healthSummary(health))
                 .put("notices", noticeList())
                 .put("isOwner", isOwner(guild, actor.getIdLong()));
@@ -157,6 +157,19 @@ public class OverviewAdminApi {
     }
 
     /** Open sheets, capped at 20 as the dashboard's list: from the hub while it keeps them ({@code hub-community}), else the bot's tables. */
+    /**
+     * The community tile. With {@code hub-community} on, its counts come from the hub: when the hub can't answer, the tile says so
+     * ({@code unknown: true}, counts 0) instead of failing the whole overview, which never depended on an outside service before.
+     */
+    DataObject community(long guildId) {
+        try {
+            return DataObject.empty().put("openSignups", openSignups(guildId)).put("openPolls", polls.activePolls(guildId).size());
+        } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+            log.warn("Couldn't read the community counts from the hub for the overview of guild {}: {}", guildId, e.getMessage());
+            return DataObject.empty().put("openSignups", 0).put("openPolls", 0).put("unknown", true);
+        }
+    }
+
     private int openSignups(long guildId) {
         if (signups.onHub()) return Math.min(20, signups.getVisibleSignups(guildId).size());
         return siteStats.countActiveSignups(guildId);

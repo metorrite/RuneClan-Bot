@@ -28,7 +28,8 @@ public class HubCommunityClient {
     public interface Hub {
         RuneClansHubClient.Answer call(String method, String path, String body, Map<String, String> headers);
 
-        HubWriteQueue.Result write(String method, String path, String body);
+        /** A member write; {@code supersedeKey} names the member's answer to one item, so a newer one replaces an older held one. */
+        HubWriteQueue.Result write(String method, String path, String body, String supersedeKey);
     }
 
     private final Hub hub;
@@ -43,8 +44,8 @@ public class HubCommunityClient {
             }
 
             @Override
-            public HubWriteQueue.Result write(String method, String path, String body) {
-                return client.write(method, path, body, null);
+            public HubWriteQueue.Result write(String method, String path, String body, String supersedeKey) {
+                return client.write(method, path, body, null, supersedeKey);
             }
         });
     }
@@ -76,9 +77,13 @@ public class HubCommunityClient {
         throw HubCommunityProblem.of(a);
     }
 
-    /** A member's own write: sent now, or held for up to 5 minutes when the hub can't take it (then a {@code QUEUED} problem). */
-    public DataObject memberWrite(String method, String path, DataObject body) {
-        HubWriteQueue.Result r = hub.write(method, path, body == null ? null : body.toString());
+    /**
+     * A member's own write: sent now, or held for up to 5 minutes when the hub can't take it (then a {@code QUEUED} problem). {@code key}
+     * names the member's answer to one item (their vote in a poll, their place on a sheet): a newer write with the same key drops an older
+     * one still held, so the member's last click is the one that lands.
+     */
+    public DataObject memberWrite(String method, String path, DataObject body, String key) {
+        HubWriteQueue.Result r = hub.write(method, path, body == null ? null : body.toString(), key);
         if (r == null) throw HubCommunityProblem.down();
         return switch (r.outcome()) {
             case SENT -> r.answer() == null || r.answer().json() == null ? DataObject.empty() : r.answer().json();

@@ -125,6 +125,8 @@ public class PollService {
         PollSession stored;
         try {
             stored = pollRepository.getPollById(pollId);
+        } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+            throw e; // the hub couldn't answer: say so, never "this poll is closed"
         } catch (RuntimeException e) {
             log.warn("Could not look up poll {} after a cache miss", pollId, e);
             return null; // a failed read is not remembered
@@ -158,6 +160,8 @@ public class PollService {
         List<PollSession> stored;
         try {
             stored = pollRepository.getActivePolls(guildId);
+        } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+            throw e; // the hub couldn't answer: say so, never "no polls"
         } catch (RuntimeException e) {
             log.warn("Could not list active polls for guild {}; using the cached ones", guildId, e);
             return cachedActivePolls(guildId);

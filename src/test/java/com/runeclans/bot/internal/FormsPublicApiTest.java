@@ -123,4 +123,24 @@ class FormsPublicApiTest {
         assertEquals(200, r.status());
         assertFalse(r.body().getBoolean("canSubmit"));
     }
+
+    @Test
+    void onTheHubAnAnswerSentHereIsTurnedAwayWithMoved() throws Exception {
+        api = new FormsPublicApi(mock(WebFormRepository.class), mock(WebFormService.class), com.runeclans.bot.hubcommunity.HubCommunity.on());
+        HttpExchange exchange = mock(HttpExchange.class);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int[] status = {-1};
+        when(exchange.getRequestURI()).thenReturn(URI.create("http://localhost/internal/forms/" + GUILD + "/" + FORM));
+        when(exchange.getRequestMethod()).thenReturn("POST");
+        when(exchange.getRequestBody()).thenReturn(new ByteArrayInputStream("{}".getBytes(StandardCharsets.UTF_8)));
+        when(exchange.getResponseHeaders()).thenReturn(new Headers());
+        when(exchange.getResponseBody()).thenReturn(out);
+        doAnswer(inv -> {
+            status[0] = inv.getArgument(0);
+            return null;
+        }).when(exchange).sendResponseHeaders(any(Integer.class), any(Long.class));
+        api.handle(exchange, jda);
+        assertEquals(409, status[0]);
+        assertEquals("hub", DataObject.fromJson(out.toString(StandardCharsets.UTF_8)).getString("moved"));
+    }
 }

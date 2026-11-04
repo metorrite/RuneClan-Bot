@@ -256,8 +256,42 @@ class HubCommunityStoresDatabaseTest {
 
     @Test
     void theFeedDoesNothingWhileTheSwitchIsOff() {
-        HubCommunityFeed feed = new HubCommunityFeed(HubCommunity.off(), maps, polls, signups, null);
-        feed.onHubFeed("poll.voted", DataObject.empty().put("id", UUID.randomUUID().toString())); // a null outbox would throw if it got this far
-        assertTrue(fake.calls.isEmpty());
+        UUID shown = UUID.randomUUID();
+        fake.ok("POST /v1/clans/" + GUILD + "/polls", poll(shown, "OPEN", "a"));
+        long local = polls.create(GUILD, CHANNEL, "t", false, false, List.of("A"), ALICE, null).pollId();
+        polls.saveMessageId(local, CHANNEL + 1);
+        DataObject entry = DataObject.empty().put("id", shown.toString());
+
+        com.runeclans.bot.discord.jobs.DiscordOutbox outbox = org.mockito.Mockito.mock(com.runeclans.bot.discord.jobs.DiscordOutbox.class);
+        new HubCommunityFeed(HubCommunity.off(), maps, polls, signups, outbox).onHubFeed("poll.voted", entry);
+        org.mockito.Mockito.verifyNoInteractions(outbox);
+
+        new HubCommunityFeed(HubCommunity.on(), maps, polls, signups, outbox).onHubFeed("poll.voted", entry);
+        org.mockito.Mockito.verify(outbox).enqueue(org.mockito.ArgumentMatchers.eq(HubCommunityJobs.REFRESH), org.mockito.ArgumentMatchers.eq(GUILD),
+                org.mockito.ArgumentMatchers.eq(0L), org.mockito.ArgumentMatchers.eq("hubcommunity:poll:" + local), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void aHeldEntryKeepsTheNameTheMemberGave() {
+        UUID hubId = UUID.randomUUID();
+        long local = makeSheet(hubId);
+        fake.holdWrites = true;
+        HubCommunityProblem p = assertThrows(HubCommunityProblem.class, () -> signups.addEntry(local, BOB, "Bob The Builder Jr", null, BOB, SignupType.QUEUE));
+        assertEquals(HubCommunityProblem.Kind.QUEUED, p.kind());
+        assertEquals("Bob The Builder Jr", maps.signupNames(local).get(BOB));
+        assertEquals(HubSignupStore.entryKey(hubId, BOB), fake.calls("POST", "/v1/signups/").getLast().key(), "a later leave replaces this held join");
+    }
+
+    @Test
+    void aVoteNamesItsMemberAndPollSoANewerOneReplacesItAndTheReplyNeedsNoSecondRead() {
+        UUID hubId = UUID.randomUUID();
+        fake.ok("POST /v1/clans/" + GUILD + "/polls", poll(hubId, "OPEN", "opt-a", "opt-b"))
+                .ok("POST /v1/polls/" + hubId + "/votes", poll(hubId, "OPEN", "opt-a", "opt-b"));
+        long local = polls.create(GUILD, CHANNEL, "t", false, true, List.of("A", "B"), ALICE, null).pollId();
+        polls.setVotes(local, BOB, Set.of(2L));
+        assertEquals(HubPollStore.voteKey(hubId, BOB), fake.calls("POST", "/v1/polls/" + hubId + "/votes").getFirst().key());
+        int before = fake.calls.size();
+        assertEquals(Set.of(2L), polls.getUserVotes(local, BOB));
+        assertEquals(before, fake.calls.size(), "the member's picks are known from their own vote");
     }
 }

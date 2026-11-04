@@ -39,6 +39,9 @@ public final class HubPollStore implements PollStore {
     private final Clock clock;
     private record Snap(DataObject json, Instant at) {}
     private final Map<UUID, Snap> recent = new ConcurrentHashMap<>();
+    /** A member's own picks, as their last vote here left them (key: poll and member), so the reply after a click needs no second read. */
+    private record Mine(Set<Long> numbers, Instant at) {}
+    private final Map<String, Mine> mine = new ConcurrentHashMap<>();
 
     public HubPollStore(HubCommunityClient hub, HubCommunityMaps maps, Clock clock) {
         this.hub = hub;
@@ -54,6 +57,7 @@ public final class HubPollStore implements PollStore {
     /** Drops the kept answer for a hub poll (a feed entry said it changed). */
     public void forget(UUID hubId) {
         recent.remove(hubId);
+        mine.keySet().removeIf(k -> k.startsWith(hubId + ":"));
     }
 
     // ---------- making one ----------
@@ -132,8 +136,11 @@ public final class HubPollStore implements PollStore {
     public Set<Long> getUserVotes(long pollId, long userId) {
         Optional<UUID> hubId = hubId(pollId);
         if (hubId.isEmpty()) return Set.of();
+        Mine kept = mine.get(voteKey(hubId.get(), userId));
+        if (kept != null && Duration.between(kept.at(), clock.instant()).compareTo(FRESH) < 0) return kept.numbers();
         // the member's own picks: the hub names them for a first-party app that says whose (playerId = a Discord id)
         DataObject p = hub.get("/v1/polls/" + hubId.get() + "?playerId=" + userId);
+        keep(hubId.get(), p); // the whole poll came with it: the vote that follows needs no second read
         Map<String, Long> numbers = numbersById(p);
         Set<Long> out = new LinkedHashSet<>();
         DataArray mine = p.optArray("myVotes").orElse(DataArray.empty());
@@ -194,7 +201,7 @@ public final class HubPollStore implements PollStore {
         UUID hubId = hubId(pollId).orElseThrow(() -> new HubCommunityProblem(HubCommunityProblem.Kind.REFUSED, 404, "not_found", "This poll is no longer active."));
         DataObject json;
         if (optionIds.isEmpty()) {
-            json = hub.memberWrite("DELETE", "/v1/polls/" + hubId + "/votes?playerId=" + userId, null);
+            json = hub.memberWrite("DELETE", "/v1/polls/" + hubId + "/votes?playerId=" + userId, null, voteKey(hubId, userId));
         } else {
             Map<Long, String> ids = idsByNumber(poll(hubId).orElseThrow(() -> new HubCommunityProblem(HubCommunityProblem.Kind.REFUSED, 404, "not_found", "This poll is no longer active.")));
             DataArray picks = DataArray.empty();
@@ -203,10 +210,17 @@ public final class HubPollStore implements PollStore {
                 if (id == null) throw new HubCommunityProblem(HubCommunityProblem.Kind.REFUSED, 400, "bad_vote", "That option is no longer in this poll.");
                 picks.add(id);
             }
-            json = hub.memberWrite("POST", "/v1/polls/" + hubId + "/votes", DataObject.empty().put("optionIds", picks).put("discordUserId", Long.toString(userId)));
+            json = hub.memberWrite("POST", "/v1/polls/" + hubId + "/votes", DataObject.empty().put("optionIds", picks).put("discordUserId", Long.toString(userId)),
+                    voteKey(hubId, userId));
         }
         if (json.hasKey("id")) keep(hubId, json);
         else recent.remove(hubId);
+        mine.put(voteKey(hubId, userId), new Mine(Set.copyOf(optionIds), clock.instant()));
+    }
+
+    /** One member's answer to one poll: a newer vote replaces an older one still held in the write queue. */
+    static String voteKey(UUID hubId, long userId) {
+        return hubId + ":" + userId;
     }
 
     @Override

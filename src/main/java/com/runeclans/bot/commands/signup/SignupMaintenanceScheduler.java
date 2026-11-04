@@ -50,7 +50,7 @@ public class SignupMaintenanceScheduler {
                 INITIAL_DELAY.toSeconds(), CHECK_INTERVAL.toSeconds(), TimeUnit.SECONDS);
     }
 
-    private void runSweep(JDA jda) {
+    void runSweep(JDA jda) {
         if (AutoPostRouter.diverting()) return;
         if (signupService.onHub()) return; // hub-community: the hub keeps the sheets and closes the untouched ones itself
         try {

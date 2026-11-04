@@ -11,7 +11,7 @@ import java.util.Map;
 
 /** A scripted hub for the community tests: answers by "METHOD path" (longest matching prefix wins) and records every call. */
 final class FakeCommunityHub implements HubCommunityClient.Hub {
-    record Call(String method, String path, String body, Map<String, String> headers, boolean queued) {}
+    record Call(String method, String path, String body, Map<String, String> headers, boolean queued, String key) {}
 
     final List<Call> calls = new ArrayList<>();
     private final Map<String, RuneClansHubClient.Answer> answers = new LinkedHashMap<>();
@@ -38,13 +38,13 @@ final class FakeCommunityHub implements HubCommunityClient.Hub {
 
     @Override
     public RuneClansHubClient.Answer call(String method, String path, String body, Map<String, String> headers) {
-        calls.add(new Call(method, path, body, headers, false));
+        calls.add(new Call(method, path, body, headers, false, null));
         return pick(method, path);
     }
 
     @Override
-    public HubWriteQueue.Result write(String method, String path, String body) {
-        calls.add(new Call(method, path, body, Map.of(), holdWrites));
+    public HubWriteQueue.Result write(String method, String path, String body, String supersedeKey) {
+        calls.add(new Call(method, path, body, Map.of(), holdWrites, supersedeKey));
         if (holdWrites) return new HubWriteQueue.Result(HubWriteQueue.Outcome.QUEUED, null);
         RuneClansHubClient.Answer a = pick(method, path);
         return new HubWriteQueue.Result(a.ok() ? HubWriteQueue.Outcome.SENT : HubWriteQueue.Outcome.REFUSED, a);

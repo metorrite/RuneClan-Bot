@@ -84,6 +84,8 @@ public class SignupService {
         SignupSession stored;
         try {
             stored = signupRepository.getOpenSignupById(signupId);
+        } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+            throw e; // the hub couldn't answer: say so, never "this signup is closed"
         } catch (RuntimeException e) {
             log.warn("Could not look up signup {} after a cache miss", signupId, e);
             return null; // a failed read is not remembered

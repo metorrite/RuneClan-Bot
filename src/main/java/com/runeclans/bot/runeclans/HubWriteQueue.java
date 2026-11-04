@@ -28,8 +28,16 @@ public final class HubWriteQueue {
 
     public record Result(Outcome outcome, RuneClansHubClient.Answer answer) {}
 
-    /** One write: method, path and JSON body, plus who to tell how it ended once it is sent or dropped ({@code done}, may be null). */
-    public record Write(String method, String path, String body, Consumer<Result> done) {}
+    /**
+     * One write: method, path and JSON body, plus who to tell how it ended once it is sent or dropped ({@code done}, may be null). Writes
+     * sharing a {@code supersedeKey} (one member's answer to one item, such as their vote in one poll) replace each other: a newer one drops
+     * any older one still held, so a held write can never land after a newer one and undo it. Null: never replaced.
+     */
+    public record Write(String method, String path, String body, Consumer<Result> done, String supersedeKey) {
+        public Write(String method, String path, String body, Consumer<Result> done) {
+            this(method, path, body, done, null);
+        }
+    }
 
     private record Held(Write write, Instant queuedAt) {}
 
@@ -46,6 +54,8 @@ public final class HubWriteQueue {
 
     /** Sends {@code write} now; when the hub can't take it, holds it if there is room. */
     Result submit(Write write) {
+        List<Held> replaced = write.supersedeKey() == null ? List.of() : dropHeld(write.supersedeKey());
+        for (Held h : replaced) tell(h.write(), new Result(Outcome.REFUSED, null));
         RuneClansHubClient.Answer answer = transport.call(write.method(), write.path(), write.body());
         if (!HubRetry.worthRetrying(answer)) return new Result(answer.ok() ? Outcome.SENT : Outcome.REFUSED, answer);
         synchronized (held) {
@@ -81,6 +91,19 @@ public final class HubWriteQueue {
         for (Held h : expired) tell(h.write(), new Result(Outcome.REFUSED, null));
         if (!expired.isEmpty()) log.info("RuneClans hub write queue: dropped {} writes older than {} minutes", expired.size(), MAX_AGE.toMinutes());
         return sent;
+    }
+
+    /** Takes the held writes a newer one with this key replaces. */
+    private List<Held> dropHeld(String key) {
+        List<Held> out = new ArrayList<>();
+        synchronized (held) {
+            held.removeIf(h -> {
+                boolean same = key.equals(h.write().supersedeKey());
+                if (same) out.add(h);
+                return same;
+            });
+        }
+        return out;
     }
 
     int size() {
