@@ -884,12 +884,7 @@ public class RsInteractionListener extends ListenerAdapter {
         if (viaHub == null || viaHub.queued()) linkService.recordSelfPoll(link.linkId());
         event.getHook().editOriginalComponents(List.of(renderAfterOwnAction(guild, link))).useComponentsV2(true).queue();
         if (viaHub != null) {
-            String note = switch (viaHub.outcome()) {
-                case QUEUED -> "**" + rsn + "** is being updated; the new numbers show here within a minute.";
-                case WAIT -> "**" + rsn + "** was updated recently. Try again in about " + Math.max(1, (viaHub.retryAfterSeconds() + 59) / 60) + " minute(s).";
-                case UNKNOWN -> "**" + rsn + "** isn't tracked yet; it will be after the next hourly sync.";
-                case UNAVAILABLE -> "Stats can't be updated right now. Try again in a few minutes.";
-            };
+            String note = com.runeclans.bot.runescape.stats.HubRefresh.describe(viaHub, rsn);
             event.getHook().sendMessageComponents(List.of(Containers.toast(viaHub.queued() ? Containers.SUCCESS : Containers.WARNING, note))).useComponentsV2(true).setEphemeral(true).queue();
         }
         if (justJoined) {

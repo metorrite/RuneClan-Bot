@@ -165,16 +165,15 @@ public class LinkedRolesStore {
      * that {@code listed} says is publicly listed.
      */
     public Profile profile(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed) {
-        Profile fromTables = profileFromTables(userId, rsLinkRsn, rsLinkSince, listed);
         StatsBackend hub = stats.hub();
+        Profile fromTables = profileFromTables(userId, rsLinkRsn, rsLinkSince, listed, hub != null);
         if (hub == null || fromTables.rsn() == null) return fromTables;
         // T-851: the levels come from the hub while it polls, read after the database connection is back in the pool
         var latest = hub.latest(fromTables.rsn());
         return latest == null ? fromTables : new Profile(fromTables.rsn(), fromTables.linkedSince(), latest.totalLevel(), latest.combatLevel(), fromTables.clanMember());
     }
 
-    private Profile profileFromTables(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed) {
-        boolean levelsFromHub = stats.hub() != null;
+    private Profile profileFromTables(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed, boolean levelsFromHub) {
         try (Connection c = db.getConnection()) {
             String rsn = null;
             Instant since = null;

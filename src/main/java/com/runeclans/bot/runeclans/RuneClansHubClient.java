@@ -65,6 +65,9 @@ public class RuneClansHubClient {
     /** A {@link #read} answer: from the cache or not, and stale when the hub couldn't be asked and the cached copy is past its fresh time. */
     public record Read(Answer answer, boolean fromCache, boolean stale) {}
 
+    /** How long one hub call may take: the website gives up on the bot after 8 seconds, so a call never outlives the request it serves. */
+    static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(8);
+
     private final RuneClansSettings settings;
     private final Transport transport;
     private HubCache cache;
@@ -94,6 +97,11 @@ public class RuneClansHubClient {
 
     public boolean enabled() {
         return settings.enabled();
+    }
+
+    /** Runs {@code work} with the hub calls it makes on this thread tried once, without the retry sleeps ({@link HubRetry#withoutRetries}). */
+    public static <T> T withoutRetries(java.util.function.Supplier<T> work) {
+        return HubRetry.withoutRetries(work);
     }
 
     /** A raw call, for {@code RsLinkAuth}'s transport. Null when off or unreachable. */
@@ -299,7 +307,7 @@ public class RuneClansHubClient {
 
     private static Answer send(HttpClient client, RuneClansSettings settings, String method, String path, String body, Map<String, String> headers) {
         try {
-            HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(Duration.ofSeconds(8))
+            HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(REQUEST_TIMEOUT)
                     .header("Authorization", "Bearer " + settings.apiKey()).header("Content-Type", "application/json").header("User-Agent", "JonnyBot runeclans-client");
             // the website's request id, when this call is part of an internal API request (T-674), so the hub's log line carries it too
             String requestId = com.runeclans.bot.ops.OpsTelemetry.currentRequestId();

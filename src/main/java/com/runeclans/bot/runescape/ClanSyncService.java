@@ -439,6 +439,11 @@ public class ClanSyncService {
     private PollTally pollRsns(List<String> rsns, PollPriority priority, Duration maxAge, Duration spread, String source,
                                Set<String> newLower, Map<String, ProfileResult> newMemberResultsOut) {
         int count = rsns.size();
+        if (pollCoordinator.hubPolls()) {
+            // T-851: the hub keeps every roster member current; nothing to queue, and the rename check reads the hub's snapshots itself
+            for (String rsn : rsns) if (newLower.contains(rsn.toLowerCase())) newMemberResultsOut.put(rsn.toLowerCase(), new ProfileResult.Unavailable());
+            return new PollTally(count, 0);
+        }
         List<PollRequest> requests = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             String rsn = rsns.get(i);

@@ -227,14 +227,18 @@ public class DirectoryPlayerRefreshRoutes implements DirectoryRouteModule {
         private Reply viaHub(String rsn, String discordId, Duration wait, Instant now) {
             // the same two refusals as the bot's own path: a name nobody tracks, and a name the profile page hides, both look unknown
             if (deps.lastPoll(rsn) == null ? !deps.tracked(rsn) : !deps.shown(rsn)) return error(404, "No player by that name.");
+            // the bot's own site-wide cap still applies (the hub's is wider): a flood from the website never reaches the hub
+            synchronized (asked) {
+                if (!roomForOneMore(now)) return error(429, "Lots of players are refreshing right now. Try again in a minute.");
+            }
             HubRefresh.Result r = deps.hubRefresh(rsn, discordId);
             // the cached profile is dropped when the poll lands (the feed's stats.updated, HubStatsChanges), not now while it still shows the old numbers
             return switch (r.outcome()) {
                 case QUEUED -> new Reply(200, DataObject.empty().put("rsn", rsn).put("polled", false).put("status", "QUEUED").put("nextAt", now.plus(wait).toString())
                         .put("waitMinutes", wait.toMinutes()));
-                case WAIT -> new Reply(429, DataObject.empty().put("error", "This player was updated recently. Try again later.")
+                case WAIT -> new Reply(429, DataObject.empty().put("error", HubRefresh.describe(r, rsn).replace("**", "")).put("code", r.code() == null ? "refresh_wait" : r.code())
                         .put("nextAt", now.plusSeconds(r.retryAfterSeconds()).toString()).put("waitMinutes", wait.toMinutes()));
-                case UNKNOWN -> error(404, "No player by that name.");
+                case UNKNOWN -> error(404, "RuneClans doesn't track that player: not synced yet, or its owner removed their data.");
                 case UNAVAILABLE -> error(503, "Couldn't refresh right now. Try again.");
             };
         }

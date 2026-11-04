@@ -35,13 +35,44 @@ public final class HubRefresh {
     private HubRefresh() {
     }
 
+    /** What sends the POST: the hub client, or a test's fake. */
+    public interface Poster {
+        RuneClansHubClient.Answer post(String path, String body);
+    }
+
     /** Asks the hub to poll {@code rsn} now, on behalf of Discord user {@code discordId} (0 when nobody in particular pressed). */
     public static Result ask(RuneClansHubClient hub, String rsn, long discordId) {
         if (hub == null || !hub.enabled()) return new Result(Outcome.UNAVAILABLE, 0, "hub_off");
+        return ask((path, body) -> hub.call("POST", path, body), rsn, discordId);
+    }
+
+    /** {@link #ask(RuneClansHubClient, String, long)} through {@code poster}: the path spells the name with underscores, the body names the presser. */
+    static Result ask(Poster poster, String rsn, long discordId) {
         DataObject body = DataObject.empty();
         if (discordId > 0) body.put("discordId", Long.toString(discordId));
         String path = "/v1/players/" + URLEncoder.encode(rsn.strip().replaceAll("\\s+", " ").replace(' ', '_'), StandardCharsets.UTF_8) + "/refresh";
-        return of(hub.call("POST", path, body.toString()));
+        return of(poster.post(path, body.toString()));
+    }
+
+    /**
+     * The answer in words, for a toast or an error message: each 429 code says who has to wait ({@code refresh_wait} the player,
+     * {@code refresh_actor_wait} the presser, {@code refresh_busy} everyone), and a 404 says the hub doesn't track the name without promising it will.
+     */
+    public static String describe(Result r, String rsn) {
+        String name = "**" + rsn + "**";
+        return switch (r.outcome()) {
+            case QUEUED -> name + " is being updated; the new numbers show here within a minute.";
+            case WAIT -> {
+                String in = r.retryAfterSeconds() < 60 ? "in about a minute" : "in about " + ((r.retryAfterSeconds() + 59) / 60) + " minute(s)";
+                yield switch (r.code() == null ? "" : r.code()) {
+                    case "refresh_actor_wait" -> "You refreshed recently. Try again " + in + ".";
+                    case "refresh_busy" -> "Lots of players are refreshing right now. Try again " + in + ".";
+                    default -> name + " was updated recently. Try again " + in + ".";
+                };
+            }
+            case UNKNOWN -> name + " isn't tracked by RuneClans: not synced yet (clan members and linked accounts are added within the hour), or its owner removed their data.";
+            case UNAVAILABLE -> "Stats can't be updated right now. Try again in a few minutes.";
+        };
     }
 
     static Result of(RuneClansHubClient.Answer a) {

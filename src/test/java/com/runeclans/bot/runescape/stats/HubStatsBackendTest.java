@@ -230,11 +230,136 @@ class HubStatsBackendTest {
                 return null;
             }
         }, (g, active) -> List.of(member("Alice")), Clock.fixed(NOW, ZoneOffset.UTC), null);
-        assertNull(b.latest("Alice"));
+        assertNull(b.latest("Alice"), "one player: nothing known, as an empty table would say");
         assertTrue(b.history("Alice", 5).isEmpty());
-        assertTrue(b.xpGainsBetween(GUILD, NOW.minusSeconds(100).atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC)).isEmpty());
-        assertNull(b.firstSnapshotAt(GUILD));
-        assertTrue(b.citadelGrid(GUILD, 2).isEmpty());
-        assertTrue(b.lastActivity(GUILD).isEmpty());
+        assertTrue(b.recentActivities("Alice", 5).isEmpty());
+        assertTrue(b.citadelFor(GUILD, "Alice").cappedWeeks().isEmpty());
+        // a clan's view can't be answered: it says so instead of coming up empty or short (the internal API answers 503 "try again")
+        OffsetDateTime from = NOW.minusSeconds(100).atOffset(ZoneOffset.UTC);
+        OffsetDateTime to = NOW.atOffset(ZoneOffset.UTC);
+        assertThrows(StatsUnavailableException.class, () -> b.xpGainsBetween(GUILD, from, to));
+        assertThrows(StatsUnavailableException.class, () -> b.firstSnapshotAt(GUILD));
+        assertThrows(StatsUnavailableException.class, () -> b.citadelGrid(GUILD, 2));
+        assertThrows(StatsUnavailableException.class, () -> b.lastActivity(GUILD));
+        assertThrows(StatsUnavailableException.class, () -> b.membersLatest(GUILD));
+    }
+
+    @Test
+    void aPartialHubFailureIsUnavailableNotAShorterLeaderboard() {
+        FakeHub hub = new FakeHub();
+        hub.on("/v1/guilds/" + GUILD + "/site", path -> new Answer(404, null));
+        String[] names = new String[10];
+        for (int i = 0; i < 10; i++) {
+            names[i] = "M" + i;
+            final int n = i;
+            hub.on("/v1/players/M" + i + "/stats/history", path -> n % 2 == 0
+                    ? ok(DataObject.empty().put("snapshots", DataArray.empty().add(snapshot(n, "M" + n, NOW.minusSeconds(50), 1_000 + n, 100)).add(snapshot(100 + n, "M" + n, NOW.minusSeconds(1000), 500, 90))))
+                    : new Answer(429, DataObject.empty().put("error", "busy"), 5));
+        }
+        HubStatsBackend b = backend(hub, names);
+        OffsetDateTime from = NOW.minusSeconds(100).atOffset(ZoneOffset.UTC);
+        OffsetDateTime to = NOW.atOffset(ZoneOffset.UTC);
+        assertThrows(StatsUnavailableException.class, () -> b.xpGainsBetween(GUILD, from, to), "half the members answered 429: no five-member leaderboard");
+
+        FakeHub fine = new FakeHub();
+        fine.on("/v1/guilds/" + GUILD + "/site", path -> new Answer(404, null));
+        for (int i = 0; i < 10; i++) {
+            final int n = i;
+            fine.on("/v1/players/M" + i + "/stats/history", path -> n % 2 == 0
+                    ? ok(DataObject.empty().put("snapshots", DataArray.empty().add(snapshot(n, "M" + n, NOW.minusSeconds(50), 1_000 + n, 100)).add(snapshot(100 + n, "M" + n, NOW.minusSeconds(1000), 500, 90))))
+                    : new Answer(404, DataObject.empty().put("error", "not_found")));
+        }
+        assertEquals(5, backend(fine, names).xpGainsBetween(GUILD, from, to).size(), "a member the hub has never seen is simply not on the board");
+    }
+
+    @Test
+    void aFanOutStopsAtItsBudgetAndCancelsWhatIsLeft() throws Exception {
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.atomic.AtomicInteger started = new java.util.concurrent.atomic.AtomicInteger();
+            HubStatsBackend.Hub slow = new HubStatsBackend.Hub() {
+                @Override
+                public Read read(String path, Duration keepFresh, String... tags) {
+                    if (path.contains("/site")) return new Read(new Answer(404, null), false, false);
+                    started.incrementAndGet();
+                    try {
+                        Thread.sleep(400);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return null;
+                    }
+                    return new Read(ok(DataObject.empty().put("activities", DataArray.empty())), false, false);
+                }
+
+                @Override
+                public Answer call(String method, String path, String body) {
+                    return null;
+                }
+            };
+            String[] names = new String[12];
+            for (int i = 0; i < 12; i++) names[i] = "M" + i;
+            HubStatsBackend b = new HubStatsBackend(slow, (g, a) -> List.of(names).stream().map(HubStatsBackendTest::member).toList(), Clock.fixed(NOW, ZoneOffset.UTC), pool)
+                    .withBudget(Duration.ofMillis(300));
+            long begin = System.nanoTime();
+            assertThrows(StatsUnavailableException.class, () -> b.lastActivity(GUILD));
+            long tookMs = (System.nanoTime() - begin) / 1_000_000;
+            assertTrue(tookMs < 2_000, "12 reads of 400 ms on 2 threads would take 2.4 s; the budget cut it at " + tookMs + " ms");
+            Thread.sleep(500);
+            assertTrue(started.get() <= 4, "the queued reads were cancelled, not run after the view gave up: " + started.get());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void cappersComeFromTheClanRouteInOneReadWhenThereIsARegisteredClan() {
+        FakeHub hub = new FakeHub();
+        hub.on("/v1/guilds/" + GUILD + "/site", path -> ok(DataObject.empty().put("clanId", "c1")));
+        hub.on("/v1/clans/c1/stats/cappers", path -> ok(DataObject.empty().put("cappers", DataArray.empty()
+                .add(DataObject.empty().put("rsn", "alice").put("caps", 3).put("lastAt", NOW.toString()))
+                .add(DataObject.empty().put("rsn", "Bob").put("caps", 1).put("lastAt", NOW.toString()))
+                .add(DataObject.empty().put("rsn", "Stranger").put("caps", 9).put("lastAt", NOW.toString())))));
+        HubStatsBackend b = backend(hub, "Alice", "Bob", "Carol");
+        List<SiteStatsRepository.Capper> cappers = b.cappersBetween(GUILD, NOW.minusSeconds(7 * 86_400).atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC), 10);
+        assertEquals(List.of("Alice", "Bob"), cappers.stream().map(SiteStatsRepository.Capper::rsn).toList(), "the bot's roster and spelling; a hub-only name is left out");
+        assertEquals(3, cappers.get(0).totalCaps());
+        assertEquals(3, cappers.get(0).weeksCapped());
+        assertEquals(2, b.topCappers(GUILD, 10).size());
+        assertEquals(0, hub.count("/activity"), "no per-member activity reads: " + hub.calls);
+        assertEquals(2, hub.count("/stats/cappers"), "one clan read per view");
+    }
+
+    @Test
+    void skillGainsAreReadOncePerMemberAndWindow() {
+        FakeHub hub = new FakeHub();
+        hub.on("/v1/guilds/" + GUILD + "/site", path -> ok(DataObject.empty().put("clanId", "c1")));
+        hub.on("/v1/clans/c1/stats/skill-gains", body -> ok(DataObject.empty().put("skills", DataArray.empty().add(DataObject.empty().put("skillId", 3).put("gained", 1000)))));
+        HubStatsBackend b = backend(hub, "Alice", "Bob");
+        OffsetDateTime from = NOW.minusSeconds(86_400).atOffset(ZoneOffset.UTC);
+        OffsetDateTime to = NOW.atOffset(ZoneOffset.UTC);
+        assertEquals(2000, b.skillGainsBetween(GUILD, null, from, to).get(0).xp());
+        assertEquals(2, hub.count("skill-gains"));
+        assertEquals(2000, b.skillGainsBetween(GUILD, null, from, to).get(0).xp());
+        assertEquals(1000, b.skillGainsBetween(GUILD, "Alice", from, to).get(0).xp());
+        assertEquals(2, hub.count("skill-gains"), "a second view inside five minutes reads nothing: " + hub.calls);
+        b.evictPlayer("Alice");
+        b.skillGainsBetween(GUILD, "Alice", from, to);
+        assertEquals(3, hub.count("skill-gains"), "the hub's stats.updated for Alice drops her cached gains");
+    }
+
+    @Test
+    void aClanOfFiveHundredIsAnsweredWhole() {
+        FakeHub hub = new FakeHub();
+        hub.on("/v1/players/stats", body -> {
+            DataArray rsns = DataObject.fromJson(body).getArray("rsns");
+            DataArray players = DataArray.empty();
+            for (int i = 0; i < rsns.length(); i++) players.add(snapshot(i, rsns.getString(i), NOW, 1_000, 100 + i));
+            return ok(DataObject.empty().put("players", players).put("missing", DataArray.empty()));
+        });
+        String[] names = new String[500];
+        for (int i = 0; i < 500; i++) names[i] = "Member" + i;
+        Map<String, StatsSnapshotRow> latest = backend(hub, names).membersLatest(GUILD);
+        assertEquals(500, latest.size(), "RS3 clans go to 500: nobody is cut from the hub's views");
+        assertEquals(5, hub.count("/v1/players/stats"), "batches of 100");
     }
 }

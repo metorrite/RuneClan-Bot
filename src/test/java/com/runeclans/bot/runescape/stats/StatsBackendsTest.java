@@ -64,6 +64,6 @@ class StatsBackendsTest {
         assertEquals(HubRefresh.Outcome.UNAVAILABLE, HubRefresh.of(new Answer(409, DataObject.empty().put("error", "hub_polling_off"))).outcome());
         assertEquals("hub_polling_off", HubRefresh.of(new Answer(409, DataObject.empty().put("error", "hub_polling_off"))).code());
         assertEquals(HubRefresh.Outcome.UNAVAILABLE, HubRefresh.of(null).outcome());
-        assertEquals(HubRefresh.Outcome.UNAVAILABLE, HubRefresh.ask(null, "Zezima", 1L).outcome(), "no hub client");
+        assertEquals(HubRefresh.Outcome.UNAVAILABLE, HubRefresh.ask((com.runeclans.bot.runeclans.RuneClansHubClient) null, "Zezima", 1L).outcome(), "no hub client");
     }
 }

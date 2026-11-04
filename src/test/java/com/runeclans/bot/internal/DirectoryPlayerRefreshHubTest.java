@@ -82,6 +82,13 @@ class DirectoryPlayerRefreshHubTest {
         DirectoryPlayerRefreshRoutes.Reply wait = refresher.refresh(DataObject.empty().put("rsn", "Zezima"));
         assertEquals(429, wait.status());
         assertEquals(NOW.plusSeconds(600).toString(), wait.body().getString("nextAt"));
+        assertEquals("refresh_wait", wait.body().getString("code"));
+        assertTrue(wait.body().getString("error").startsWith("Zezima was updated recently"), wait.body().getString("error"));
+        deps.answer = new HubRefresh.Result(HubRefresh.Outcome.WAIT, 60, "refresh_actor_wait");
+        DirectoryPlayerRefreshRoutes.Reply you = refresher.refresh(DataObject.empty().put("rsn", "Zezima").put("discordId", presser));
+        assertEquals("refresh_actor_wait", you.body().getString("code"));
+        assertTrue(you.body().getString("error").startsWith("You refreshed recently"), "the presser's own wait is told apart: " + you.body().getString("error"));
+        deps.asked.remove(deps.asked.size() - 1);
         assertEquals("Zezima|null", deps.asked.get(1), "no presser named: only the hub's site-wide limit applies");
 
         deps.answer = new HubRefresh.Result(HubRefresh.Outcome.UNKNOWN, 0, "not_found");
@@ -91,5 +98,17 @@ class DirectoryPlayerRefreshHubTest {
         assertEquals(404, refresher.refresh(DataObject.empty().put("rsn", "Nobody")).status(), "a name nobody tracks stays unknown");
         assertEquals(404, refresher.refresh(DataObject.empty().put("rsn", "Hidden")).status(), "a tracked name the profile page hides stays hidden: no hub poll for it");
         assertEquals(4, deps.asked.size(), "neither refusal reached the hub");
+    }
+
+    @Test
+    void theBotsOwnSiteWideCapStillHoldsWhileTheHubPolls() {
+        HubDeps deps = new HubDeps();
+        DirectoryPlayerRefreshRoutes.Refresher refresher = new DirectoryPlayerRefreshRoutes.Refresher(deps, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(2));
+        for (int i = 0; i < DirectoryPlayerRefreshRoutes.GLOBAL_PER_MINUTE; i++) {
+            assertEquals(200, refresher.refresh(DataObject.empty().put("rsn", "Player" + i)).status());
+        }
+        DirectoryPlayerRefreshRoutes.Reply sixth = refresher.refresh(DataObject.empty().put("rsn", "PlayerX"));
+        assertEquals(429, sixth.status(), "a flood from the website never reaches the hub");
+        assertEquals(DirectoryPlayerRefreshRoutes.GLOBAL_PER_MINUTE, deps.asked.size());
     }
 }

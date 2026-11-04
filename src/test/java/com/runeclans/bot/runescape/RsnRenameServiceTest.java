@@ -90,6 +90,17 @@ class RsnRenameServiceTest {
     }
 
     @Test
+    void whileTheHubPollsTheNewcomerIsReadFromTheHubsSnapshots() {
+        when(stats.hubPolls()).thenReturn(true);
+        when(stats.latestAsResult("Rak sha")).thenReturn(profile("Rak sha", 600, true));
+        when(stats.latestAsResult("From Zamorak")).thenReturn(new ProfileResult.Unavailable());
+        // the clan sync polled nobody (T-851): every newcomer arrives as Unavailable, the hub's newest snapshot stands in
+        Set<String> held = run(Map.of("rak sha", new ProfileResult.Unavailable(), "from zamorak", new ProfileResult.Unavailable()));
+        assertEquals(Set.of("telnos"), held, "one candidate was raised from the hub's data, so the departed name is held");
+        verify(repo).create(eq(GUILD), eq("Telnos"), eq("Rak sha"), anyString(), anyString());
+    }
+
+    @Test
     void noNewcomerPassingRaisesNothing() {
         run(Map.of("rak sha", profile("Rak sha", 100, true), "from zamorak", profile("From Zamorak", 100, true)));
 
