@@ -7,14 +7,12 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 /**
- * Whether RuneMetrics is still asked at all ({@code RUNEMETRICS}). Jagex retires the RuneMetrics and Adventurer's Log APIs on {@link #SUNSET}.
- * {@code auto} (the default) asks until then and stops after, so nothing keeps calling a dead API; {@code on} keeps asking (if Jagex extends
- * it), {@code off} stops now. When off, profile polls answer {@link ProfileResult.Unavailable} without a request, as they would in an outage.
+ * Whether RuneMetrics is still asked at all ({@code RUNEMETRICS}). Jagex announced the RuneMetrics and Adventurer's Log APIs would close (first
+ * for 2026-11-10); Drake's decision (2026-11-02, plan D-1): keep asking until Jagex really switches it off, with no date in the code, and let
+ * the breaker ({@link RuneMetricsBreaker}) handle the day it dies. So {@code auto} (the default) and {@code on} ask; {@code off} stops now.
+ * When off, profile polls answer {@link ProfileResult.Unavailable} without a request, as they would in an outage.
  */
 public final class RuneMetricsSwitch {
-    /** The announced shutdown, start of the day in UTC. */
-    public static final Instant SUNSET = Instant.parse("2026-11-10T00:00:00Z");
-
     enum Mode { AUTO, ON, OFF }
 
     private RuneMetricsSwitch() {
@@ -44,7 +42,7 @@ public final class RuneMetricsSwitch {
         return switch (mode) {
             case ON -> true;
             case OFF -> false;
-            case AUTO -> now.isBefore(SUNSET);
+            case AUTO -> true; // D-1: no stop date; the breaker and the hub's source switch decide
         };
     }
 }

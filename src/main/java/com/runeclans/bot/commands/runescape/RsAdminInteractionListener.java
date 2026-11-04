@@ -245,7 +245,7 @@ public class RsAdminInteractionListener extends ListenerAdapter {
         String rsn = event.getValue("lookup_rsn").getAsString().trim();
         event.deferReply(true).queue();
 
-        ProfileResult result = pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable();
+        ProfileResult result = lookup(rsn, event.getUser().getIdLong());
         event.getHook().editOriginalComponents(List.of(buildLookupCard(guild, rsn, result))).useComponentsV2(true)
                 .setAllowedMentions(EnumSet.noneOf(Message.MentionType.class)).queue();
     }
@@ -771,10 +771,20 @@ public class RsAdminInteractionListener extends ListenerAdapter {
 
     // --- Per-player actions ---
 
+    /**
+     * A fresh look at one player for the lookup card: the bot's own poll, or, while the hub polls (T-851), the hub's Refresh on behalf of the admin
+     * who pressed plus the hub's newest snapshot (the refresh itself lands within a minute; press Update again to see it).
+     */
+    private ProfileResult lookup(String rsn, long pressedBy) {
+        if (!statsService.hubPolls()) return pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable();
+        statsService.refreshViaHub(rsn, pressedBy);
+        return statsService.latestAsResult(rsn);
+    }
+
     /** Reached from a Player Lookup card's "Update" button — re-renders that same card, not the admin panel (which no longer shows any one player inline anyway). */
     private void doPollOne(ComponentInteraction event, Guild guild, String rsn) {
         event.deferEdit().queue();
-        ProfileResult result = pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable();
+        ProfileResult result = lookup(rsn, event.getUser().getIdLong());
         event.getHook().editOriginalComponents(List.of(buildLookupCard(guild, rsn, result)))
                 .useComponentsV2(true).setAllowedMentions(EnumSet.noneOf(Message.MentionType.class)).queue();
     }

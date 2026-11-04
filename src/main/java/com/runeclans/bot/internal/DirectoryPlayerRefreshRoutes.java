@@ -6,6 +6,8 @@ import com.runeclans.bot.runescape.RosterPollScheduler;
 import com.runeclans.bot.runescape.polling.PollCoordinator;
 import com.runeclans.bot.runescape.polling.PollOutcome;
 import com.runeclans.bot.runescape.polling.PollRequest;
+import com.runeclans.bot.runescape.stats.HubRefresh;
+import com.runeclans.bot.runeclans.RuneClansHubClient;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.slf4j.Logger;
@@ -73,6 +75,16 @@ public class DirectoryPlayerRefreshRoutes implements DirectoryRouteModule {
 
         /** The poll finished (any outcome): drop the cached profile so the page shows it. */
         void polled(String rsn);
+
+        /** True while the hub polls instead of the bot (T-851): the refresh goes to the hub's own Refresh. */
+        default boolean hubPolls() {
+            return false;
+        }
+
+        /** The hub's Refresh for {@code rsn} on behalf of {@code discordId} (the website's signed-in user, null when unknown). */
+        default HubRefresh.Result hubRefresh(String rsn, String discordId) {
+            return new HubRefresh.Result(HubRefresh.Outcome.UNAVAILABLE, 0, "no_hub");
+        }
     }
 
     /** A status and body to send. */
@@ -82,8 +94,19 @@ public class DirectoryPlayerRefreshRoutes implements DirectoryRouteModule {
     private final Refresher refresher;
 
     public DirectoryPlayerRefreshRoutes(PlayerLinkRepository links, PollCoordinator polls, SiteCache cache, RosterPollScheduler tracker,
-                                        DirectoryPlayerRoutes players) {
+                                        DirectoryPlayerRoutes players, RuneClansHubClient hub) {
         this.refresher = new Refresher(new Deps() {
+            @Override
+            public boolean hubPolls() {
+                return polls.hubPolls();
+            }
+
+            @Override
+            public HubRefresh.Result hubRefresh(String rsn, String discordId) {
+                long id = discordId != null && discordId.matches("\\d{17,20}") ? Long.parseLong(discordId) : 0L;
+                return HubRefresh.ask(hub, rsn, id);
+            }
+
             @Override
             public Instant lastPoll(String rsn) {
                 StatsSnapshotRow latest = links.getLatestSnapshots(List.of(rsn)).get(rsn.toLowerCase(Locale.ROOT));
@@ -144,6 +167,7 @@ public class DirectoryPlayerRefreshRoutes implements DirectoryRouteModule {
             Duration wait = Duration.ofMinutes(waitMinutes(body.getString("waitMinutes", null)));
             String key = rsn.toLowerCase(Locale.ROOT);
             Instant now = clock.instant();
+            if (deps.hubPolls()) return viaHub(rsn, body.getString("discordId", null), wait, now);
             asked.values().removeIf(at -> at.isBefore(now.minus(Duration.ofMinutes(MAX_MINUTES))));
 
             Instant lastPoll = deps.lastPoll(rsn);
@@ -193,6 +217,26 @@ public class DirectoryPlayerRefreshRoutes implements DirectoryRouteModule {
             }
             return new Reply(200, DataObject.empty().put("rsn", rsn).put("polled", outcome.hasFreshData()).put("status", outcome.status().name())
                     .put("nextAt", now.plus(wait).toString()).put("waitMinutes", wait.toMinutes()));
+        }
+
+        /**
+         * While the hub polls (T-851): the hub's Refresh decides the wait (its own {@code player-refresh-minutes}, per player and per person), and
+         * answers in the same shapes the website reads: 200 queued ({@code polled} false, the poll lands within a minute), 429 with {@code nextAt},
+         * 404 for a name the hub doesn't track (or the bot's own refusals: never tracked, or hidden), 503 when the hub can't be asked.
+         */
+        private Reply viaHub(String rsn, String discordId, Duration wait, Instant now) {
+            // the same two refusals as the bot's own path: a name nobody tracks, and a name the profile page hides, both look unknown
+            if (deps.lastPoll(rsn) == null ? !deps.tracked(rsn) : !deps.shown(rsn)) return error(404, "No player by that name.");
+            HubRefresh.Result r = deps.hubRefresh(rsn, discordId);
+            // the cached profile is dropped when the poll lands (the feed's stats.updated, HubStatsChanges), not now while it still shows the old numbers
+            return switch (r.outcome()) {
+                case QUEUED -> new Reply(200, DataObject.empty().put("rsn", rsn).put("polled", false).put("status", "QUEUED").put("nextAt", now.plus(wait).toString())
+                        .put("waitMinutes", wait.toMinutes()));
+                case WAIT -> new Reply(429, DataObject.empty().put("error", "This player was updated recently. Try again later.")
+                        .put("nextAt", now.plusSeconds(r.retryAfterSeconds()).toString()).put("waitMinutes", wait.toMinutes()));
+                case UNKNOWN -> error(404, "No player by that name.");
+                case UNAVAILABLE -> error(503, "Couldn't refresh right now. Try again.");
+            };
         }
 
         /** Whether the site-wide cap has room for one more refresh this minute; counts it when it has. Call while holding {@code asked}. */

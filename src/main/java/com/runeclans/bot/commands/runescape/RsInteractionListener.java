@@ -877,9 +877,21 @@ public class RsInteractionListener extends ListenerAdapter {
         event.deferEdit().queue();
         boolean justJoined = detectClanJoin(guild, link);
         // Front of the poll queue: a person is waiting on this, and it also makes the schedule's next poll of them unnecessary.
-        pollCoordinator.pollNow(rsn, "update now");
-        linkService.recordSelfPoll(link.linkId());
+        // While the hub polls (T-851) the hub's Refresh does it, on behalf of the person who pressed, and the result lands within a minute.
+        com.runeclans.bot.runescape.stats.HubRefresh.Result viaHub = statsService.hubPolls() ? statsService.refreshViaHub(rsn, event.getUser().getIdLong()) : null;
+        if (viaHub == null) pollCoordinator.pollNow(rsn, "update now");
+        // the member's own cooldown starts only when a poll was actually made (the hub's own waits answer for themselves)
+        if (viaHub == null || viaHub.queued()) linkService.recordSelfPoll(link.linkId());
         event.getHook().editOriginalComponents(List.of(renderAfterOwnAction(guild, link))).useComponentsV2(true).queue();
+        if (viaHub != null) {
+            String note = switch (viaHub.outcome()) {
+                case QUEUED -> "**" + rsn + "** is being updated; the new numbers show here within a minute.";
+                case WAIT -> "**" + rsn + "** was updated recently. Try again in about " + Math.max(1, (viaHub.retryAfterSeconds() + 59) / 60) + " minute(s).";
+                case UNKNOWN -> "**" + rsn + "** isn't tracked yet; it will be after the next hourly sync.";
+                case UNAVAILABLE -> "Stats can't be updated right now. Try again in a few minutes.";
+            };
+            event.getHook().sendMessageComponents(List.of(Containers.toast(viaHub.queued() ? Containers.SUCCESS : Containers.WARNING, note))).useComponentsV2(true).setEphemeral(true).queue();
+        }
         if (justJoined) {
             event.getHook().sendMessageComponents(List.of(Containers.toast(Containers.SUCCESS,
                             "**" + rsn + "** is in the clan. Your roles are being updated now.")))

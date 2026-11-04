@@ -43,7 +43,7 @@ class RuneScapeStatsServiceFanOutTest {
         classifier = mock(TrackingEventClassifier.class);
         router = mock(TrackingEventRouter.class);
         clanMembers = mock(ClanMemberRepository.class);
-        service = new RuneScapeStatsService(apiClient, repository, classifier, router, clanMembers);
+        service = new RuneScapeStatsService(apiClient, repository, classifier, router, clanMembers, com.runeclans.bot.runescape.stats.StatsBackends.none(), null);
 
         first = mock(Guild.class);
         second = mock(Guild.class);

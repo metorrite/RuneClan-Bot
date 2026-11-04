@@ -35,6 +35,10 @@ final class HubChanges {
         if (kind.startsWith("site.") || kind.startsWith("community.") || kind.equals("feature.changed")) dropped += cache.evictTag("sites");
         // a league, its terms, a round or a result moved (T-759): the server's league answers are read again
         if (kind.startsWith("league.")) dropped += cache.evictTag("leagues");
+        // a poll found the player's profile or a new log line (T-851): the player's cached stats answers are read again
+        if ((kind.equals("stats.updated") || kind.equals("player.activity")) && data != null && data.hasKey("rsn") && !data.isNull("rsn")) {
+            dropped += cache.evictTag(com.runeclans.bot.runescape.stats.HubStatsBackend.playerTag(data.getString("rsn")));
+        }
         if (data != null && data.hasKey("item") && data.hasKey("id") && !data.isNull("item") && !data.isNull("id")) {
             dropped += cache.evictTag(tag(data.getString("item"), data.getString("id")));
         }
