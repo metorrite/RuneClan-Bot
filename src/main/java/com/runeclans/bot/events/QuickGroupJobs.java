@@ -119,7 +119,7 @@ public class QuickGroupJobs implements DiscordJobHandler {
      * The group as a Discord post: what it is for and when (in each reader's own time), the host, the note, and one line per role with who took it.
      * {@code nameOf} answers a member's name in the server, or null when the bot can't see them ("A member"). Pure, for the tests.
      */
-    static MessageEmbed embed(Group group, List<Member> members, LongFunction<String> nameOf) {
+    public static MessageEmbed embed(Group group, List<Member> members, LongFunction<String> nameOf) {
         List<QuickGroups.Slot> slots = QuickGroups.slotsOf(group.config());
         Map<String, Integer> taken = QuickGroups.taken(slots, members.stream().map(Member::role).toList());
         int filled = taken.values().stream().mapToInt(Integer::intValue).sum();

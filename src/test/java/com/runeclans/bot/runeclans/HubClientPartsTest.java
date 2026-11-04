@@ -80,6 +80,27 @@ class HubClientPartsTest {
     }
 
     @Test
+    void aCallNeverOutlivesTheWebsitesPatience() {
+        assertEquals(Duration.ofSeconds(8), RuneClansHubClient.REQUEST_TIMEOUT, "the website gives up on the bot after 8 seconds");
+    }
+
+    @Test
+    void aReadWithItsOwnBudgetIsTriedOnceWithoutTheSleeps() {
+        List<Duration> waits = new ArrayList<>();
+        AtomicInteger calls = new AtomicInteger();
+        HubRetry down = new HubRetry((m, p, b) -> {
+            calls.incrementAndGet();
+            return new RuneClansHubClient.Answer(503, null);
+        }, waits::add);
+        assertEquals(503, RuneClansHubClient.withoutRetries(() -> down.call("GET", "/v1/x", null)).status());
+        assertEquals(1, calls.get(), "one try inside withoutRetries");
+        assertTrue(waits.isEmpty(), "and no sleep");
+        calls.set(0);
+        assertEquals(503, down.call("GET", "/v1/x", null).status());
+        assertEquals(1 + HubRetry.BACKOFF.size(), calls.get(), "outside it, the retries are back");
+    }
+
+    @Test
     void retriesOnlyWhatIsSafeToRepeat() {
         List<Duration> waits = new ArrayList<>();
         AtomicInteger calls = new AtomicInteger();
@@ -207,6 +228,28 @@ class HubClientPartsTest {
         assertFalse(HubChanges.signatureValid(secret, "v1=abc", body, t));
         assertFalse(HubChanges.signatureValid(secret, "t=x,v1=abc", body, t));
         assertFalse(HubChanges.signatureValid(secret, null, body, t));
+    }
+
+    @Test
+    void aNewerWriteForTheSameAnswerReplacesAHeldOne() {
+        TestClock clock = new TestClock();
+        AtomicReference<RuneClansHubClient.Answer> hub = new AtomicReference<>(null);
+        List<String> sent = new ArrayList<>();
+        HubWriteQueue queue = new HubWriteQueue((m, p, b) -> {
+            RuneClansHubClient.Answer a = hub.get();
+            if (a != null && a.ok()) sent.add(b);
+            return a;
+        }, clock, 10);
+        List<HubWriteQueue.Outcome> toldA = new ArrayList<>();
+
+        // vote A is held while the hub is down; vote B (same member, same poll) goes through: A must never land after it
+        queue.submit(new HubWriteQueue.Write("POST", "/v1/polls/p/votes", "A", r -> toldA.add(r.outcome()), "p:member"));
+        queue.submit(new HubWriteQueue.Write("POST", "/v1/other", "other", null)); // another write, no key: kept
+        hub.set(ok("x"));
+        assertEquals(HubWriteQueue.Outcome.SENT, queue.submit(new HubWriteQueue.Write("POST", "/v1/polls/p/votes", "B", null, "p:member")).outcome());
+        assertEquals(List.of(HubWriteQueue.Outcome.REFUSED), toldA, "the replaced write's owner is told it won't be sent");
+        assertEquals(1, queue.drain());
+        assertEquals(List.of("B", "other"), sent);
     }
 
     @Test

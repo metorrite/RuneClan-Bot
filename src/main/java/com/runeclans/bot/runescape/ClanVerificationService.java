@@ -1,5 +1,8 @@
 package com.runeclans.bot.runescape;
 
+import com.runeclans.bot.runeclans.RuneClansHubClient;
+import net.dv8tion.jda.api.utils.data.DataArray;
+import net.dv8tion.jda.api.utils.data.DataObject;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 
 import java.util.List;
@@ -28,23 +31,37 @@ public class ClanVerificationService {
 
     private final RuneScapeApiClient apiClient;
     private final PlayerLinkService linkService;
+    private final RuneClansHubClient hub;
 
-    public ClanVerificationService(RuneScapeApiClient apiClient, PlayerLinkService linkService) {
+    public ClanVerificationService(RuneScapeApiClient apiClient, PlayerLinkService linkService, RuneClansHubClient hub) {
         this.apiClient = apiClient;
         this.linkService = linkService;
+        this.hub = hub;
     }
 
     /** Blocking (one clan-roster request) — call off the event thread, or after deferring the interaction. */
     public Result verify(long guildId, long discordUserId, String clanName) {
-        List<RuneScapeApiClient.ClanMember> roster = apiClient.fetchClanRoster(clanName);
         List<String> linkedRsns = linkService.getLinksForUser(guildId, discordUserId).stream().map(PlayerLink::rsn).toList();
+        // T-878: with the hub on, the hub makes the Jagex call (one place for every RuneMetrics/Jagex request)
+        if (hub != null && hub.enabled()) {
+            RuneClansHubClient.Answer a = hub.call("POST", "/v1/clans/admin-check", DataObject.empty().put("clanName", clanName)
+                    .put("rsns", DataArray.fromCollection(linkedRsns)).toString());
+            if (a != null && a.ok() && a.json() != null) {
+                DataObject m = a.json().isNull("member") ? null : a.json().getObject("member");
+                return evaluate(clanName, a.json().getBoolean("exists", false), a.json().getInt("members", 0), m == null ? null : m.getString("rsn"),
+                        m == null ? null : m.getString("rank"), linkedRsns);
+            }
+            return new Result(List.of(new Check("The clan **" + clanName + "** can be checked", false, "The clan list couldn't be reached right now — try again in a minute.")));
+        }
+        List<RuneScapeApiClient.ClanMember> roster = apiClient.fetchClanRoster(clanName);
         return evaluate(clanName, roster, linkedRsns);
     }
 
-    static Result evaluate(String clanName, List<RuneScapeApiClient.ClanMember> roster, List<String> linkedRsns) {
-        boolean exists = !roster.isEmpty();
-        boolean hasLink = !linkedRsns.isEmpty();
+    static Result evaluate(String clanName, boolean exists, int size, String memberRsn, String memberRank, List<String> linkedRsns) {
+        return build(clanName, exists, size, memberRsn, memberRank, linkedRsns);
+    }
 
+    static Result evaluate(String clanName, List<RuneScapeApiClient.ClanMember> roster, List<String> linkedRsns) {
         RuneScapeApiClient.ClanMember me = null;
         for (String rsn : linkedRsns) {
             for (var member : roster) {
@@ -55,18 +72,23 @@ public class ClanVerificationService {
             }
             if (me != null) break;
         }
+        return build(clanName, !roster.isEmpty(), roster.size(), me == null ? null : me.rsn(), me == null ? null : me.clanRank(), linkedRsns);
+    }
 
-        boolean rankOk = me != null && isAtLeast(me.clanRank(), MINIMUM_RANK);
+    private static Result build(String clanName, boolean exists, int size, String meRsn, String meRank, List<String> linkedRsns) {
+        boolean hasLink = !linkedRsns.isEmpty();
+        boolean isMember = meRsn != null;
+        boolean rankOk = isMember && isAtLeast(meRank, MINIMUM_RANK);
 
         return new Result(List.of(
                 new Check("The clan **" + clanName + "** exists",
-                        exists, exists ? roster.size() + " members found." : "No clan with that exact name came back — check the spelling."),
+                        exists, exists ? size + " members found." : "No clan with that exact name came back — check the spelling."),
                 new Check("You have a verified RuneScape name",
                         hasLink, hasLink ? "Linked: " + String.join(", ", linkedRsns) + "." : "Link yours with `/rs` first (an admin can verify you if you can't yet)."),
                 new Check("One of your names is a member of that clan",
-                        me != null, me != null ? "**" + me.rsn() + "** is in the clan." : !exists ? "Can't be checked until the clan exists." : !hasLink ? "Can't be checked until you have a verified name." : "None of your linked names appear in that clan's roster."),
+                        isMember, isMember ? "**" + meRsn + "** is in the clan." : !exists ? "Can't be checked until the clan exists." : !hasLink ? "Can't be checked until you have a verified name." : "None of your linked names appear in that clan's roster."),
                 new Check("You hold the " + MINIMUM_RANK + " rank or higher",
-                        rankOk, me == null ? "Can't be checked until the step above is met." : "**" + me.rsn() + "** is a " + me.clanRank() + (rankOk ? "." : " — that's below " + MINIMUM_RANK + "."))));
+                        rankOk, !isMember ? "Can't be checked until the step above is met." : "**" + meRsn + "** is a " + meRank + (rankOk ? "." : " — that's below " + MINIMUM_RANK + "."))));
     }
 
     /** {@code true} if {@code rank} sits at or above {@code minimum} on the standard clan rank ladder; an unrecognized rank never qualifies. */

@@ -1,6 +1,9 @@
 package com.runeclans.bot.runescape;
 
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
+import com.runeclans.bot.runescape.stats.StatsBackend;
+import com.runeclans.bot.runescape.stats.StatsBackends;
+import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,12 +18,29 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Backs the weekly clan digest (joins/leaves, Citadel visits/caps) — see {@code WeeklyDigestService}. */
-@BService
+@BConfiguration
 public class WeeklyDigestRepository {
     private static final Logger log = LoggerFactory.getLogger(WeeklyDigestRepository.class);
 
     private final ConnectionSupplier connectionSupplier;
 
+
+    /** Stats reads answer from the hub while it polls, else from this class's own SQL (T-851, {@link StatsBackends}). */
+    private volatile StatsBackends stats = StatsBackends.none();
+
+    /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it.  */
+    @BService
+    public static WeeklyDigestRepository weeklyDigestRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer, StatsBackends backends) {
+        WeeklyDigestRepository repository = new WeeklyDigestRepository(connectionSupplier, initializer);
+        repository.stats = backends;
+        return repository;
+    }
+
+    /** Reads from {@code backends} while the hub polls (tests). */
+    public WeeklyDigestRepository withStats(StatsBackends backends) {
+        this.stats = backends;
+        return this;
+    }
     public WeeklyDigestRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer) {
         this.connectionSupplier = connectionSupplier;
     }
@@ -88,6 +108,8 @@ public class WeeklyDigestRepository {
      * live roster. An activity whose time couldn't be read falls back to when we first saw it.
      */
     public List<CitadelActivityRow> getCitadelActivityInWindow(long guildId, OffsetDateTime from, OffsetDateTime to) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.citadelActivityInWindow(guildId, from, to);
         String sql = """
                 SELECT a.rsn, a.activity_text, a.activity_date, a.occurred_at FROM younglings.player_activity a
                 WHERE EXISTS (SELECT 1 FROM younglings.clan_member m WHERE m.guild_id = ? AND LOWER(m.rsn) = LOWER(a.rsn))

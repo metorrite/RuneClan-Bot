@@ -8,11 +8,8 @@ import com.runeclans.bot.rsnlink.LinkHttp;
 import com.runeclans.bot.rsnlink.LinkService;
 import com.runeclans.bot.rsnlink.LinkSettings;
 import com.runeclans.bot.rsnlink.LinkVerifier;
-import com.runeclans.bot.rsnlink.verify.HttpPublicData;
 import com.runeclans.bot.rsnlink.verify.PgVerifyStore;
 import com.runeclans.bot.rsnlink.verify.VerifySettings;
-import com.runeclans.bot.rsnlink.verify.XpLinkVerifier;
-import com.runeclans.bot.runescape.RuneMetricsSwitch;
 import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
@@ -61,15 +58,11 @@ public class RsnLinkModule implements InternalRouteModule {
                 LinkDatabase database = new LinkDatabase(settings.databaseUrl(), 4);
                 VerifySettings verify = VerifySettings.fromEnv(config::getLinkSetting, "RS Link verification (" + config.getJonnybotUrl() + ")");
                 PgVerifyStore verifyStore = new PgVerifyStore(database::connection, settings.schema());
-                List<LinkVerifier> verifiers = verify.enabled()
-                        ? List.of(XpLinkVerifier.start(verify, verifyStore, new HttpPublicData(verify.userAgent(), RuneMetricsSwitch.fromEnv()), Clock.systemUTC(), BotScheduler.lane("rsnlink-verify")))
-                        : List.of();
+                // T-851/T-876: the bot makes no Jagex call of its own any more (the hub verifies links); LINK_VERIFY_ENABLED no longer starts the old checker
+                if (verify.enabled()) log.warn("LINK_VERIFY_ENABLED is set, but the bot's own \"plugin knew it first\" check was retired: the hub does link verification now.");
+                List<LinkVerifier> verifiers = List.of();
                 made = new LinkService(settings, database, dmSender, verifiers, Clock.systemUTC(), new SecureRandom());
                 made.start();
-                if (verify.enabled()) {
-                    verifyStore.migrate();
-                    log.info("RSN link verification is on (\"plugin knew it first\", T-170).");
-                }
                 routes = new LinkHttp(made);
                 startSweeps(made);
                 log.info("RSN link service is on (schema {}).", settings.schema());

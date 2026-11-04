@@ -211,6 +211,9 @@ public class MemberApi {
             InternalApiServer.sendJson(exchange, e.status, DataObject.empty().put("error", e.getMessage()));
         } catch (HighlightMemberApi.Refused e) {
             InternalApiServer.sendJson(exchange, e.status, DataObject.empty().put("error", e.getMessage()));
+        } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+            // hub-community: the hub's answer, in words a member can read
+            InternalApiServer.sendJson(exchange, e.httpStatus(), DataObject.empty().put("error", e.getMessage()));
         } catch (com.runeclans.bot.events.EventProblem e) {
             // the event engine's own refusals already say why in words a member can read
             InternalApiServer.sendJson(exchange, e.status(), DataObject.empty().put("error", e.getMessage()));

@@ -2,6 +2,9 @@ package com.runeclans.bot.internal;
 
 import com.runeclans.bot.database.SchemaBootstrapper;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
+import com.runeclans.bot.runescape.stats.StatsBackend;
+import com.runeclans.bot.runescape.stats.StatsBackends;
+import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +25,7 @@ import java.util.Map;
  * What the website's admin tools remember: an audit log of every change made from the dashboard, private staff notes
  * on members, and messages queued to post later. Kept in the bot's own database so none of it depends on the website.
  */
-@BService
+@BConfiguration
 public class AdminToolsStore {
     private static final Logger log = LoggerFactory.getLogger(AdminToolsStore.class);
 
@@ -35,6 +38,23 @@ public class AdminToolsStore {
 
     private final ConnectionSupplier connectionSupplier;
 
+
+    /** Stats reads answer from the hub while it polls, else from this class's own SQL (T-851, {@link StatsBackends}). */
+    private volatile StatsBackends stats = StatsBackends.none();
+
+    /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it.  */
+    @BService
+    public static AdminToolsStore adminToolsStore(ConnectionSupplier connectionSupplier, StatsBackends backends) {
+        AdminToolsStore repository = new AdminToolsStore(connectionSupplier);
+        repository.stats = backends;
+        return repository;
+    }
+
+    /** Reads from {@code backends} while the hub polls (tests). */
+    public AdminToolsStore withStats(StatsBackends backends) {
+        this.stats = backends;
+        return this;
+    }
     public AdminToolsStore(ConnectionSupplier connectionSupplier) {
         this.connectionSupplier = connectionSupplier;
         SchemaBootstrapper.run(connectionSupplier, log, "admin tools", List.of(
@@ -283,6 +303,8 @@ public class AdminToolsStore {
 
     /** Each active member's newest adventure-log entry time (lower-case RSN → time). */
     public Map<String, OffsetDateTime> lastActivity(long guildId) {
+        StatsBackend hub = stats.hub();
+        if (hub != null) return hub.lastActivity(guildId);
         try (Connection c = connectionSupplier.getConnection();
              PreparedStatement s = c.prepareStatement("""
                      SELECT LOWER(m.rsn) AS rsn, MAX(a.recorded_at) AS last_at

@@ -207,6 +207,7 @@ has more than one replica).
 | `runemetrics-budget` | `runescape/polling/RuneMetricsBudget` | api (with polling) |
 | `runemetrics-clock-check` | `runescape/RuneMetricsClockCheck` | api |
 | `clan-sync-scheduler` | `runescape/ClanSyncScheduler` | api (roster fetch); role sync results go through the outbox |
+| `hub-tracked` | `runescape/HubTrackedList` | gateway (posts the `/rsn` names and unregistered-clan members of the servers it is in to the hub's tracked list once an hour, T-851) |
 | `clan-points-scheduler` | `runescape/ClanPointsScheduler` | api |
 | `weekly-digest-scheduler` | `runescape/WeeklyDigestScheduler` | gateway (own shards) |
 | `event-tracker`, `plugin-xp-tracker` | `events/EventTracker`, `events/PluginXpTracker` | api, together (shared `runeSyncPlayers`) |

@@ -306,6 +306,11 @@ public class BotConfig {
         return url == null ? null : url.trim();
     }
 
+    /** Where polls, signups, the group finder and forms live: {@code bot} or {@code hub} ({@code hubcommunity.HubCommunity}, T-869). Null when unset. */
+    public String getCommunityBackend() {
+        return envOrDotenv("COMMUNITY_BACKEND");
+    }
+
     /** Where clan sites live: {@code bot} (unset, the default) or {@code hub} ({@code hubsites.HubSites}, T-505). Null when unset. */
     public String getSitesBackend() {
         return envOrDotenv("SITES_BACKEND");

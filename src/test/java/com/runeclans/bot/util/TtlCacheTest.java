@@ -49,4 +49,11 @@ class TtlCacheTest {
 
         assertEquals("2", cache.get("a").orElseThrow());
     }
+
+    @Test
+    void aRemovedValueIsGone() {
+        cache.put("younglings", "roster");
+        cache.remove("younglings");
+        assertTrue(cache.get("younglings").isEmpty());
+    }
 }

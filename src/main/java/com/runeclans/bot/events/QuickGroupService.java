@@ -34,13 +34,30 @@ public class QuickGroupService {
     static final int SWEEP_MINUTES = 5;
     public static final int LISTED = 30;
 
+    /** The member-facing answer while the hub keeps the group finder ({@code hub-community}): the website talks to the hub itself. */
+    static final String MOVED = "The group finder is on RuneClans now. Reload the page and try again.";
+
     private final QuickGroupRepository repository;
     private final DiscordOutbox outbox;
+    private final com.runeclans.bot.hubcommunity.HubCommunity community;
+    private final com.runeclans.bot.hubcommunity.HubCommunityClient hub;
     private final ScheduledExecutorService lane = BotScheduler.lane("quick-groups");
 
-    public QuickGroupService(QuickGroupRepository repository, DiscordOutbox outbox) {
+    public QuickGroupService(QuickGroupRepository repository, DiscordOutbox outbox, com.runeclans.bot.hubcommunity.HubCommunity community,
+                             com.runeclans.bot.hubcommunity.HubCommunityClient hub) {
         this.repository = repository;
         this.outbox = outbox;
+        this.community = community;
+        this.hub = hub;
+    }
+
+    /** The hub keeps the groups and the finder's on/off ({@code hub-community}); the bot keeps only the channel it posts in. */
+    public boolean onHub() {
+        return community.onHub();
+    }
+
+    private void notOnHub() {
+        if (community.onHub()) throw new EventProblem(409, MOVED);
     }
 
     @BEventListener
@@ -50,6 +67,7 @@ public class QuickGroupService {
 
     /** Closes groups whose listing ended, and marks their Discord posts closed (not from a development bot: those posts are the live bot's). */
     void sweep() {
+        if (community.onHub()) return; // the hub closes groups past their listing, and the feed updates their posts
         try {
             for (Group group : repository.closeEnded(Instant.now())) {
                 if (repository.post(group.id()).isPresent() && !AutoPostRouter.skip("marking group " + group.id() + " closed in Discord")) {
@@ -62,19 +80,46 @@ public class QuickGroupService {
     }
 
     public Settings settings(long guildId) {
-        return repository.settings(guildId);
+        Settings bot = repository.settings(guildId);
+        if (!community.onHub()) return bot;
+        return new Settings(hubEnabled(guildId).orElse(false), bot.channelId());
+    }
+
+    /** The hub's on/off for the server's clan; empty when the server has no clan on the hub. */
+    private java.util.Optional<Boolean> hubEnabled(long guildId) {
+        return hub.find("/v1/clans/" + guildId + "/groups/settings").map(j -> j.getBoolean("enabled", false));
     }
 
     public List<Group> open(long guildId) {
+        if (community.onHub()) {
+            List<Group> out = new java.util.ArrayList<>();
+            var answer = hub.find("/v1/clans/" + guildId + "/groups?status=OPEN");
+            if (answer.isEmpty()) return out;
+            var list = answer.get().optArray("groups").orElse(net.dv8tion.jda.api.utils.data.DataArray.empty());
+            for (int i = 0; i < list.length() && out.size() < LISTED; i++) out.add(com.runeclans.bot.hubcommunity.HubCommunityJobs.asGroup(list.getObject(i), guildId));
+            return out;
+        }
         return repository.open(guildId, Instant.now(), LISTED);
     }
 
     public List<QuickGroupRepository.Member> members(long groupId) {
+        notOnHub();
         return repository.members(groupId);
     }
 
-    /** Turns the finder on or off and chooses the channel groups are posted in (null: not posted). Groups already posted stay as they are. */
+    /**
+     * Turns the finder on or off and chooses the channel groups are posted in (null: not posted). Groups already posted stay as they are. On the
+     * hub the on/off is the hub's ({@code PUT .../groups/settings}, If-Match) and only the channel stays in the bot's table.
+     */
     public void saveSettings(long guildId, Settings settings, long by) {
+        if (community.onHub()) {
+            var now = hub.find("/v1/clans/" + guildId + "/groups/settings")
+                    .orElseThrow(() -> com.runeclans.bot.hubcommunity.HubCommunityProblem.refused(404, "This server has no clan on RuneClans yet, so the group finder can't be switched on."));
+            hub.send("PUT", "/v1/clans/" + guildId + "/groups/settings", DataObject.empty().put("enabled", settings.enabled()).put("byDiscordId", Long.toString(by)),
+                    now.getLong("rev", 0));
+            repository.saveSettings(guildId, new Settings(repository.settings(guildId).enabled(), settings.channelId()), by);
+            return;
+        }
         repository.saveSettings(guildId, settings, by);
     }
 
@@ -90,6 +135,7 @@ public class QuickGroupService {
 
     /** Posts a new group for {@code hostId}, and has the bot post it in Discord when the server chose a channel. Answers the group's id. */
     public long create(long guildId, long hostId, DataObject body, Instant now) {
+        notOnHub();
         Settings settings = requireOn(guildId);
         QuickGroups.Plan plan;
         try {
@@ -109,6 +155,7 @@ public class QuickGroupService {
 
     /** Takes a place in {@code role} (or moves the member to it from their other role). */
     public Joined join(long guildId, long userId, long groupId, String role) {
+        notOnHub();
         requireOn(guildId);
         Group group = requireGroup(guildId, groupId);
         if (!group.open()) throw new EventProblem(409, "This group is closed.");
@@ -127,6 +174,7 @@ public class QuickGroupService {
 
     /** Gives up the member's place. */
     public void leave(long guildId, long userId, long groupId) {
+        notOnHub();
         Group group = requireGroup(guildId, groupId);
         if (!group.open()) throw new EventProblem(409, "This group is closed.");
         if (repository.leave(groupId, userId)) changed(group, userId);
@@ -134,6 +182,7 @@ public class QuickGroupService {
 
     /** Closes a group: only its host or the site's staff. Works while the finder is off too, so staff can tidy up after switching it off. */
     public void close(long guildId, long userId, long groupId, boolean staff) {
+        notOnHub();
         Group group = requireGroup(guildId, groupId);
         if (group.hostId() != userId && !staff) throw new EventProblem(403, "Only the person who posted this group, or staff, can close it.");
         if (repository.close(guildId, groupId)) changed(group, userId);

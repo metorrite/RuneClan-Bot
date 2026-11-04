@@ -45,4 +45,9 @@ public final class TtlCache<K, V> {
             entries.values().removeIf(e -> now - e.storedAtMillis() >= ttlMillis);
         }
     }
+
+    /** Forgets {@code key} now. */
+    public void remove(K key) {
+        entries.remove(key);
+    }
 }

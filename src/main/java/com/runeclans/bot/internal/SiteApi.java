@@ -140,6 +140,8 @@ public class SiteApi {
             } else {
                 InternalApiServer.sendJson(exchange, 200, result);
             }
+        } catch (com.runeclans.bot.runescape.stats.StatsUnavailableException e) {
+            InternalApiServer.sendJson(exchange, 503, DataObject.empty().put("error", "Stats aren't available right now. Try again in a minute."));
         } catch (Exception e) {
             log.error("Site API request {} failed", exchange.getRequestURI().getPath(), e);
             InternalApiServer.sendJson(exchange, 500, DataObject.empty().put("error", "Internal error"));

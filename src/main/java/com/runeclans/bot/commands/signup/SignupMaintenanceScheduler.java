@@ -50,8 +50,9 @@ public class SignupMaintenanceScheduler {
                 INITIAL_DELAY.toSeconds(), CHECK_INTERVAL.toSeconds(), TimeUnit.SECONDS);
     }
 
-    private void runSweep(JDA jda) {
+    void runSweep(JDA jda) {
         if (AutoPostRouter.diverting()) return;
+        if (signupService.onHub()) return; // hub-community: the hub keeps the sheets and closes the untouched ones itself
         try {
             int purged = signupService.purgeOldDeletedSignups(Instant.now().minus(PURGE_AFTER));
             if (purged > 0) log.info("Signup maintenance: purged {} old soft-deleted signup(s).", purged);

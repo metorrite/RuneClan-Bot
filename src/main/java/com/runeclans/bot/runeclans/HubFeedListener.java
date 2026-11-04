@@ -11,4 +11,8 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 @InterfacedService(acceptMultiple = true)
 public interface HubFeedListener {
     void onHubFeed(String kind, DataObject data);
+
+    /** Every entry of one feed page has been handed over (T-851): a listener that gathers entries acts on them now. */
+    default void onHubFeedPage() {
+    }
 }

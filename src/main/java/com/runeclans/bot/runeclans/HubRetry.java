@@ -40,9 +40,23 @@ final class HubRetry implements RuneClansHubClient.Transport {
         return call(method, path, body, Map.of());
     }
 
+    /** True on a thread that is inside {@link #withoutRetries}: one try, no sleeps. */
+    private static final ThreadLocal<Boolean> NO_RETRY = ThreadLocal.withInitial(() -> false);
+
+    /** Runs {@code work} with every hub call on this thread made once, without the retry sleeps: for reads that have a budget of their own (T-851). */
+    static <T> T withoutRetries(java.util.function.Supplier<T> work) {
+        Boolean before = NO_RETRY.get();
+        NO_RETRY.set(true);
+        try {
+            return work.get();
+        } finally {
+            NO_RETRY.set(before);
+        }
+    }
+
     @Override
     public RuneClansHubClient.Answer call(String method, String path, String body, Map<String, String> headers) {
-        boolean repeatable = REPEATABLE.contains(method.toUpperCase(Locale.ROOT));
+        boolean repeatable = REPEATABLE.contains(method.toUpperCase(Locale.ROOT)) && !NO_RETRY.get();
         RuneClansHubClient.Answer answer = inner.call(method, path, body, headers);
         for (int attempt = 0; repeatable && attempt < BACKOFF.size() && worthRetrying(answer); attempt++) {
             Duration wait = BACKOFF.get(attempt);

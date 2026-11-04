@@ -1,6 +1,9 @@
 package com.runeclans.bot.runescape;
 
 import com.runeclans.bot.discord.Shards;
+import com.runeclans.bot.runeclans.RuneClansHubClient;
+import com.runeclans.bot.runescape.stats.HubRefresh;
+import com.runeclans.bot.runescape.stats.StatsBackends;
 import com.runeclans.bot.tracking.ClassifiedEntry;
 import com.runeclans.bot.tracking.TrackingEventClassifier;
 import com.runeclans.bot.tracking.TrackingEventRouter;
@@ -26,6 +29,8 @@ public class RuneScapeStatsService {
     private final TrackingEventClassifier classifier;
     private final TrackingEventRouter router;
     private final ClanMemberRepository clanMemberRepository;
+    private final StatsBackends backends;
+    private final RuneClansHubClient hub;
 
     // Set once JDA is ready (see #onJdaReady) — same reasoning/pattern as InternalApiServer's own
     // `jda` field. Only needed to resolve a Guild to post tracking announcements to; every other
@@ -34,7 +39,9 @@ public class RuneScapeStatsService {
 
     public RuneScapeStatsService(RuneScapeApiClient apiClient, PlayerLinkRepository repository,
                                   TrackingEventClassifier classifier, TrackingEventRouter router,
-                                  ClanMemberRepository clanMemberRepository) {
+                                  ClanMemberRepository clanMemberRepository, StatsBackends backends, RuneClansHubClient hub) {
+        this.backends = backends;
+        this.hub = hub;
         this.apiClient = apiClient;
         this.repository = repository;
         this.classifier = classifier;
@@ -65,6 +72,8 @@ public class RuneScapeStatsService {
      * ({@code HTTP 429}) fetch comes back as {@link ProfileResult.RateLimited} for the coordinator to retry.
      */
     public ProfileResult fetchAndStore(String rsn) {
+        // T-851: while the hub polls, the bot asks RuneMetrics for nobody and writes no snapshot (the hub's are read instead)
+        if (backends.hubPolls()) return new ProfileResult.Unavailable();
         ProfileResult result = apiClient.fetchProfileResult(rsn);
         if (result instanceof ProfileResult.Found(var profile)) {
             long snapshotId = repository.saveSnapshot(rsn, profile, serializeSkills(profile.skills()));
@@ -83,6 +92,14 @@ public class RuneScapeStatsService {
      * anyone linked, but the tracking feed is a clan-wide announcement channel, not an "every RSN anyone has linked" one.
      */
     private void dispatchNewActivities(String rsn, List<PlayerActivity> newActivities) {
+        announce(rsn, newActivities);
+    }
+
+    /**
+     * The same announcement for lines that reached the bot another way: the hub's {@code player.activity} feed while the hub polls (T-851,
+     * {@code HubActivityPosts}). One call per player per batch, so repeats collapse as they do from one poll.
+     */
+    public void announce(String rsn, List<PlayerActivity> newActivities) {
         if (newActivities.isEmpty()) return;
 
         JDA currentJda = jda;
@@ -159,8 +176,39 @@ public class RuneScapeStatsService {
         return activity.text() + "\u0000" + activity.details();
     }
 
+    // ---------- the hub's polling (T-851) ----------
+
+    /** True while the hub polls RuneMetrics instead of the bot ({@link StatsBackends}): reads come from the hub and polls go through its Refresh. */
+    public boolean hubPolls() {
+        return backends.hubPolls();
+    }
+
+    /** Asks the hub to poll {@code rsn} now on behalf of Discord user {@code discordId} (the person who pressed): what "Update now" does while the hub polls. */
+    public HubRefresh.Result refreshViaHub(String rsn, long discordId) {
+        return HubRefresh.ask(hub, rsn, discordId);
+    }
+
+    /**
+     * The hub's newest snapshot of {@code rsn} as a {@link ProfileResult}, for the cards that render one straight from a poll: the player's skills
+     * and newest log lines as the hub holds them, {@link ProfileResult.Unavailable} when the hub has nothing (never polled, hidden, or down).
+     * A Refresh just queued shows up on the next read, once the hub's poll lands.
+     */
+    public ProfileResult latestAsResult(String rsn) {
+        PlayerLinkRepository.StatsSnapshotRow latest = repository.getLatestSnapshot(rsn);
+        if (latest == null) return new ProfileResult.Unavailable();
+        List<SkillValue> skills = repository.getSkillsForSnapshot(latest.snapshotId());
+        List<PlayerActivity> activities = repository.getRecentActivities(rsn, 20);
+        return new ProfileResult.Found(new RuneScapeProfile(rsn, latest.totalLevel(), latest.totalXp(), latest.combatLevel(), latest.questsComplete(),
+                latest.questsStarted(), latest.questsNotStarted(), skills, activities));
+    }
+
     public PlayerLinkRepository.StatsSnapshotRow getLatestSnapshot(String rsn) {
         return repository.getLatestSnapshot(rsn);
+    }
+
+    /** The newest snapshot of each name, keyed by the lower-cased name. */
+    public java.util.Map<String, PlayerLinkRepository.StatsSnapshotRow> getLatestSnapshots(java.util.Collection<String> rsns) {
+        return repository.getLatestSnapshots(rsns);
     }
 
     /** Snapshot history, most recent first — the data source for a "gains over time" view. */

@@ -41,6 +41,7 @@ public final class LaneOwners {
             Map.entry("runemetrics-budget", Owner.GATEWAY),
             Map.entry("event-tracker", Owner.GATEWAY),
             Map.entry("plugin-xp-tracker", Owner.GATEWAY),
+            Map.entry("hub-tracked", Owner.GATEWAY), // the names the hub should poll, from the servers the bot is in (T-851)
             // work that reads the gateway's servers, channels or members (M9, M11)
             Map.entry("clan-sync-scheduler", Owner.GATEWAY),
             Map.entry("clan-points-scheduler", Owner.GATEWAY),

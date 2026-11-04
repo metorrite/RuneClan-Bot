@@ -76,6 +76,7 @@ public class SignupInteractionListener extends ListenerAdapter {
         try {
             handleButton(event, id);
         } catch (Exception e) {
+            if (com.runeclans.bot.hubcommunity.HubCommunityReplies.reply(event, e)) return;
             log.error("Unhandled exception in signup button interaction '{}'", id, e);
             Containers.replyError(event);
         }
@@ -420,6 +421,7 @@ public class SignupInteractionListener extends ListenerAdapter {
         try {
             handleModal(event, modalId);
         } catch (Exception e) {
+            if (com.runeclans.bot.hubcommunity.HubCommunityReplies.reply(event, e)) return;
             log.error("Unhandled exception in signup modal interaction '{}'", modalId, e);
             Containers.replyError(event);
         }

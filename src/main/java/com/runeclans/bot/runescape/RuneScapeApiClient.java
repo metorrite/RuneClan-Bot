@@ -44,6 +44,12 @@ public class RuneScapeApiClient {
     // policy when unset is Redirect.NEVER — without this, every avatar fetch silently "failed"
     // with a bare 302 and no body, never actually reaching the image.
     /** Clan rosters fetched in the last 90 seconds, by lower-cased clan name; only successful, non-empty fetches are kept. */
+    private final com.runeclans.bot.runeclans.RuneClansHubClient hub;
+
+    public RuneScapeApiClient(com.runeclans.bot.runeclans.RuneClansHubClient hub) {
+        this.hub = hub;
+    }
+
     private final com.runeclans.bot.util.TtlCache<String, List<ClanMember>> clanRosterCache = new com.runeclans.bot.util.TtlCache<>(Duration.ofSeconds(90));
 
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -78,8 +84,7 @@ public class RuneScapeApiClient {
     public ProfileResult fetchProfileResult(String rsn) {
         if (!runeMetricsOn.getAsBoolean()) {
             if (loggedSwitchedOff.compareAndSet(false, true)) {
-                log.warn("RuneMetrics is switched off (RUNEMETRICS, or its {} retirement date has passed): profile polls now answer 'unavailable' without asking.",
-                        RuneMetricsSwitch.SUNSET);
+                log.warn("RuneMetrics is switched off (RUNEMETRICS=off): profile polls now answer 'unavailable' without asking.");
             }
             return new ProfileResult.Unavailable();
         }
@@ -292,6 +297,26 @@ public class RuneScapeApiClient {
     /** One row of the Clan Hiscores' member roster — see {@link #fetchClanRoster}. */
     public record ClanMember(String rsn, String clanRank, long totalXp, long kills) {}
 
+    private List<ClanMember> fetchClanRosterFromHub(String clanName) {
+        try {
+            var a = hub.call("POST", "/v1/clans/live-roster", net.dv8tion.jda.api.utils.data.DataObject.empty().put("clanName", clanName).toString());
+            if (a == null || !a.ok() || a.json() == null) {
+                log.warn("The hub's live roster for '{}' didn't answer ({}).", clanName, a == null ? "unreachable" : "HTTP " + a.status());
+                return List.of();
+            }
+            net.dv8tion.jda.api.utils.data.DataArray rows = a.json().getArray("members");
+            List<ClanMember> members = new ArrayList<>();
+            for (int i = 0; i < rows.length(); i++) {
+                var m = rows.getObject(i);
+                members.add(new ClanMember(m.getString("rsn"), m.getString("rank"), m.getLong("totalXp", 0), m.getLong("kills", 0)));
+            }
+            return members;
+        } catch (RuntimeException e) {
+            log.warn("The hub's live roster for '{}' couldn't be read: {}", clanName, e.toString());
+            return List.of();
+        }
+    }
+
     /**
      * The clan's current member roster — verified live against clan "Younglings" (CSV: {@code
      * Clanmate, Clan Rank, Total XP, Kills}). No join dates: nothing in this response, the classic
@@ -313,6 +338,8 @@ public class RuneScapeApiClient {
     }
 
     private List<ClanMember> fetchClanRosterUncached(String clanName) {
+        // T-852: with the hub client on, the hub makes the Jagex call (one place for every Jagex request); a hub failure is an empty roster, as a Jagex failure always was
+        if (hub != null && hub.enabled()) return fetchClanRosterFromHub(clanName);
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(CLAN_HISCORES_URL.formatted(encode(clanName))))

@@ -89,8 +89,10 @@ public class CommunityAdminApi {
         if (problem != null) throw new ApiError(400, problem);
 
         GuildMessageChannel channel = postableChannel(guild, body.getString("channelId", ""), GuildMessageChannel.class);
-        long pollId = polls.createPoll(guild, channel, title, anonymous, multiple, options, actor.getIdLong());
-        if (hours != null) community.scheduleClose(pollId, java.time.OffsetDateTime.now().plusHours(hours));
+        // on the hub the poll carries its end time and the hub closes it; on the bot's own tables the poll closer does
+        java.time.Instant closesAt = hours == null ? null : java.time.Instant.now().plus(java.time.Duration.ofHours(hours));
+        long pollId = polls.createPoll(guild, channel, title, anonymous, multiple, options, actor.getIdLong(), closesAt);
+        if (hours != null && !polls.onHub()) community.scheduleClose(pollId, java.time.OffsetDateTime.now().plusHours(hours));
         cache.invalidate("polls");
         log.info("Dashboard: {} created a poll '{}' in #{}", actor.getId(), title, channel.getName());
         return DataObject.empty().put("created", true);
@@ -109,6 +111,7 @@ public class CommunityAdminApi {
 
     /** The sheets as an admin sees them: the same list as the public page, but with who is who (Discord ids included). */
     DataObject signupList(Guild guild) {
+        if (signups.onHub()) return hubSignupList(guild);
         DataArray array = DataArray.empty();
         for (var sheet : stats.activeSignups(guild.getIdLong())) {
             SignupSession session = signups.getSessionById(sheet.id());
@@ -118,6 +121,44 @@ public class CommunityAdminApi {
             }
             array.add(DataObject.empty().put("id", Long.toString(sheet.id())).put("title", sheet.title()).put("type", session == null ? "QUEUE" : session.type().name())
                     .put("paused", !"ACTIVE".equalsIgnoreCase(sheet.status())).put("entries", entries));
+        }
+        return DataObject.empty().put("signups", array);
+    }
+
+    /** How long one hub-backed signup list may spend reading sheets' entries: the website gives up on the bot after 8 seconds. */
+    static final java.time.Duration HUB_LIST_BUDGET = java.time.Duration.ofSeconds(4);
+
+    /**
+     * {@link #signupList} while the hub keeps the sheets ({@code hub-community}): the same shape, read through the signup service. Each
+     * sheet's entries are one hub read, so they are read only within {@link #HUB_LIST_BUDGET}, and not at all after the hub fails one:
+     * a sheet left out says so ({@code entriesUnknown: true}, no entries) instead of the whole list timing out.
+     */
+    private DataObject hubSignupList(Guild guild) {
+        DataArray array = DataArray.empty();
+        List<SignupSession> sheets = new ArrayList<>(signups.getVisibleSignups(guild.getIdLong()));
+        java.util.Collections.reverse(sheets); // newest first, as the bot's own list
+        long deadline = System.nanoTime() + HUB_LIST_BUDGET.toNanos();
+        boolean reading = true;
+        for (SignupSession session : sheets.subList(0, Math.min(20, sheets.size()))) {
+            DataObject sheet = DataObject.empty().put("id", Long.toString(session.signupId())).put("title", session.title()).put("type", session.type().name());
+            DataArray entries = DataArray.empty();
+            boolean known = false;
+            if (reading && System.nanoTime() < deadline) {
+                try {
+                    int position = 1;
+                    for (SignupEntry entry : signups.getEntries(session.signupId())) {
+                        entries.add(DataObject.empty().put("userId", Long.toString(entry.userId())).put("name", entryName(guild, session, entry.userId(), entry.username()))
+                                .put("position", position++));
+                    }
+                    sheet.put("paused", !signups.isSignupActive(session.signupId()));
+                    known = true;
+                } catch (com.runeclans.bot.hubcommunity.HubCommunityProblem e) {
+                    reading = false; // the hub is failing: the other sheets would only wait for it too
+                    entries = DataArray.empty();
+                }
+            }
+            if (!known) sheet.put("paused", false).put("entriesUnknown", true);
+            array.add(sheet.put("entries", entries));
         }
         return DataObject.empty().put("signups", array);
     }

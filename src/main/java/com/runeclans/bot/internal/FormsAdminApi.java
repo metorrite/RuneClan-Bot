@@ -37,15 +37,23 @@ public class FormsAdminApi implements AdminRouteExtension {
 
     private final WebFormRepository repository;
     private final TicketRepository tickets;
+    private final com.runeclans.bot.hubcommunity.HubCommunity community;
+    private final com.runeclans.bot.hubcommunity.HubCommunityClient hub;
+    private final com.runeclans.bot.hubcommunity.HubCommunityMaps maps;
 
-    public FormsAdminApi(WebFormRepository repository, TicketRepository tickets) {
+    public FormsAdminApi(WebFormRepository repository, TicketRepository tickets, com.runeclans.bot.hubcommunity.HubCommunity community,
+                         com.runeclans.bot.hubcommunity.HubCommunityClient hub, com.runeclans.bot.hubcommunity.HubCommunityMaps maps) {
         this.repository = repository;
         this.tickets = tickets;
+        this.community = community;
+        this.hub = hub;
+        this.maps = maps;
     }
 
     @Override
     public DataObject route(Guild guild, Member actor, String method, String[] parts, Supplier<DataObject> body) {
         if (parts.length < 1 || !parts[0].equals("forms")) return null;
+        if (community.onHub()) return hubRoute(guild, method, parts, body);
         if (parts.length == 1) {
             if (method.equals("POST")) return create(guild, body.get());
             AdminRouteExtension.requireMethod(method, "GET");
@@ -115,6 +123,63 @@ public class FormsAdminApi implements AdminRouteExtension {
         owned(guild, formId);
         if (!repository.delete(guild.getIdLong(), formId)) throw new ApiError(404, Text.of(guild, "dashboard.that_form_is_gone_reload_the"));
         return list(guild);
+    }
+
+    // ---------- hub-community: the hub keeps the forms, the bot only their Discord settings ----------
+
+    /** Why a forms write here is refused while the hub keeps forms: the website edits them on RuneClans. */
+    static final String MOVED = "Forms are kept on RuneClans now: edit the questions there. Only the ticket panel, channel and role are set here.";
+
+    /**
+     * The forms page while {@code hub-community} is on (ticket F3): {@code GET forms} lists the server's hub forms with the bot's Discord
+     * settings for each; {@code PUT forms/{hubFormId}} saves only {@code panelId}, {@code channelId} and {@code roleId} (checked as before);
+     * making, editing, deleting and reading answers happen on the hub (409 {@code moved}).
+     */
+    private DataObject hubRoute(Guild guild, String method, String[] parts, Supplier<DataObject> body) {
+        if (parts.length == 1 && method.equals("GET")) return hubList(guild);
+        if (parts.length == 2 && method.equals("PUT")) return hubSave(guild, parts[1], body.get());
+        throw new ApiError(409, MOVED);
+    }
+
+    private DataObject hubList(Guild guild) {
+        long guildId = guild.getIdLong();
+        java.util.Map<String, com.runeclans.bot.hubcommunity.HubCommunityMaps.FormRow> discord = new java.util.HashMap<>();
+        for (var row : maps.formsOf(guildId)) discord.put(row.hubId().toString(), row);
+        DataArray forms = DataArray.empty();
+        DataArray list = hub.find("/v1/clans/" + guildId + "/forms").flatMap(j -> j.optArray("forms")).orElse(DataArray.empty());
+        for (int i = 0; i < list.length(); i++) {
+            DataObject f = list.getObject(i);
+            var row = discord.get(f.getString("id", ""));
+            forms.add(DataObject.empty().put("id", f.getString("id", "")).put("name", f.getString("name", "")).put("kind", f.getString("kind", "plain"))
+                    .put("enabled", f.getBoolean("enabled", false)).put("rev", f.getLong("rev", 0))
+                    .put("panelId", row == null || row.panelId() == null ? null : Long.toString(row.panelId()))
+                    .put("channelId", row == null || row.channelId() == null ? null : Long.toString(row.channelId()))
+                    .put("roleId", row == null || row.roleId() == null ? null : Long.toString(row.roleId())));
+        }
+        DataArray panels = DataArray.empty();
+        for (Panel panel : tickets.getPanels(guildId)) panels.add(DataObject.empty().put("id", Long.toString(panel.id())).put("name", panel.name()).put("enabled", panel.enabled()));
+        return DataObject.empty().put("forms", forms).put("panels", panels).put("onHub", true);
+    }
+
+    private DataObject hubSave(Guild guild, String rawId, DataObject body) {
+        UUID formId;
+        try {
+            formId = UUID.fromString(rawId.strip());
+        } catch (IllegalArgumentException e) {
+            throw new ApiError(404, Text.of(guild, "dashboard.that_form_does_not_exist"));
+        }
+        // the form must be one of this server's clan's forms on the hub
+        DataArray list = hub.find("/v1/clans/" + guild.getIdLong() + "/forms").flatMap(j -> j.optArray("forms")).orElse(DataArray.empty());
+        boolean ours = false;
+        for (int i = 0; i < list.length(); i++) ours |= formId.toString().equals(list.getObject(i).getString("id", ""));
+        if (!ours) throw new ApiError(404, Text.of(guild, "dashboard.that_form_does_not_exist"));
+        var now = maps.form(formId).orElse(new com.runeclans.bot.hubcommunity.HubCommunityMaps.FormRow(formId, guild.getIdLong(), null, null, null));
+        Form placed = new Form(0, guild.getIdLong(), "", "", "", false, optionalId(body, "panelId", now.panelId()), optionalId(body, "channelId", now.channelId()),
+                optionalId(body, "roleId", now.roleId()), false, 0, List.of());
+        List<String> problems = placementProblems(guild, placed);
+        if (!problems.isEmpty()) throw new ApiError(400, problems.getFirst(), problems);
+        maps.saveForm(new com.runeclans.bot.hubcommunity.HubCommunityMaps.FormRow(formId, guild.getIdLong(), placed.panelId(), placed.channelId(), placed.roleId()));
+        return hubList(guild);
     }
 
     // ---------- helpers ----------
