@@ -269,7 +269,18 @@ public final class HubStatsBackend implements StatsBackend {
     @Override
     public List<SkillValue> skillsForSnapshot(long snapshotId) {
         List<SkillValue> known = skillsById.get(snapshotId);
-        return known == null ? List.of() : known;
+        if (known != null) return known;
+        // the LRU is bounded, but a batch answer still cached lists the snapshot with its skills: read them from there
+        for (Cached<Map<String, DataObject>> batch : batches.values()) {
+            for (DataObject p : batch.value().values()) {
+                if (p.getLong("snapshotId", -1) == snapshotId && p.hasKey("skills") && !p.isNull("skills")) {
+                    List<SkillValue> skills = skills(p.getArray("skills"));
+                    skillsById.put(snapshotId, skills);
+                    return skills;
+                }
+            }
+        }
+        return List.of();
     }
 
     @Override

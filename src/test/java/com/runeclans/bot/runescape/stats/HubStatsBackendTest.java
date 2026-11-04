@@ -5,6 +5,7 @@ import com.runeclans.bot.runeclans.RuneClansHubClient.Answer;
 import com.runeclans.bot.runeclans.RuneClansHubClient.Read;
 import com.runeclans.bot.runescape.ClanMemberRepository.ClanMemberRow;
 import com.runeclans.bot.runescape.PlayerActivity;
+import com.runeclans.bot.runescape.SkillValue;
 import com.runeclans.bot.runescape.PlayerLinkRepository.StatsSnapshotRow;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
@@ -345,6 +346,27 @@ class HubStatsBackendTest {
         b.evictPlayer("Alice");
         b.skillGainsBetween(GUILD, "Alice", from, to);
         assertEquals(3, hub.count("skill-gains"), "the hub's stats.updated for Alice drops her cached gains");
+    }
+
+    @Test
+    void skillsOfASnapshotACachedBatchStillListsAreNeverLost() {
+        FakeHub hub = new FakeHub();
+        hub.on("/v1/players/stats", body -> {
+            DataArray rsns = DataObject.fromJson(body).getArray("rsns");
+            DataArray players = DataArray.empty();
+            for (int i = 0; i < rsns.length(); i++) {
+                long id = Long.parseLong(rsns.getString(i).substring(1));
+                players.add(snapshot(id, rsns.getString(i), NOW, 1_000, 100).put("skills", DataArray.empty().add(DataObject.empty().put("skillId", 0).put("level", 99).put("xp", id).put("rank", 1))));
+            }
+            return ok(DataObject.empty().put("players", players).put("missing", DataArray.empty()));
+        });
+        HubStatsBackend b = backend(hub);
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < 5_200; i++) names.add("P" + i); // more distinct snapshots than the skills LRU holds
+        assertEquals(5_200, b.latestMany(names).size());
+        assertEquals(List.of(new SkillValue(0, 99, 7, 1)), b.skillsForSnapshot(7), "dropped from the LRU, still in the cached batch");
+        assertEquals(List.of(new SkillValue(0, 99, 5_199, 1)), b.skillsForSnapshot(5_199));
+        assertTrue(b.skillsForSnapshot(999_999).isEmpty(), "a snapshot no batch lists has no skills to give");
     }
 
     @Test
