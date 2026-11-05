@@ -127,7 +127,6 @@ Every environment variable the bot reads. Each one can also go in the git-ignore
 | `RUNESCAPE_CLAN_NAME` | Env-default clan name for the home server (servers set their own on Server setup). | No clan until one is set. |
 | `RUNESCAPE_AUTO_POLL_ENABLED` | `false` stops the scheduled work: the daily clan roster sync, the weekly digest and the event feeders. The bot polls no player itself (the hub does). | `true`. |
 | `RUNEMETRICS_TIME_ZONE` | The zone old stored RuneMetrics activity times are read in (for example `Etc/GMT-1`). Environment only. | `Europe/London`. |
-| `RUNEMETRICS` | Whether the Citadel caps rows (read from stored RuneMetrics activity) still count. `auto` (the default) and `on` count them; `off` shows Clan health's missed Citadel caps list and the rank-up advisor's caps parts as unavailable (not counted). The bot polls no Jagex API: the hub does. Environment only. | `auto`. |
 | `RSN_RENAME_ALERT_CHANNEL_ID` | Env-default channel for "this player may have renamed" alerts. | Renames are only logged. |
 | `RSN_VERIFICATION_CHANNEL_ID` | Env-default channel where RSN verification requests go for review. | Requests wait unnoticed. |
 | `VERIFIED_CLAN_ROLE_ID`, `VERIFIED_NON_CLAN_ROLE_ID`, `UNVERIFIED_ROLE_ID` | Env-default roles given or removed on verification (clan member, verified non-member, removed on verify). | Nothing is given or removed for that slot. |

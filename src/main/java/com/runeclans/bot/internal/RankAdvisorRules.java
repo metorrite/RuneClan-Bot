@@ -145,7 +145,7 @@ public final class RankAdvisorRules {
     }
 
     /**
-     * Every part the rule sets, checked against the member. {@code capsAvailable} false (RuneMetrics is off, {@link CitadelCaps}): a caps part
+     * Every part the rule sets, checked against the member. {@code capsAvailable} false: a caps part
      * is marked unavailable and not counted, so ranks still work on XP, days and points. The owner's {@code minCaps} stays saved for when caps
      * return.
      */
