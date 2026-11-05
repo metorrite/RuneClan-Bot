@@ -493,29 +493,68 @@ public final class HubStatsBackend implements StatsBackend {
         }
         Instant now = clock.instant();
         skillGains.values().removeIf(c -> c.at().plus(FRESH_HISTORY).isBefore(now));
+        java.util.function.Function<String, String> cacheKeyOf = name -> clan.get() + "|" + key(name) + "|" + from.toInstant() + "|" + to.toInstant();
+        // T-918: the members not cached yet go to the hub in one call per chunk, not one call each (about 200 for a big clan)
+        List<String> missing = names.stream().filter(name -> !skillGains.containsKey(cacheKeyOf.apply(name))).toList();
+        boolean batched = true;
+        for (int i = 0; i < missing.size() && batched; i += SKILL_GAINS_CHUNK) {
+            batched = skillGainsBatch(clan.get(), missing.subList(i, Math.min(missing.size(), i + SKILL_GAINS_CHUNK)), from, to, cacheKeyOf, now);
+        }
         List<Callable<Map<Integer, Long>>> reads = names.stream().<Callable<Map<Integer, Long>>>map(name -> () -> {
-            String cacheKey = clan.get() + "|" + key(name) + "|" + from.toInstant() + "|" + to.toInstant();
+            String cacheKey = cacheKeyOf.apply(name);
             Cached<Map<Integer, Long>> cached = skillGains.get(cacheKey);
             if (cached != null) return cached.value();
+            // a hub without the batch mode yet: one call for this member, as before
             DataObject body = DataObject.empty().put("rsn", name).put("from", from.toInstant().toString()).put("to", to.toInstant().toString());
             RuneClansHubClient.Answer a = hub.call("POST", "/v1/clans/" + clan.get() + "/stats/skill-gains", body.toString());
             if (a == null || a.status() == 429 || a.status() >= 500) throw new HubDown(a == null ? "unreachable" : "status " + a.status());
-            Map<Integer, Long> gains = new HashMap<>();
-            if (a.ok() && a.json() != null) {
-                DataArray arr = a.json().optArray("skills").orElse(DataArray.empty());
-                for (int i = 0; i < arr.length(); i++) {
-                    DataObject s = arr.getObject(i);
-                    gains.merge(s.getInt("skillId"), s.getLong("gained", 0), Long::sum);
-                }
-            }
-            if (skillGains.size() > 5_000) skillGains.clear();
-            skillGains.put(cacheKey, new Cached<>(gains, now));
+            Map<Integer, Long> gains = a.ok() && a.json() != null ? skillsOf(a.json()) : Map.of();
+            remember(cacheKey, gains, now);
             return gains;
         }).toList();
         Map<Integer, Long> total = new HashMap<>();
         for (Map<Integer, Long> one : sideBySide(reads, Map.<Integer, Long>of())) one.forEach((skill, gain) -> total.merge(skill, gain, Long::sum));
         return total.entrySet().stream().filter(e -> e.getValue() > 0).sorted(Map.Entry.<Integer, Long>comparingByValue().reversed())
                 .map(e -> new SiteStatsRepository.SkillGain(e.getKey(), e.getValue())).toList();
+    }
+
+    /** Names per batched skill-gains call (the hub takes up to 5,000). */
+    static final int SKILL_GAINS_CHUNK = 1_000;
+
+    /**
+     * One batched skill-gains call (T-918) for {@code names}: caches every member's gains, an empty map for one the hub has no two snapshots for.
+     * False when the hub answered without the batch shape (an older hub), so the caller asks one member at a time instead.
+     */
+    private boolean skillGainsBatch(String clanId, List<String> names, OffsetDateTime from, OffsetDateTime to, java.util.function.Function<String, String> cacheKeyOf, Instant now) {
+        DataArray rsns = DataArray.empty();
+        names.forEach(rsns::add);
+        DataObject body = DataObject.empty().put("rsns", rsns).put("from", from.toInstant().toString()).put("to", to.toInstant().toString());
+        RuneClansHubClient.Answer a = hub.call("POST", "/v1/clans/" + clanId + "/stats/skill-gains", body.toString());
+        if (a == null || a.status() == 429 || a.status() >= 500) throw new HubDown(a == null ? "unreachable" : "status " + a.status());
+        if (!a.ok() || a.json() == null || !a.json().hasKey("players")) return false;
+        Map<String, Map<Integer, Long>> byKey = new HashMap<>();
+        DataArray players = a.json().getArray("players");
+        for (int i = 0; i < players.length(); i++) {
+            DataObject p = players.getObject(i);
+            byKey.put(key(p.getString("rsn", "")), skillsOf(p));
+        }
+        for (String name : names) remember(cacheKeyOf.apply(name), byKey.getOrDefault(key(name), Map.of()), now);
+        return true;
+    }
+
+    private static Map<Integer, Long> skillsOf(DataObject answer) {
+        Map<Integer, Long> gains = new HashMap<>();
+        DataArray arr = answer.optArray("skills").orElse(DataArray.empty());
+        for (int i = 0; i < arr.length(); i++) {
+            DataObject s = arr.getObject(i);
+            gains.merge(s.getInt("skillId"), s.getLong("gained", 0), Long::sum);
+        }
+        return gains;
+    }
+
+    private void remember(String cacheKey, Map<Integer, Long> gains, Instant now) {
+        if (skillGains.size() > 5_000) skillGains.clear();
+        skillGains.put(cacheKey, new Cached<>(gains, now));
     }
 
     @Override
