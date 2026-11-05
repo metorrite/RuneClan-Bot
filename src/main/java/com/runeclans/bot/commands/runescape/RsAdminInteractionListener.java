@@ -20,7 +20,6 @@ import com.runeclans.bot.runescape.ProfileResult;
 import com.runeclans.bot.runescape.RsnRenameService;
 import com.runeclans.bot.runescape.RuneScapeSkillCatalog;
 import com.runeclans.bot.runescape.RuneScapeStatsService;
-import com.runeclans.bot.runescape.RuneScapeTestDataSeeder;
 import com.runeclans.bot.runescape.RuneScapeXpTable;
 import com.runeclans.bot.runescape.SkillValue;
 import com.runeclans.bot.runescape.UnverifiedGuestService;
@@ -95,7 +94,6 @@ public class RsAdminInteractionListener extends ListenerAdapter {
     private final PlayerLinkService linkService;
     private final RuneScapeStatsService statsService;
     private final AdminRoleFilter adminRoleFilter;
-    private final RuneScapeTestDataSeeder testDataSeeder;
     private final MonthlyRecapService monthlyRecapService;
     private final ClanSyncService clanSyncService;
     private final ClanOverviewService clanOverviewService;
@@ -109,7 +107,7 @@ public class RsAdminInteractionListener extends ListenerAdapter {
     private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
     public RsAdminInteractionListener(PlayerLinkService linkService, RuneScapeStatsService statsService,
-                                       AdminRoleFilter adminRoleFilter, RuneScapeTestDataSeeder testDataSeeder,
+                                       AdminRoleFilter adminRoleFilter,
                                        MonthlyRecapService monthlyRecapService, ClanSyncService clanSyncService,
                                        ClanOverviewService clanOverviewService, VerificationRoleSyncService roleSyncService,
                                        RsnRenameService renameService, RsChartInteractionListener chartListener,
@@ -121,7 +119,6 @@ public class RsAdminInteractionListener extends ListenerAdapter {
         this.linkService = linkService;
         this.statsService = statsService;
         this.adminRoleFilter = adminRoleFilter;
-        this.testDataSeeder = testDataSeeder;
         this.monthlyRecapService = monthlyRecapService;
         this.clanSyncService = clanSyncService;
         this.clanOverviewService = clanOverviewService;
@@ -354,7 +351,6 @@ public class RsAdminInteractionListener extends ListenerAdapter {
             case "rsnadmin_bulk_cancel" -> Containers.edit(event, Containers.INFO, Text.of(event, "runescape.cancelled_nothing_was_run"));
 
             case "rsnadmin_poll" -> doPollOne(event, guild, id.split(":", 2)[1]);
-            case "rsnadmin_seed" -> doSeedTestData(event, guild, id.split(":", 2)[1]);
             case "rsnadmin_chart" -> doXpChart(event, guild, id.split(":", 2)[1]);
             case "rsnadmin_recap" -> doMonthlyRecap(event, guild, id.split(":", 2)[1]);
             case "rsnadmin_nearly" -> doNearlyThere(event, guild, id.split(":", 2)[1]);
@@ -784,22 +780,6 @@ public class RsAdminInteractionListener extends ListenerAdapter {
         noteAfter(event.getHook(), lookup);
     }
 
-    private void doSeedTestData(ComponentInteraction event, Guild guild, String rsn) {
-        // Deferred, not a plain reply — 30 backdated snapshots means ~60 round trips to the
-        // database, comfortably longer than Discord's 3-second ack window.
-        event.deferReply(true).queue();
-        int created = testDataSeeder.seed(rsn);
-
-        if (created == 0) {
-            event.getHook().editOriginalComponents(List.of(Containers.toast(Containers.WARNING,
-                    "Can't seed test data for **" + rsn + "** — it needs at least one real update first (Update)."))).useComponentsV2(true).queue();
-            return;
-        }
-        event.getHook().editOriginalComponents(List.of(Containers.toast(Containers.SUCCESS,
-                "Seeded " + created + " days of fake history for **" + rsn + "** — try the XP Chart now. " +
-                "Clicking this again will stack more fake history on top, so only use it once."))).useComponentsV2(true).queue();
-    }
-
     private void doXpChart(ComponentInteraction event, Guild guild, String rsn) {
         if (statsService.getLatestSnapshot(rsn) == null) {
             Containers.replyEphemeral(event, Containers.WARNING,
@@ -818,7 +798,7 @@ public class RsAdminInteractionListener extends ListenerAdapter {
         MonthlyRecapStats stats = monthlyRecapService.getStats(rsn);
         if (stats == null) {
             event.getHook().editOriginalComponents(List.of(Containers.toast(Containers.WARNING,
-                    "No snapshots for **" + rsn + "** yet this month — update (or seed test data) first."))).useComponentsV2(true).queue();
+                    "No snapshots for **" + rsn + "** yet this month — update first."))).useComponentsV2(true).queue();
             return;
         }
 

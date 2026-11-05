@@ -2,7 +2,6 @@ package com.runeclans.bot.internal;
 
 import com.runeclans.bot.database.SchemaBootstrapper;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
-import com.runeclans.bot.runescape.stats.StatsBackend;
 import com.runeclans.bot.runescape.stats.StatsBackends;
 import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -303,38 +302,7 @@ public class AdminToolsStore {
 
     /** Each active member's newest adventure-log entry time (lower-case RSN → time). */
     public Map<String, OffsetDateTime> lastActivity(long guildId) {
-        StatsBackend hub = stats.hub();
-        if (hub != null) return hub.lastActivity(guildId);
-        try (Connection c = connectionSupplier.getConnection();
-             PreparedStatement s = c.prepareStatement("""
-                     SELECT LOWER(m.rsn) AS rsn, MAX(a.recorded_at) AS last_at
-                     FROM younglings.clan_member m
-                     JOIN younglings.player_activity a ON LOWER(a.rsn) = LOWER(m.rsn)
-                     WHERE m.guild_id = ? AND m.active GROUP BY LOWER(m.rsn)
-                     """)) {
-            s.setLong(1, guildId);
-            try (ResultSet rs = s.executeQuery()) {
-                Map<String, OffsetDateTime> out = new HashMap<>();
-                while (rs.next()) out.put(rs.getString("rsn"), at(rs, "last_at"));
-                return out;
-            }
-        } catch (SQLException e) {
-            throw fail("read member activity", e);
-        }
-    }
-
-    /** The newest adventure-log entry of anyone, and how long a trivial query takes — two cheap health signals. */
-    public OffsetDateTime newestActivity() {
-        try (Connection c = connectionSupplier.getConnection();
-             PreparedStatement s = c.prepareStatement("SELECT MAX(recorded_at) FROM younglings.player_activity")) {
-            try (ResultSet rs = s.executeQuery()) {
-                if (!rs.next()) return null;
-                Timestamp t = rs.getTimestamp(1);
-                return t == null ? null : t.toInstant().atOffset(ZoneOffset.UTC);
-            }
-        } catch (SQLException e) {
-            throw fail("read the newest activity", e);
-        }
+        return stats.backend().lastActivity(guildId);
     }
 
     public long pingDatabaseMillis() {

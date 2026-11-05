@@ -3,18 +3,12 @@ package com.runeclans.bot.commands.ticket;
 import com.runeclans.bot.runescape.PlayerLink;
 import com.runeclans.bot.runescape.PlayerLinkService;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
-import com.runeclans.bot.runescape.stats.StatsBackend;
 import com.runeclans.bot.runescape.stats.StatsBackends;
 import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Array;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.OptionalInt;
 
@@ -58,32 +52,14 @@ public class GuestKillCount {
         try {
             List<String> rsns = links.getLinksForUser(guildId, userId).stream().map(PlayerLink::rsn).map(r -> r.toLowerCase(java.util.Locale.ROOT)).toList();
             if (rsns.isEmpty()) return OptionalInt.empty();
-            StatsBackend hub = stats.hub();
-            if (hub != null) {
-                int total = 0;
-                boolean any = false;
-                for (String text : hub.recentActivityTexts(rsns, MAX_LINES)) {
-                    any = true;
-                    total += HelpPriority.killsIn(text, boss);
-                }
-                return any ? OptionalInt.of(total) : OptionalInt.empty();
+            int total = 0;
+            boolean any = false;
+            for (String text : stats.backend().recentActivityTexts(rsns, MAX_LINES)) {
+                any = true;
+                total += HelpPriority.killsIn(text, boss);
             }
-            try (Connection c = connectionSupplier.getConnection();
-                 PreparedStatement s = c.prepareStatement("SELECT activity_text FROM younglings.player_activity WHERE LOWER(rsn) = ANY (?) ORDER BY recorded_at DESC LIMIT ?")) {
-                Array names = c.createArrayOf("text", rsns.toArray());
-                s.setArray(1, names);
-                s.setInt(2, MAX_LINES);
-                int total = 0;
-                boolean any = false;
-                try (ResultSet rs = s.executeQuery()) {
-                    while (rs.next()) {
-                        any = true;
-                        total += HelpPriority.killsIn(rs.getString(1), boss);
-                    }
-                }
-                return any ? OptionalInt.of(total) : OptionalInt.empty();
-            }
-        } catch (SQLException | RuntimeException e) {
+            return any ? OptionalInt.of(total) : OptionalInt.empty();
+        } catch (RuntimeException e) {
             log.warn("Couldn't read tracked kills of {} for user {}", boss, userId, e);
             return OptionalInt.empty();
         }

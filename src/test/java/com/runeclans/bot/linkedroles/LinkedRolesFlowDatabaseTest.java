@@ -45,6 +45,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * local database.
  */
 class LinkedRolesFlowDatabaseTest {
+    /** What the hub holds: the bot keeps no polled stats of its own (T-912). */
+    private static final com.runeclans.bot.testsupport.MemoryStats HUB = new com.runeclans.bot.testsupport.MemoryStats();
+
     private static final long USER = 990_000_000_000_000_701L;
     private static final long OTHER = 990_000_000_000_000_702L;
     private static final long GUILD = 990_000_000_000_000_791L;
@@ -81,7 +84,7 @@ class LinkedRolesFlowDatabaseTest {
         settings = LinkedRolesSettings.from(env::get);
         assertTrue(settings.enabled(), settings.problem());
         clock = new MutableClock(Instant.parse("2026-10-23T12:00:00Z"));
-        store = new LinkedRolesStore(db);
+        store = new LinkedRolesStore(db).withStats(HUB.backends());
         roles = LinkedRoles.forTest(settings, store, DiscordRoleApi.http(settings), guild -> guild == GUILD, clock);
         cleanUp();
     }
@@ -95,7 +98,7 @@ class LinkedRolesFlowDatabaseTest {
     private void cleanUp() {
         sql("DELETE FROM younglings.linked_role_connection WHERE discord_user_id IN (" + USER + "," + OTHER + ")");
         sql("DELETE FROM younglings.player_account WHERE discord_user_id IN (" + USER + "," + OTHER + ")");
-        sql("DELETE FROM younglings.player_stats_snapshot WHERE guild_id = " + GUILD);
+        HUB.clear();
         sql("DELETE FROM younglings.clan_member WHERE guild_id = " + GUILD);
     }
 
@@ -171,8 +174,7 @@ class LinkedRolesFlowDatabaseTest {
     }
 
     private void snapshot(int total, int combat, String at) {
-        sql("INSERT INTO younglings.player_stats_snapshot (rsn, guild_id, snapshot_at, total_level, total_xp, combat_level, quests_complete, skills_json) VALUES ('"
-                + RSN.toLowerCase() + "', " + GUILD + ", '" + at + "', " + total + ", 1, " + combat + ", 0, '[]')");
+        HUB.snapshot(RSN.toLowerCase(), java.time.OffsetDateTime.parse(at.replace("Z", "+00:00")), total, 1, combat, java.util.List.of());
     }
 
     private LinkedRoles.Shared verify() throws Exception {

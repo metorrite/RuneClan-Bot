@@ -1,7 +1,6 @@
 package com.runeclans.bot.runescape;
 
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
-import com.runeclans.bot.runescape.stats.StatsBackend;
 import com.runeclans.bot.runescape.stats.StatsBackends;
 import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -108,34 +107,6 @@ public class WeeklyDigestRepository {
      * live roster. An activity whose time couldn't be read falls back to when we first saw it.
      */
     public List<CitadelActivityRow> getCitadelActivityInWindow(long guildId, OffsetDateTime from, OffsetDateTime to) {
-        StatsBackend hub = stats.hub();
-        if (hub != null) return hub.citadelActivityInWindow(guildId, from, to);
-        String sql = """
-                SELECT a.rsn, a.activity_text, a.activity_date, a.occurred_at FROM younglings.player_activity a
-                WHERE EXISTS (SELECT 1 FROM younglings.clan_member m WHERE m.guild_id = ? AND LOWER(m.rsn) = LOWER(a.rsn))
-                  AND COALESCE(a.occurred_at, a.recorded_at) >= ? AND COALESCE(a.occurred_at, a.recorded_at) < ?
-                  AND (a.activity_text LIKE 'Visited my Clan Citadel%' OR a.activity_text LIKE 'Capped at my Clan Citadel%')
-                """;
-
-        List<CitadelActivityRow> results = new ArrayList<>();
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            statement.setTimestamp(2, Timestamp.from(from.toInstant()));
-            statement.setTimestamp(3, Timestamp.from(to.toInstant()));
-
-            try (ResultSet rs = statement.executeQuery()) {
-                while (rs.next()) {
-                    java.sql.Timestamp occurred = rs.getTimestamp("occurred_at");
-                    results.add(new CitadelActivityRow(rs.getString("rsn"), rs.getString("activity_text"), rs.getString("activity_date"), occurred == null ? null : occurred.toInstant()));
-                }
-            }
-            return results;
-
-        } catch (SQLException e) {
-            log.error("Failed to get Citadel activity for guild {}", guildId, e);
-            throw new RuntimeException("Failed to get Citadel activity", e);
-        }
+        return stats.backend().citadelActivityInWindow(guildId, from, to);
     }
 }
