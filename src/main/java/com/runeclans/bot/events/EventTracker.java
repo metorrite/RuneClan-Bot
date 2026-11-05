@@ -7,9 +7,6 @@ import com.runeclans.bot.events.EventRules.Source;
 import com.runeclans.bot.runescape.PlayerLink;
 import com.runeclans.bot.runescape.PlayerLinkRepository;
 import com.runeclans.bot.runescape.RuneScapeStatsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollPriority;
-import com.runeclans.bot.runescape.polling.PollRequest;
 import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
@@ -41,25 +38,21 @@ import java.util.concurrent.TimeUnit;
 public class EventTracker {
     private static final Logger log = LoggerFactory.getLogger(EventTracker.class);
     private static final Duration PERIOD = Duration.ofMinutes(5);
-    private static final Duration REUSE_WINDOW = Duration.ofMinutes(4);
-    private static final Duration POLL_WAIT = Duration.ofMinutes(3);
 
     private final EventRepository repository;
     private final EventService service;
     private final PlayerLinkRepository links;
     private final RuneScapeStatsService stats;
-    private final PollCoordinator polls;
     private final BotConfig config;
     private final PluginXpTracker pluginXp;
     private final ScheduledExecutorService executor = BotScheduler.lane("event-tracker");
 
-    public EventTracker(EventRepository repository, EventService service, PlayerLinkRepository links, RuneScapeStatsService stats, PollCoordinator polls, BotConfig config,
+    public EventTracker(EventRepository repository, EventService service, PlayerLinkRepository links, RuneScapeStatsService stats, BotConfig config,
                         PluginXpTracker pluginXp) {
         this.repository = repository;
         this.service = service;
         this.links = links;
         this.stats = stats;
-        this.polls = polls;
         this.config = config;
         this.pluginXp = pluginXp;
     }
@@ -95,7 +88,7 @@ public class EventTracker {
         }
     }
 
-    /** Brings one competition up to date: polls its players, then adds each player's new gain. Returns how many players got new progress. */
+    /** Brings one competition up to date: reads its players' latest snapshots, then adds each player's new gain. Returns how many players got new progress. */
     public int feed(Event event) {
         DataObject settings = DataObject.fromJson(event.config());
         if (CompetitionTemplate.countsFromPlugin(settings)) return 0; // counted from RuneSync by PluginXpTracker instead
@@ -108,9 +101,7 @@ public class EventTracker {
         }
         if (players.isEmpty()) return 0;
 
-        var futures = polls.submitAll(players.values().stream().map(rsn -> PollRequest.background(rsn, PollPriority.CLAN, REUSE_WINDOW, "event " + event.id())).toList());
-        polls.awaitAll(futures, POLL_WAIT);
-
+        // the hub keeps every tracked player current (the bot polls nobody), so the latest snapshots are read as they are
         // what has already been added from tracking, per player, read from the progress log so there is nothing separate to fall out of step
         List<EventRepository.Progress> progress = repository.progress(event.id());
         Map<Long, Long> counted = new java.util.HashMap<>();

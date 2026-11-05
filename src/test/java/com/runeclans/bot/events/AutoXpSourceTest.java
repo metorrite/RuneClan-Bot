@@ -11,7 +11,6 @@ import com.runeclans.bot.runeclans.RuneClansHubClient;
 import com.runeclans.bot.runescape.PlayerLink;
 import com.runeclans.bot.runescape.PlayerLinkRepository;
 import com.runeclans.bot.runescape.RuneScapeStatsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.AfterEach;
@@ -140,8 +139,7 @@ class AutoXpSourceTest {
     void runeMetricsCountsTheOthersAndOnlyChecksTheRuneSyncPlayers() {
         PlayerLinkRepository links = Mockito.mock(PlayerLinkRepository.class);
         RuneScapeStatsService stats = Mockito.mock(RuneScapeStatsService.class);
-        PollCoordinator polls = Mockito.mock(PollCoordinator.class);
-        EventTracker tracker = new EventTracker(repository, service, links, stats, polls, Mockito.mock(BotConfig.class), plugin);
+        EventTracker tracker = new EventTracker(repository, service, links, stats, Mockito.mock(BotConfig.class), plugin);
         Event e = event(2, "{\"xpSource\":\"auto\"}");
         when(repository.participants(2)).thenReturn(List.of(player(ALICE), player(BOB)));
         when(links.getLinksForUser(GUILD, ALICE)).thenReturn(List.of(new PlayerLink(1, GUILD, ALICE, "Alice", null, null, null)));

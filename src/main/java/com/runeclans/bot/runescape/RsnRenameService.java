@@ -162,8 +162,8 @@ public class RsnRenameService {
 
     /** Runs the deeper (non-free-but-already-fetched) checks; null if the pair is ruled out or can't be checked. */
     private Assessment assess(String oldRsn, String newRsn, ProfileResult newResult) {
-        // while the hub polls (T-851) the clan sync polls nobody: the hub's newest snapshot of the newcomer is what there is to compare
-        if (!(newResult instanceof ProfileResult.Found) && statsService.hubPolls()) newResult = statsService.latestAsResult(newRsn);
+        // the bot polls nobody (T-851): the hub's newest snapshot of the newcomer is what there is to compare
+        if (!(newResult instanceof ProfileResult.Found)) newResult = statsService.latestAsResult(newRsn);
         if (!(newResult instanceof ProfileResult.Found(var newProfile))) return null;
 
         var oldSnapshot = statsService.getLatestSnapshot(oldRsn);

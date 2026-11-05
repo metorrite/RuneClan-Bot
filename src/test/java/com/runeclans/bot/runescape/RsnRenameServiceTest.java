@@ -91,7 +91,6 @@ class RsnRenameServiceTest {
 
     @Test
     void whileTheHubPollsTheNewcomerIsReadFromTheHubsSnapshots() {
-        when(stats.hubPolls()).thenReturn(true);
         when(stats.latestAsResult("Rak sha")).thenReturn(profile("Rak sha", 600, true));
         when(stats.latestAsResult("From Zamorak")).thenReturn(new ProfileResult.Unavailable());
         // the clan sync polled nobody (T-851): every newcomer arrives as Unavailable, the hub's newest snapshot stands in

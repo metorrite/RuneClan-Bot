@@ -15,24 +15,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** The overall admin panel's read-only bot health and RuneMetrics budget: the two paths answer from the home server, anything else is not theirs. */
+/** The overall admin panel's read-only bot health: the path answers from the home server, anything else is not theirs. */
 class OverallOpsRoutesTest {
     private final AdminOpsApi ops = mock(AdminOpsApi.class);
-    private final RuneMetricsBudgetAdminApi budget = mock(RuneMetricsBudgetAdminApi.class);
     private final RuneSyncService runeSync = mock(RuneSyncService.class);
     private final PremiumAdminApi premium = mock(PremiumAdminApi.class);
     private final RsnLinkAdminApi rsLink = mock(RsnLinkAdminApi.class);
     private final BotOwners owners = mock(BotOwners.class);
     private final JDA jda = mock(JDA.class);
-    private final OverallOpsRoutes routes = new OverallOpsRoutes(ops, budget, runeSync, owners, premium, rsLink);
+    private final OverallOpsRoutes routes = new OverallOpsRoutes(ops, runeSync, owners, premium, rsLink);
     private final Guild home = mock(Guild.class);
 
     @Test
-    void healthAndBudgetAnswerFromTheHomeServer() {
+    void healthAnswersFromTheHomeServer() {
         when(ops.health(home)).thenReturn(DataObject.empty().put("uptimeSeconds", 5));
-        when(budget.overview(home)).thenReturn(DataObject.empty().put("day", "2026-10-25"));
         assertEquals(5, routes.route(jda, 1L, home, "GET", new String[]{"health"}, DataObject::empty).getInt("uptimeSeconds"));
-        assertEquals("2026-10-25", routes.route(jda, 1L, home, "GET", new String[]{"runemetrics-budget"}, DataObject::empty).getString("day"));
+        assertNull(routes.route(jda, 1L, home, "GET", new String[]{"runemetrics-budget"}, DataObject::empty), "the RuneMetrics budget page is gone");
     }
 
     @Test

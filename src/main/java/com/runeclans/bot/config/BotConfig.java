@@ -480,15 +480,9 @@ public class BotConfig {
     }
 
     /**
-     * Whether {@code RosterPollScheduler} and {@code ClanSyncScheduler} poll automatically at all.
-     * Defaults to {@code true} now that the storage format has settled — every guild's clan roster is
-     * spread evenly across a 3-hour window, linked-but-not-a-member accounts across an 8-hour window
-     * anchored to end just ahead of RuneScape's own daily reset, and the full clan roster (plus
-     * join/leave detection) syncs once a day at 00:00 UTC. Every poll only actually writes to the
-     * database when something changed (see {@code RuneScapeStatsService}). Set
-     * {@code RUNESCAPE_AUTO_POLL_ENABLED=false} to go back to manual-only (the admin panel's
-     * "Update"/"Update All" buttons, or {@code /rsadmin}'s Sync Clan) while iterating on something that
-     * touches the storage format again.
+     * Whether the scheduled work that used to be called polling runs at all: {@code ClanSyncScheduler}'s daily roster sync (the full clan roster
+     * plus join/leave detection at 00:00 UTC), the weekly digest and the event feeders. The bot polls no player itself any more (the hub does).
+     * Defaults to {@code true}; set {@code RUNESCAPE_AUTO_POLL_ENABLED=false} to turn the scheduled work off.
      */
     public boolean getRunescapeAutoPollEnabled() {
         String raw = System.getenv("RUNESCAPE_AUTO_POLL_ENABLED");
@@ -502,59 +496,6 @@ public class BotConfig {
         }
 
         return Boolean.parseBoolean(raw);
-    }
-
-    /**
-     * The steady rate, in RuneMetrics profile requests per minute, the whole bot may send. Defaults to 10, which the live
-     * API sustained without a single rate-limit in {@code tools/RuneMetricsRateTest.java}; set
-     * {@code RUNESCAPE_POLL_REQUESTS_PER_MINUTE} to tune it without a code change. The poll coordinator spends from one
-     * shared budget at this rate, so raising it makes every tier faster and every rate-limit more likely.
-     */
-    public int getRunescapePollRequestsPerMinute() {
-        return (int) positiveNumber("RUNESCAPE_POLL_REQUESTS_PER_MINUTE", 10);
-    }
-
-    /**
-     * How many requests the budget may store up while the bot is quiet, to be spent at once on a burst (a person pressing
-     * Update, a clan sync starting). Defaults to 6; set {@code RUNESCAPE_POLL_BURST} to tune it.
-     */
-    public int getRunescapePollBurst() {
-        return (int) positiveNumber("RUNESCAPE_POLL_BURST", 6);
-    }
-
-    /**
-     * How long one pass over the polling list's first tier takes: every player in a clan that has been registered with
-     * JonnyBot is refreshed once per window, spread evenly across it. Defaults to 180 minutes; set
-     * {@code RUNESCAPE_CLAN_POLL_WINDOW_MINUTES} to tune it without a code change. Shorter means fresher tracking feeds
-     * and more RuneMetrics requests; the shared request rate ({@link #getRunescapePollRequestsPerMinute}) still caps it.
-     */
-    public long getRunescapeClanPollWindowMinutes() {
-        return positiveMinutes("RUNESCAPE_CLAN_POLL_WINDOW_MINUTES", 180);
-    }
-
-    /**
-     * The same for the second tier: players who have linked their RuneScape name with JonnyBot but aren't in any
-     * registered clan. They only need their own profile and history to stay roughly current, so they are polled far less
-     * often. Defaults to 480 minutes; set {@code RUNESCAPE_LINKED_POLL_WINDOW_MINUTES} to tune it.
-     */
-    public long getRunescapeLinkedPollWindowMinutes() {
-        return positiveMinutes("RUNESCAPE_LINKED_POLL_WINDOW_MINUTES", 480);
-    }
-
-    /**
-     * The window for the community tier (T-736): RuneLink-linked players the hub places in a community site and in no registered clan.
-     * Defaults to the linked window ({@link #getRunescapeLinkedPollWindowMinutes}); set {@code RUNESCAPE_COMMUNITY_POLL_WINDOW_MINUTES} to tune it.
-     */
-    public long getRunescapeCommunityPollWindowMinutes() {
-        return positiveMinutes("RUNESCAPE_COMMUNITY_POLL_WINDOW_MINUTES", getRunescapeLinkedPollWindowMinutes());
-    }
-
-    /**
-     * The window for the premium tier: clans on the faster plan, whose players are polled more often than a standard clan's.
-     * Defaults to 60 minutes; set {@code RUNESCAPE_PREMIUM_POLL_WINDOW_MINUTES} to tune it.
-     */
-    public long getRunescapePremiumPollWindowMinutes() {
-        return positiveMinutes("RUNESCAPE_PREMIUM_POLL_WINDOW_MINUTES", 60);
     }
 
     /**
@@ -580,10 +521,6 @@ public class BotConfig {
      */
     public long getPluginXpPointsGraceMinutes() {
         return positiveNumber("PLUGIN_XP_POINTS_GRACE_MINUTES", 15);
-    }
-
-    private long positiveMinutes(String name, long fallback) {
-        return positiveNumber(name, fallback);
     }
 
     private long positiveNumber(String name, long fallback) {

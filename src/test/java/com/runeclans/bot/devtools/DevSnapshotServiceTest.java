@@ -3,8 +3,6 @@ package com.runeclans.bot.devtools;
 import com.runeclans.bot.config.BotConfig;
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollEngine;
 import com.runeclans.bot.testsupport.LocalDatabase;
 import com.runeclans.bot.ticket.TicketDatabaseInitializer;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
@@ -63,10 +61,7 @@ class DevSnapshotServiceTest {
         when(config.getDatabaseUrl()).thenReturn("postgres" + "ql://u:p@127.0.0.1:5432/x");
         GuildSettingsService settings = mock(GuildSettingsService.class);
         when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Test Clan", null, null, null, null, null, null, null, true, "Test Clan", null, null));
-        PollCoordinator polls = mock(PollCoordinator.class);
-        when(polls.status()).thenReturn(new PollCoordinator.Status(
-                new PollEngine.Status(0, Map.of(), null, 6.0, 6.0, 6000, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0), List.of()));
-        service = new DevSnapshotService(db, config, settings, polls, logs, repository);
+        service = new DevSnapshotService(db, config, settings, logs, repository);
 
         JDA jda = mock(JDA.class);
         when(jda.getGatewayIntents()).thenReturn(EnumSet.of(GatewayIntent.GUILD_MEMBERS));
@@ -123,7 +118,7 @@ class DevSnapshotServiceTest {
 
         assertTrue(DevSnapshotService.ID_PATTERN.matcher(result.id()).matches(), result.id());
         Map<String, String> files = unzip(result.zip());
-        assertTrue(files.keySet().containsAll(List.of("manifest.json", "environment.json", "polling.json", "guild.json", "logs.txt", "README.txt")), files.keySet().toString());
+        assertTrue(files.keySet().containsAll(List.of("manifest.json", "environment.json", "guild.json", "logs.txt", "README.txt")), files.keySet().toString());
         assertTrue(files.get("manifest.json").contains(result.id()));
         assertTrue(files.get("manifest.json").contains("\"siteCommit\" : \"abc1234\""), files.get("manifest.json"));
         assertTrue(files.get("manifest.json").contains("\"environment\" : \"local\""));

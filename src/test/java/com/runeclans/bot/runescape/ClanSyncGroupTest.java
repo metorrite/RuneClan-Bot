@@ -4,8 +4,6 @@ import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.alerts.LiveSwitch;
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollRequest;
 import com.runeclans.bot.tracking.TrackingEventRouter;
 import com.runeclans.bot.tracking.TrackingIconCatalog;
 import net.dv8tion.jda.api.entities.Guild;
@@ -33,7 +31,6 @@ import static org.mockito.Mockito.when;
 class ClanSyncGroupTest {
     private RuneScapeApiClient apiClient;
     private ClanMemberRepository clanMembers;
-    private PollCoordinator coordinator;
     private ClanSyncService service;
     private GuildSettingsService settings;
     private Guild one;
@@ -45,7 +42,6 @@ class ClanSyncGroupTest {
     void setUp() {
         apiClient = mock(RuneScapeApiClient.class);
         clanMembers = mock(ClanMemberRepository.class);
-        coordinator = mock(PollCoordinator.class);
         settings = mock(GuildSettingsService.class);
         one = guild(1L, "Younglings");
         two = guild(2L, "  younglings ");
@@ -53,10 +49,8 @@ class ClanSyncGroupTest {
         when(apiClient.fetchClanRoster(anyString())).thenReturn(List.of(member("A"), member("B"), member("New")));
         when(clanMembers.getAll(1L, true)).thenReturn(List.of(row(1L, "A"), row(1L, "B")));
         when(clanMembers.getAll(2L, true)).thenReturn(List.of(row(2L, "A"), row(2L, "B")));
-        when(coordinator.submitAll(any())).thenReturn(List.<CompletableFuture<com.runeclans.bot.runescape.polling.PollOutcome>>of());
-        when(coordinator.awaitAll(any(), any())).thenReturn(List.of());
 
-        service = new ClanSyncService(apiClient, clanMembers, coordinator, mock(RsnRenameService.class), settings,
+        service = new ClanSyncService(apiClient, clanMembers, mock(RsnRenameService.class), settings,
                 mock(TrackingEventRouter.class), mock(WeeklyDigestRepository.class), mock(TrackingIconCatalog.class),
                 roleSync = mock(VerificationRoleSyncService.class), links = mock(PlayerLinkService.class));
     }
@@ -114,10 +108,6 @@ class ClanSyncGroupTest {
         Map<Long, ClanSyncService.SyncResult> results = service.syncAndPollGroup(List.of(one, two));
 
         verify(apiClient, times(1)).fetchClanRoster(anyString());
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<PollRequest>> requests = ArgumentCaptor.forClass(List.class);
-        verify(coordinator, times(1)).submitAll(requests.capture());
-        assertEquals(3, requests.getValue().size(), "each roster player is polled once, not once per server");
 
         // each server still gets its own roster rows and result
         verify(clanMembers).upsert(eq(1L), eq("New"), anyString(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
@@ -192,14 +182,13 @@ class ClanSyncGroupTest {
         botlessClan(20L, "Younglings");
         TrackingEventRouter router = mock(TrackingEventRouter.class);
         RsnRenameService renames = mock(RsnRenameService.class);
-        service = new ClanSyncService(apiClient, clanMembers, coordinator, renames, settings, router, mock(WeeklyDigestRepository.class),
+        service = new ClanSyncService(apiClient, clanMembers, renames, settings, router, mock(WeeklyDigestRepository.class),
                 mock(TrackingIconCatalog.class), mock(VerificationRoleSyncService.class), mock(PlayerLinkService.class));
         when(clanMembers.getAll(20L, true)).thenReturn(List.of(row(20L, "A"), row(20L, "Gone")));
 
         Map<Long, ClanSyncService.SyncResult> results = service.syncAndPollGroup(List.of(one), List.of(20L));
 
         verify(apiClient, times(1)).fetchClanRoster(anyString());
-        verify(coordinator, times(1)).submitAll(any());
         verify(clanMembers).upsert(eq(20L), eq("New"), anyString(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
         verify(clanMembers).markInactive(20L, "gone");
         assertEquals(2, results.get(20L).newMembers(), "B and New were not on that site's roster yet");

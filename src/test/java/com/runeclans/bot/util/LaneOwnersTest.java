@@ -64,8 +64,6 @@ class LaneOwnersTest {
         assertTrue(LaneOwners.runs(Owner.API, BotRole.API, true));
         assertTrue(LaneOwners.runs(Owner.EVERY, BotRole.API, false));
 
-        assertEquals(Owner.GATEWAY, LaneOwners.owner("poll-jobs"), "polling reads the server list");
-        assertEquals(LaneOwners.owner("poll-jobs"), LaneOwners.owner("runemetrics-budget"), "the budget lives with the polling");
         assertEquals(Owner.API, LaneOwners.owner("rsnlink-retention"));
         assertEquals(Owner.GATEWAY, LaneOwners.owner("discord-jobs"));
         assertEquals(Owner.GATEWAY, LaneOwners.owner("a-lane-nobody-listed"), "unknown lanes stay with the classic bot");

@@ -4,25 +4,12 @@ import com.runeclans.bot.runeclans.RuneClansHubClient.Answer;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /** T-851: which source answers stats, and how the hub's Refresh answers are read. */
 class StatsBackendsTest {
     @Test
-    void railwayWordsHoldTheSwitchLikeTheWebsitesStatsBackend() {
-        assertEquals("on", StatsBackends.railwayWord("hub"));
-        assertEquals("on", StatsBackends.railwayWord(" HUB "));
-        assertEquals("off", StatsBackends.railwayWord("bot"));
-        assertEquals("on", StatsBackends.railwayWord("true"));
-        assertNull(StatsBackends.railwayWord(null));
-        assertNull(StatsBackends.railwayWord("  "));
-        assertEquals("maybe", StatsBackends.railwayWord("maybe"), "an unknown word is left for PanelSwitches to treat as a hold-off");
-    }
-
-    @Test
-    void theHubBackendIsCurrentOnlyWhileTheSwitchSaysSoAndAHubExists() {
+    void theHubBackendIsCurrentOnlyWhenAHubClientExists() {
         HubStatsBackend hub = new HubStatsBackend(new HubStatsBackend.Hub() {
             @Override
             public com.runeclans.bot.runeclans.RuneClansHubClient.Read read(String path, java.time.Duration keepFresh, String... tags) {
@@ -34,21 +21,10 @@ class StatsBackendsTest {
                 return null;
             }
         }, (g, a) -> java.util.List.of(), java.time.Clock.systemUTC(), null);
-        AtomicBoolean on = new AtomicBoolean(false);
-        StatsBackends backends = new StatsBackends(on::get, hub);
-        assertFalse(backends.hubPolls());
-        assertNull(backends.hub());
-        on.set(true);
-        assertTrue(backends.hubPolls(), "a flip of the panel switch takes effect on the next read, no restart");
-        assertSame(hub, backends.hub());
-        on.set(false);
-        assertNull(backends.hub());
-
-        StatsBackends noHub = new StatsBackends(() -> true, null);
-        assertFalse(noHub.hubPolls(), "the switch counts only with a hub client");
-        assertNull(noHub.hub());
         assertFalse(StatsBackends.none().hubPolls());
+        assertNull(StatsBackends.none().hub());
         assertTrue(StatsBackends.hubAlways(hub).hubPolls());
+        assertSame(hub, StatsBackends.hubAlways(hub).hub());
     }
 
     @Test

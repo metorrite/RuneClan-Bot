@@ -19,7 +19,6 @@ import com.runeclans.bot.runescape.PlayerLinkRepository;
 import com.runeclans.bot.runescape.PlayerLinkService;
 import com.runeclans.bot.runescape.RuneScapeSkillCatalog;
 import com.runeclans.bot.runescape.RuneScapeStatsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
 import com.runeclans.bot.runescape.SkillEmojiCatalog;
 import com.runeclans.bot.runescape.SkillValue;
 import com.runeclans.bot.runescape.VerificationAttempt;
@@ -97,7 +96,6 @@ public class RsInteractionListener extends ListenerAdapter {
 
     private final PlayerLinkService linkService;
     private final RuneScapeStatsService statsService;
-    private final PollCoordinator pollCoordinator;
     private final AdminRoleFilter adminRoleFilter;
     private final SkillEmojiCatalog skillEmojiCatalog;
     private final VerificationRoleSyncService roleSyncService;
@@ -119,9 +117,7 @@ public class RsInteractionListener extends ListenerAdapter {
                                   SkillEmojiCatalog skillEmojiCatalog, VerificationRoleSyncService roleSyncService,
                                   RsChartInteractionListener chartListener, MonthlyRecapService monthlyRecapService,
                                   ClanSyncService clanSyncService, ClanOverviewService clanOverviewService,
-                                  GuildSettingsService guildSettingsService, VerificationReviewCards reviewCards,
-                                  PollCoordinator pollCoordinator) {
-        this.pollCoordinator = pollCoordinator;
+                                  GuildSettingsService guildSettingsService, VerificationReviewCards reviewCards) {
         this.reviewCards = reviewCards;
         this.linkService = linkService;
         this.statsService = statsService;
@@ -876,17 +872,13 @@ public class RsInteractionListener extends ListenerAdapter {
 
         event.deferEdit().queue();
         boolean justJoined = detectClanJoin(guild, link);
-        // Front of the poll queue: a person is waiting on this, and it also makes the schedule's next poll of them unnecessary.
-        // While the hub polls (T-851) the hub's Refresh does it, on behalf of the person who pressed, and the result lands within a minute.
-        com.runeclans.bot.runescape.stats.HubRefresh.Result viaHub = statsService.hubPolls() ? statsService.refreshViaHub(rsn, event.getUser().getIdLong()) : null;
-        if (viaHub == null) pollCoordinator.pollNow(rsn, "update now");
+        // The hub's Refresh does it, on behalf of the person who pressed, and the result lands within a minute.
+        com.runeclans.bot.runescape.stats.HubRefresh.Result viaHub = statsService.refreshViaHub(rsn, event.getUser().getIdLong());
         // the member's own cooldown starts only when a poll was actually made (the hub's own waits answer for themselves)
-        if (viaHub == null || viaHub.queued()) linkService.recordSelfPoll(link.linkId());
+        if (viaHub.queued()) linkService.recordSelfPoll(link.linkId());
         event.getHook().editOriginalComponents(List.of(renderAfterOwnAction(guild, link))).useComponentsV2(true).queue();
-        if (viaHub != null) {
-            String note = com.runeclans.bot.runescape.stats.HubRefresh.describe(viaHub, rsn);
-            event.getHook().sendMessageComponents(List.of(Containers.toast(viaHub.queued() ? Containers.SUCCESS : Containers.WARNING, note))).useComponentsV2(true).setEphemeral(true).queue();
-        }
+        String note = com.runeclans.bot.runescape.stats.HubRefresh.describe(viaHub, rsn);
+        event.getHook().sendMessageComponents(List.of(Containers.toast(viaHub.queued() ? Containers.SUCCESS : Containers.WARNING, note))).useComponentsV2(true).setEphemeral(true).queue();
         if (justJoined) {
             event.getHook().sendMessageComponents(List.of(Containers.toast(Containers.SUCCESS,
                             "**" + rsn + "** is in the clan. Your roles are being updated now.")))

@@ -1,6 +1,5 @@
 package com.runeclans.bot.runescape;
 
-import com.runeclans.bot.runescape.polling.PollCoordinator;
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
 import com.runeclans.bot.tracking.TrackingEventRouter;
@@ -50,7 +49,7 @@ class ClanSyncRoleTest {
         GuildSettingsService settings = mock(GuildSettingsService.class);
         when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Younglings", null, null, null, 2L, 1L, 1L, null, true, "Younglings", null, null));
 
-        service = new ClanSyncService(apiClient, clanMembers, mock(PollCoordinator.class), renameService, settings,
+        service = new ClanSyncService(apiClient, clanMembers, renameService, settings,
                 mock(TrackingEventRouter.class), mock(WeeklyDigestRepository.class),
                 mock(TrackingIconCatalog.class), roleSync, linkService);
     }

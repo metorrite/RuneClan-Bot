@@ -6,7 +6,7 @@ import java.util.Optional;
 /**
  * A check that can raise a link above {@link Verification#IMPLICIT} (LINK-SYSTEM.md section 12). The service runs every registered
  * verifier after a link is made, on each {@code /v1/session} and on each {@code /v1/xp} report; the strongest result wins and is stored with
- * its evidence. The first one is the "plugin knew it first" XP check ({@code rsnlink.verify}, T-170), off unless {@code LINK_VERIFY_ENABLED}.
+ * its evidence. The hub verifies links now, so the bot registers none.
  * <p>
  * A verifier must be quick or do its work in the background and report later through the {@link Raiser} it is given; it must never call out
  * to anything while a plugin request waits. It sees only what the service already holds about the link, never a token, code or Discord id.

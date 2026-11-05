@@ -38,7 +38,6 @@ Rows are capped per table (500, then 150, 40, 10 if the zip would pass 5 MB). Wh
 |---|---|
 | `manifest.json` | `format` ("jonnybot-dev-snapshot"), `formatVersion`, `id`, `createdAtUtc`, `guildId`, `guildName`, `requestedBy{id,name}`, `focus`, `environment` (`live` / `dev` / `local`), `botCommit`, `siteCommit` (null unless the website passed it), `rowCapPerTable` |
 | `environment.json` | environment, commits, start time and uptime, gateway status / ping / intents / server count, Java version, memory, **database server time**, whether auto-polling is on |
-| `polling.json` | RuneMetrics pacer state (queue, request budget, slowdown, counters) and the recurring poll jobs with last and next run. Only poll jobs report last/next runs; the bot's other schedulers do not expose them. |
 | `guild.json` | the server's effective settings (`effectiveSettings`), `featuresWithSettingsStored` (settings tables that have a row for the server) and the rows themselves under `settings` |
 | `logs.txt` | WARN and ERROR log lines from the 30 minutes before the snapshot (in-memory buffer, 400 lines max, 12 stack lines each) |
 | `db/*.json` | the focused rows, one file per table, a JSON array of objects |

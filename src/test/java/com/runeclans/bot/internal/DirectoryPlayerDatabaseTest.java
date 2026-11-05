@@ -106,7 +106,7 @@ class DirectoryPlayerDatabaseTest {
             when(service.clanNameOf(guild)).thenReturn("Clan " + slug);
         }
         jda = mock(JDA.class);
-        routes = new DirectoryPlayerRoutes(profiles, service, siteApi, stats, links, points, new SiteCache(), mock(com.runeclans.bot.runescape.RosterPollScheduler.class));
+        routes = new DirectoryPlayerRoutes(profiles, service, siteApi, stats, links, points, new SiteCache(), mock(com.runeclans.bot.runescape.TrackedNames.class));
 
         sql("INSERT INTO younglings.clan_member (guild_id, rsn, clan_rank) VALUES (?, ?, 'Owner')", GUILD_A, RSN);
         sql("INSERT INTO younglings.clan_member (guild_id, rsn, clan_rank) VALUES (?, ?, 'Recruit')", GUILD_B, RSN.toUpperCase());
