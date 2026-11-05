@@ -41,7 +41,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -81,8 +80,6 @@ public class SiteRankAdvisor {
     private final TrackingPostingToggle posting;
     /** Ticks per person: a burst of 10 (working down a list), then 2 a second. */
     private final RateLimiter ticks = new RateLimiter(10, 500);
-    /** Whether Citadel caps can be counted (T-725): off once the bot stops asking RuneMetrics. See {@link CitadelCaps}. */
-    private final BooleanSupplier capsAvailable = CitadelCaps.fromEnv();
 
     /** The weekly auto post goes out at most this long after the week turned (a bot that was off for days doesn't post a stale week). */
     static final Duration POST_WINDOW = Duration.ofDays(2);
@@ -163,8 +160,7 @@ public class SiteRankAdvisor {
      * it is due (once) and notes everyone due now; an empty roster (a sync outage) turns nothing. {@code guild} null: no Discord names.
      */
     State state(long guildId, Guild guild, OffsetDateTime now, boolean bookkeeping) {
-        // T-725: caps come from the Adventurer's Log via RuneMetrics; see CitadelCaps and runeclans-hub docs/RUNEMETRICS-SUNSET.md
-        boolean capsOn = capsAvailable.getAsBoolean();
+        boolean capsOn = true;
         Map<String, Rule> rules = store.rules(guildId);
         List<Tick> ticks = store.ticks(guildId);
         List<Hold> holds = store.holds(guildId);
@@ -207,7 +203,7 @@ public class SiteRankAdvisor {
 
     DataObject view(SiteCaller c, OffsetDateTime now) {
         long guildId = c.guildId();
-        boolean capsOn = capsAvailable.getAsBoolean();
+        boolean capsOn = true;
         State st = state(guildId, c.botless() ? null : c.guild(), now, false);
         Map<String, Rule> rules = st.rules();
         Map<String, Facts> byKey = new HashMap<>();
@@ -367,7 +363,7 @@ public class SiteRankAdvisor {
 
     /** Whether rule caps parts are counted; when not, the page says so on the rules card and each row (T-725). */
     static DataObject capsJson(boolean available) {
-        return DataObject.empty().put("available", available).put("reason", available ? null : CitadelCaps.RULES_REASON);
+        return DataObject.empty().put("available", available).put("reason", null);
     }
 
     static DataObject ruleJson(Rule r) {
