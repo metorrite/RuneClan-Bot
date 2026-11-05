@@ -132,7 +132,7 @@ public class RecapService {
         Tally t = new Tally();
         for (ActivityRow row : rows) {
             if (hidden.contains(row.rsn().toLowerCase())) continue;
-            Kind kind = ActivityKinds.kindOf(row.text());
+            Kind kind = ActivityKinds.kindOf(row.type(), row.text());
             if (kind != Kind.OTHER && row.recordedAt() != null) {
                 t.byHour[row.recordedAt().withOffsetSameInstant(ZoneOffset.UTC).getHour()]++;
                 t.lines++;
