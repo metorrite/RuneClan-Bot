@@ -54,7 +54,7 @@ class HubClientPartsTest {
     }
 
     private static RuneClansSettings on() {
-        return RuneClansSettings.from(Map.of("RUNECLANS_HUB_ENABLED", "true", "RUNECLANS_HUB_URL", "http://localhost:8090", "RUNECLANS_HUB_API_KEY", KEY)::get);
+        return RuneClansSettings.from(Map.of("RUNECLANS_HUB_ENABLED", "true", "HUB_API_URL", "http://localhost:8090", "RUNECLANS_HUB_API_KEY", KEY)::get);
     }
 
     @Test

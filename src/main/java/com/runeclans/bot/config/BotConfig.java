@@ -380,7 +380,7 @@ public class BotConfig {
     }
 
     /**
-     * A setting of the RuneClans hub client ({@code com.runeclans.bot.runeclans}): {@code RUNECLANS_HUB_ENABLED}, {@code RUNECLANS_HUB_URL},
+     * A setting of the RuneClans hub client ({@code com.runeclans.bot.runeclans}): {@code RUNECLANS_HUB_ENABLED}, {@code HUB_API_URL},
      * {@code RUNECLANS_HUB_API_KEY}. Prefixed {@code RUNECLANS_} so they can't be mistaken for the event hub's settings. Null when unset.
      * The old {@code RSCLANS_} names (before the hub was renamed to runeclans-hub) still work for one release: used only when the new name is
      * unset, with a deprecation warning.
@@ -398,6 +398,8 @@ public class BotConfig {
      * reported to {@code usedLegacy}; else null.
      */
     static String runeClansSettingFrom(String name, java.util.function.Function<String, String> lookup, java.util.function.Consumer<String> usedLegacy) {
+        // HUB_API_URL is the API's address on every service (a Railway shared variable): read as it is, no old RSCLANS_ name
+        if (name.equals("HUB_API_URL")) return lookup.apply(name);
         if (!name.startsWith("RUNECLANS_")) throw new IllegalArgumentException("Only RUNECLANS_ settings are served here");
         String value = lookup.apply(name);
         if (value != null) return value;
