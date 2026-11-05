@@ -53,16 +53,23 @@ class RosterFromHubTest {
     }
 
     @Test
-    void aClanTheHubHasNeverFetchedFallsBackToTheLiveList() {
+    void aRegisteredClanTheHubHasNotFetchedYetIsEmptyWithNoLiveFetch() {
         registered(DataObject.empty().putNull("poll").put("members", DataArray.empty()));
-        when(hub.call(eq("POST"), eq("/v1/clans/live-roster"), anyString()))
-                .thenReturn(new Answer(200, DataObject.empty().put("members", DataArray.empty().add(member("Live", true)))));
 
-        assertEquals("Live", client.fetchClanRoster("The Younglings").getFirst().rsn());
+        assertTrue(client.fetchClanRoster("The Younglings").isEmpty());
+        verify(hub, never()).call(eq("POST"), eq("/v1/clans/live-roster"), anyString());
     }
 
     @Test
-    void anUnregisteredClanAsksTheLiveList() {
+    void aHubThatFailsIsAnEmptyRosterWithNoLiveFetch() {
+        when(hub.call(eq("GET"), anyString(), any())).thenReturn(new Answer(503, DataObject.empty()));
+
+        assertTrue(client.fetchClanRoster("The Younglings").isEmpty());
+        verify(hub, never()).call(eq("POST"), eq("/v1/clans/live-roster"), anyString());
+    }
+
+    @Test
+    void onlyAClanTheHubDoesNotKnowAsksTheLiveList() {
         when(hub.call(eq("GET"), anyString(), any())).thenReturn(new Answer(404, DataObject.empty().put("error", "not_found")));
         when(hub.call(eq("POST"), eq("/v1/clans/live-roster"), anyString()))
                 .thenReturn(new Answer(200, DataObject.empty().put("members", DataArray.empty().add(member("Live", true)))));
