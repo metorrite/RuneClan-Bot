@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 class RsLinkAuthHubTest {
     @Test
     void internalPathsMapToTheHub() throws Exception {
-        Map<String, String> env = Map.of("RUNECLANS_HUB_ENABLED", "true", "RUNECLANS_HUB_URL", "http://localhost:8090", "RUNECLANS_HUB_API_KEY", "rsh_" + "k".repeat(43));
+        Map<String, String> env = Map.of("RUNECLANS_HUB_ENABLED", "true", "HUB_API_URL", "http://localhost:8090", "RUNECLANS_HUB_API_KEY", "rsh_" + "k".repeat(43));
         List<String> calls = new ArrayList<>();
         RuneClansHubClient.Transport fake = (method, path, body) -> {
             calls.add(method + " " + path);

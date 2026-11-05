@@ -25,7 +25,7 @@ class RuneClansHubClientTest {
     private static final String KEY = "rsh_" + "k".repeat(43);
 
     private static RuneClansSettings on() {
-        Map<String, String> env = Map.of("RUNECLANS_HUB_ENABLED", "true", "RUNECLANS_HUB_URL", "http://localhost:8090/", "RUNECLANS_HUB_API_KEY", KEY);
+        Map<String, String> env = Map.of("RUNECLANS_HUB_ENABLED", "true", "HUB_API_URL", "http://localhost:8090/", "RUNECLANS_HUB_API_KEY", KEY);
         return RuneClansSettings.from(env::get);
     }
 
@@ -39,17 +39,17 @@ class RuneClansHubClientTest {
                 "http://railway.internal.example.org", "http://evil.com/.railway.internal", "ftp://localhost", "https://user:pw@api.runeclans.com", "not a url"}) {
             assertFalse(RuneClansSettings.allowedBaseUrl(bad), bad);
         }
-        Map<String, String> env = Map.of("RUNECLANS_HUB_ENABLED", "true", "RUNECLANS_HUB_URL", "http://hub.railway.internal:8090", "RUNECLANS_HUB_API_KEY", KEY);
+        Map<String, String> env = Map.of("RUNECLANS_HUB_ENABLED", "true", "HUB_API_URL", "http://hub.railway.internal:8090", "RUNECLANS_HUB_API_KEY", KEY);
         assertTrue(RuneClansSettings.from(env::get).enabled());
     }
 
     @Test
     void offUnlessSwitchedOnAndComplete() {
         assertFalse(RuneClansSettings.from(k -> null).enabled());
-        assertFalse(RuneClansSettings.from(Map.of("RUNECLANS_HUB_URL", "http://localhost:8090", "RUNECLANS_HUB_API_KEY", KEY)::get).enabled());
-        RuneClansSettings bad = RuneClansSettings.from(Map.of("RUNECLANS_HUB_ENABLED", "true", "RUNECLANS_HUB_URL", "http://example.org")::get);
+        assertFalse(RuneClansSettings.from(Map.of("HUB_API_URL", "http://localhost:8090", "RUNECLANS_HUB_API_KEY", KEY)::get).enabled());
+        RuneClansSettings bad = RuneClansSettings.from(Map.of("RUNECLANS_HUB_ENABLED", "true", "HUB_API_URL", "http://example.org")::get);
         assertFalse(bad.enabled());
-        assertTrue(bad.problem().contains("RUNECLANS_HUB_URL") && bad.problem().contains("RUNECLANS_HUB_API_KEY"));
+        assertTrue(bad.problem().contains("HUB_API_URL") && bad.problem().contains("RUNECLANS_HUB_API_KEY"));
         RuneClansSettings good = on();
         assertTrue(good.enabled());
         assertEquals("http://localhost:8090", good.baseUrl());

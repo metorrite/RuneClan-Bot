@@ -340,7 +340,33 @@ class HubStatsBackendTest {
     }
 
     @Test
-    void skillGainsAreReadOncePerMemberAndWindow() {
+    void skillGainsAreReadInOneCallPerClanAndWindow() {
+        FakeHub hub = new FakeHub();
+        hub.on("/v1/guilds/" + GUILD + "/site", path -> ok(DataObject.empty().put("clanId", "c1")));
+        // T-918: the hub's batch mode answers every member sent in one call
+        hub.on("/v1/clans/c1/stats/skill-gains", body -> {
+            DataArray players = DataArray.empty();
+            DataArray rsns = DataObject.fromJson(body).getArray("rsns");
+            for (int i = 0; i < rsns.length(); i++) {
+                players.add(DataObject.empty().put("rsn", rsns.getString(i)).put("skills", DataArray.empty().add(DataObject.empty().put("skillId", 3).put("gained", 1000))));
+            }
+            return ok(DataObject.empty().put("players", players));
+        });
+        HubStatsBackend b = backend(hub, "Alice", "Bob");
+        OffsetDateTime from = NOW.minusSeconds(86_400).atOffset(ZoneOffset.UTC);
+        OffsetDateTime to = NOW.atOffset(ZoneOffset.UTC);
+        assertEquals(2000, b.skillGainsBetween(GUILD, null, from, to).get(0).xp());
+        assertEquals(1, hub.count("skill-gains"), "one call for the whole clan: " + hub.calls);
+        assertEquals(2000, b.skillGainsBetween(GUILD, null, from, to).get(0).xp());
+        assertEquals(1000, b.skillGainsBetween(GUILD, "Alice", from, to).get(0).xp());
+        assertEquals(1, hub.count("skill-gains"), "a second view inside five minutes reads nothing: " + hub.calls);
+        b.evictPlayer("Alice");
+        b.skillGainsBetween(GUILD, "Alice", from, to);
+        assertEquals(2, hub.count("skill-gains"), "the hub's stats.updated for Alice drops her cached gains");
+    }
+
+    @Test
+    void skillGainsFallBackToOneCallPerMemberOnAnOlderHub() {
         FakeHub hub = new FakeHub();
         hub.on("/v1/guilds/" + GUILD + "/site", path -> ok(DataObject.empty().put("clanId", "c1")));
         hub.on("/v1/clans/c1/stats/skill-gains", body -> ok(DataObject.empty().put("skills", DataArray.empty().add(DataObject.empty().put("skillId", 3).put("gained", 1000)))));
@@ -348,13 +374,9 @@ class HubStatsBackendTest {
         OffsetDateTime from = NOW.minusSeconds(86_400).atOffset(ZoneOffset.UTC);
         OffsetDateTime to = NOW.atOffset(ZoneOffset.UTC);
         assertEquals(2000, b.skillGainsBetween(GUILD, null, from, to).get(0).xp());
-        assertEquals(2, hub.count("skill-gains"));
-        assertEquals(2000, b.skillGainsBetween(GUILD, null, from, to).get(0).xp());
+        assertEquals(3, hub.count("skill-gains"), "the batch try, then one per member: " + hub.calls);
         assertEquals(1000, b.skillGainsBetween(GUILD, "Alice", from, to).get(0).xp());
-        assertEquals(2, hub.count("skill-gains"), "a second view inside five minutes reads nothing: " + hub.calls);
-        b.evictPlayer("Alice");
-        b.skillGainsBetween(GUILD, "Alice", from, to);
-        assertEquals(3, hub.count("skill-gains"), "the hub's stats.updated for Alice drops her cached gains");
+        assertEquals(3, hub.count("skill-gains"), "cached: " + hub.calls);
     }
 
     @Test

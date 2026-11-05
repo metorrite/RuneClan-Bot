@@ -79,7 +79,7 @@ public class RsLinkAuth {
             // T-811: players link on runeclans.com, whose links live in the RuneClans hub; without the hub client every RuneSync upload
             // and the clan page fail quietly (panelAvailable=false), so say so once at start.
             log.warn("RuneSync assertions are checked against the bot's own RuneLink keys because the hub client is off (RUNECLANS_HUB_ENABLED, "
-                    + "RUNECLANS_HUB_URL, RUNECLANS_HUB_API_KEY). Links made on runeclans.com can't be verified until it is on (docs/DEV-SETUP.md 3c).");
+                    + "HUB_API_URL, RUNECLANS_HUB_API_KEY). Links made on runeclans.com can't be verified until it is on (docs/DEV-SETUP.md 3c).");
         }
         this.verifier = new Verifier(legacy ? httpTransport(config) : hubTransport(hub), Clock.systemUTC(), legacy);
     }
@@ -151,7 +151,7 @@ public class RsLinkAuth {
             lastUnknownKeyWarning = now;
             unknownKeyWarnings++;
             log.warn("A RuneSync upload carried a RuneLink assertion signed with a key the bot's own link service doesn't have, so it was refused. "
-                    + "Links made on runeclans.com live in the RuneClans hub: turn the hub client on (RUNECLANS_HUB_ENABLED, RUNECLANS_HUB_URL, "
+                    + "Links made on runeclans.com live in the RuneClans hub: turn the hub client on (RUNECLANS_HUB_ENABLED, HUB_API_URL, "
                     + "RUNECLANS_HUB_API_KEY). Logged at most once an hour.");
         }
 
