@@ -23,7 +23,6 @@ public final class LaneOwners {
     private static final Map<String, Owner> OWNERS = Map.ofEntries(
             // database, hub and outside-API work that reads no server list (posts, if any, go through the Discord job outbox)
             Map.entry("runemetrics-clock-check", Owner.API),
-            Map.entry("rsnlink-verify", Owner.API), // Hiscores read budget (M8)
             Map.entry("rsnlink-retention", Owner.API),
             Map.entry("linked-roles", Owner.API),
             Map.entry("premium-expiry", Owner.API),

@@ -66,7 +66,7 @@ class LaneOwnersTest {
 
         assertEquals(Owner.GATEWAY, LaneOwners.owner("poll-jobs"), "polling reads the server list");
         assertEquals(LaneOwners.owner("poll-jobs"), LaneOwners.owner("runemetrics-budget"), "the budget lives with the polling");
-        assertEquals(Owner.API, LaneOwners.owner("rsnlink-verify"));
+        assertEquals(Owner.API, LaneOwners.owner("rsnlink-retention"));
         assertEquals(Owner.GATEWAY, LaneOwners.owner("discord-jobs"));
         assertEquals(Owner.GATEWAY, LaneOwners.owner("a-lane-nobody-listed"), "unknown lanes stay with the classic bot");
     }
@@ -75,7 +75,7 @@ class LaneOwnersTest {
     void aRepeatingTaskOnALaneThisRoleDoesNotOwnStaysScheduledButDoesNothing() throws Exception {
         BotRole.install(BotRole.API);
         ScheduledExecutorService gatewayLane = BotScheduler.lane("discord-jobs");
-        ScheduledExecutorService apiLane = BotScheduler.lane("rsnlink-verify");
+        ScheduledExecutorService apiLane = BotScheduler.lane("rsnlink-retention");
         AtomicInteger gatewayRuns = new AtomicInteger();
         AtomicInteger apiRuns = new AtomicInteger();
         CountDownLatch apiTurns = new CountDownLatch(3);
