@@ -181,16 +181,4 @@ class PlayerAccountsDatabaseTest {
 
         assertEquals(List.of("Jonny Young", "Zezima"), repository.getAllAccountRsns());
     }
-
-    @Test
-    void oneStoredSnapshotAndOneStoredActivityServeEveryServer() {
-        var profile = new RuneScapeProfile("Jonny Young", 2000, 1_000L, 138, 1, 0, 0, List.of(), List.of());
-        repository.saveSnapshot("Jonny Young", profile, "[]");
-
-        assertNotNull(repository.getLatestSnapshot("jonny young"));
-        var activity = new PlayerActivity("06-Oct-2026 20:06", "I killed 3 Amascuts.", "details");
-        assertEquals(1, repository.saveActivities("Jonny Young", List.of(activity)).size());
-        assertEquals(0, repository.saveActivities("jonny young", List.of(activity)).size(), "seen once, however often it is polled");
-        assertEquals(1, repository.getRecentActivities("Jonny Young", 10).size());
-    }
 }

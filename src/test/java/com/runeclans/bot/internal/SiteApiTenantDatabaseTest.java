@@ -59,6 +59,9 @@ import static org.mockito.Mockito.when;
  * public), and no Discord user id ever leaves.
  */
 class SiteApiTenantDatabaseTest {
+    /** What the hub holds: the bot keeps no polled stats or adventure-log lines of its own (T-912). */
+    private static final com.runeclans.bot.testsupport.MemoryStats HUB = new com.runeclans.bot.testsupport.MemoryStats();
+
     // Made-up ids, built at run time (a long literal of this shape trips the secret scanner).
     private static final long GUILD_A = Long.parseLong("7".repeat(17) + "1");
     private static final long GUILD_B = Long.parseLong("7".repeat(17) + "2");
@@ -105,9 +108,9 @@ class SiteApiTenantDatabaseTest {
         new SignupDatabaseInitializer(db);
         new PollDatabaseInitializer(db);
         new CofferDatabaseInitializer(db);
-        stats = new SiteStatsRepository(db, initializer);
-        links = new PlayerLinkRepository(db, initializer);
-        digest = new WeeklyDigestRepository(db, initializer);
+        stats = new SiteStatsRepository(db, initializer).withStats(HUB.backends());
+        links = new PlayerLinkRepository(db, initializer).withStats(HUB.backends());
+        digest = new WeeklyDigestRepository(db, initializer).withStats(HUB.backends());
         points = new ClanPointsRepository(db, initializer);
         profiles = new MemberProfileRepository(db);
         community = new CommunitySettings(db, com.runeclans.bot.testsupport.SiteMappings.off(db));
@@ -130,6 +133,7 @@ class SiteApiTenantDatabaseTest {
         guildB = guild(GUILD_B);
 
         cleanUp();
+        HUB.clear();
         member(GUILD_A, USER_SHOWN, SHOWN, links);
         member(GUILD_A, USER_HIDDEN, HIDDEN, links);
         member(GUILD_B, USER_OTHER, OTHER, links);
@@ -151,12 +155,11 @@ class SiteApiTenantDatabaseTest {
         sql("INSERT INTO younglings.clan_member (guild_id, rsn, clan_rank) VALUES (?, ?, 'Recruit')", guildId, rsn);
         links.createLink(guildId, userId, rsn, "TEST");
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        long before = links.saveSnapshotAt(rsn, now.minusDays(10), profile(rsn, 199_000_000), "[]");
-        links.saveSkillSnapshot(before, List.of(new SkillValue(0, 99, 199_000_000, 5)));
-        long after = links.saveSnapshotAt(rsn, now.minusMinutes(5), profile(rsn, 200_000_000), "[]");
-        links.saveSkillSnapshot(after, List.of(new SkillValue(0, 99, 200_000_000, 4)));
+        HUB.member(guildId, rsn)
+                .snapshot(rsn, now.minusDays(10), 2000, 199_000_000, 120, List.of(new SkillValue(0, 99, 199_000_000, 5)))
+                .snapshot(rsn, now.minusMinutes(5), 2000, 200_000_000, 120, List.of(new SkillValue(0, 99, 200_000_000, 4)));
         String date = RUNEMETRICS.format(now.minusHours(2).atZoneSameInstant(ZoneId.of("Europe/London")));
-        links.saveActivities(rsn, List.of(new PlayerActivity(date, "Capped at my Clan Citadel.", "x", "rs_plog_special_event"), new PlayerActivity(date, "I killed 5 General Graardors.", "x", "rs_plog_npc_kill_count"),
+        HUB.activities(rsn, List.of(new PlayerActivity(date, "Capped at my Clan Citadel.", "x", "rs_plog_special_event"), new PlayerActivity(date, "I killed 5 General Graardors.", "x", "rs_plog_npc_kill_count"),
                 new PlayerActivity(date, "I found a Bandos hilt.", "x", "rs_plog_item_drop"), new PlayerActivity(date, "Levelled up Attack.", "x", "rs_plog_levelup_count"),
                 new PlayerActivity(date, "Quest complete: Desperate Measures", "x", "rs_plog_quest"), new PlayerActivity(date, "I found Shrimpy, the Fishing pet.", "x", "rs_plog_item_found")));
         sql("INSERT INTO younglings.clan_roster_event (guild_id, rsn, event_type, event_at) VALUES (?, ?, 'JOIN', NOW() - INTERVAL '3 days')", guildId, rsn);

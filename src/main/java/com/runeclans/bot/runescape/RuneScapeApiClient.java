@@ -11,8 +11,11 @@ import java.util.List;
 
 /**
  * The bot's one way to a clan's member list. The bot makes no Jagex call of its own (Drake, 2026-11-04: after the hub move only the hub talks
- * to Jagex): the roster comes from the hub's {@code POST /v1/clans/live-roster}. A hub failure, or a bot with its hub client off, is an empty
- * roster, as a Jagex failure always was.
+ * to Jagex). A clan registered on RuneClans is read from the roster the hub already keeps ({@code GET /v1/clans/by-name/{name}}, then
+ * {@code GET /v1/clans/{clanId}/roster}): the hub polls every registered clan's list itself, so the bot's daily sync costs no extra Jagex call
+ * (T-912; Drake 2026-11-04: one player list, never a double poll). A registered clan the hub hasn't fetched yet is an empty roster
+ * (no stand-in fetch). Only a clan the hub doesn't know at all uses the hub's live fetch, {@code POST /v1/clans/live-roster}. A hub failure, or a bot with its hub client off, is an empty roster, as a
+ * Jagex failure always was.
  * <p>
  * The RuneMetrics profile, hiscores and avatar fetches that used to live here went with the RuneMetrics shutdown on 2026-11-10; the hub polls
  * profiles from the Jagex Platform API and the bot reads them from the hub.
@@ -55,19 +58,41 @@ public class RuneScapeApiClient {
             log.warn("The hub client is off (RUNECLANS_HUB_ENABLED), so there is no clan roster for '{}'.", clanName);
             return List.of();
         }
+        List<ClanMember> kept = keptRoster(clanName);
+        return kept != null ? kept : liveRoster(clanName);
+    }
+
+    /**
+     * The roster the hub keeps for a registered clan (empty until the hub's first fetch: no live fetch as a stand-in, Drake 2026-11-05: no
+     * fallbacks); null only when the hub doesn't know the clan at all, which is the one case for the live fetch.
+     */
+    private List<ClanMember> keptRoster(String clanName) {
+        var clan = hub.call("GET", "/v1/clans/by-name/" + java.net.URLEncoder.encode(clanName.strip(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"), null);
+        if (clan != null && clan.status() == 404) return null;
+        if (clan == null || !clan.ok() || clan.json() == null || clan.json().getString("clanId", "").isBlank()) return List.of();
+        var a = hub.call("GET", "/v1/clans/" + clan.json().getString("clanId") + "/roster", null);
+        if (a == null || !a.ok() || a.json() == null || !a.json().hasKey("members")) return List.of();
+        return members(a.json().getArray("members"));
+    }
+
+    private static List<ClanMember> members(net.dv8tion.jda.api.utils.data.DataArray rows) {
+        List<ClanMember> members = new ArrayList<>();
+        for (int i = 0; i < rows.length(); i++) {
+            var m = rows.getObject(i);
+            if (!m.getBoolean("active", true)) continue;
+            members.add(new ClanMember(m.getString("rsn"), m.getString("rank"), m.getLong("totalXp", 0), m.getLong("kills", 0)));
+        }
+        return members;
+    }
+
+    private List<ClanMember> liveRoster(String clanName) {
         try {
             var a = hub.call("POST", "/v1/clans/live-roster", DataObject.empty().put("clanName", clanName).toString());
             if (a == null || !a.ok() || a.json() == null) {
                 log.warn("The hub's live roster for '{}' didn't answer ({}).", clanName, a == null ? "unreachable" : "HTTP " + a.status());
                 return List.of();
             }
-            net.dv8tion.jda.api.utils.data.DataArray rows = a.json().getArray("members");
-            List<ClanMember> members = new ArrayList<>();
-            for (int i = 0; i < rows.length(); i++) {
-                var m = rows.getObject(i);
-                members.add(new ClanMember(m.getString("rsn"), m.getString("rank"), m.getLong("totalXp", 0), m.getLong("kills", 0)));
-            }
-            return members;
+            return members(a.json().getArray("members"));
         } catch (RuntimeException e) {
             log.warn("The hub's live roster for '{}' couldn't be read: {}", clanName, e.toString());
             return List.of();

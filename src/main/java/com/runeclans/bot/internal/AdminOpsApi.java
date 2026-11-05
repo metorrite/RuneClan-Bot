@@ -168,9 +168,8 @@ public class AdminOpsApi {
                 .put("scheduledPending", store.scheduled(guildId, 0).size());
     }
 
-    /** The newest adventure-log line known: the bot's table, or (with the hub client on) the newest of this clan's members' lines on the hub. */
+    /** The newest adventure-log line of this clan's members, from the hub (none with the hub client off). */
     private OffsetDateTime newestActivity(long guildId) {
-        if (hub == null || !hub.enabled()) return store.newestActivity();
         return store.lastActivity(guildId).values().stream().filter(java.util.Objects::nonNull).max(Comparator.naturalOrder()).orElse(null);
     }
 

@@ -56,6 +56,9 @@ import static org.mockito.Mockito.when;
  * they hid themselves from the rankings. Only the clan profiles are stand-ins (their rules are {@link DirectoryPlayerLogicTest}'s).
  */
 class DirectoryPlayerDatabaseTest {
+    /** What the hub holds: the bot keeps no polled stats of its own (T-912). */
+    private static final com.runeclans.bot.testsupport.MemoryStats HUB = new com.runeclans.bot.testsupport.MemoryStats();
+
     // Made-up ids, built at run time (a long literal of this shape trips the secret scanner).
     private static final long GUILD_A = Long.parseLong("2".repeat(16) + "61");
     private static final long GUILD_B = Long.parseLong("2".repeat(16) + "62");
@@ -81,8 +84,8 @@ class DirectoryPlayerDatabaseTest {
         new SignupDatabaseInitializer(db);
         new PollDatabaseInitializer(db);
         new CofferDatabaseInitializer(db);
-        stats = new SiteStatsRepository(db, initializer);
-        links = new PlayerLinkRepository(db, initializer);
+        stats = new SiteStatsRepository(db, initializer).withStats(HUB.backends());
+        links = new PlayerLinkRepository(db, initializer).withStats(HUB.backends());
         points = new ClanPointsRepository(db, initializer);
         memberProfiles = new MemberProfileRepository(db);
         WeeklyDigestRepository digest = new WeeklyDigestRepository(db, initializer);
@@ -116,10 +119,11 @@ class DirectoryPlayerDatabaseTest {
         memberProfiles.saveProfile(new MemberProfileRepository.Profile(GUILD_HIDDEN, USER, "", null, null, false, true, false, false, false));
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        long old = links.saveSnapshotAt(RSN, now.minusDays(10), new RuneScapeProfile(RSN, 2000, 199_000_000, 120, 10, 0, 0, List.of(), List.of()), "[]");
-        links.saveSkillSnapshot(old, List.of(new SkillValue(0, 99, 199_000_000, 5)));
-        long newest = links.saveSnapshotAt(RSN, now.minusMinutes(5), new RuneScapeProfile(RSN, 2100, 200_000_000, 121, 11, 0, 0, List.of(), List.of()), "[]");
-        links.saveSkillSnapshot(newest, List.of(new SkillValue(0, 99, 200_000_000, 4)));
+        HUB.clear();
+        for (long guild : new long[]{GUILD_A, GUILD_B, GUILD_HIDDEN}) HUB.member(guild, RSN);
+        HUB.snapshot(RSN, now.minusDays(10), 2000, 199_000_000, 120, List.of(new SkillValue(0, 99, 199_000_000, 5)))
+                .snapshot(RSN, now.minusMinutes(5), 2100, 200_000_000, 121, List.of(new SkillValue(0, 99, 200_000_000, 4)));
+
     }
 
     @AfterEach
