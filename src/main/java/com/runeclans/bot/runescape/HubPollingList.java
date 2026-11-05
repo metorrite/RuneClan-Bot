@@ -67,7 +67,7 @@ final class HubPollingList {
         return last;
     }
 
-    /** The groups as of at most {@link #KEEP} ago. Runs on the poll-jobs lane, so a slow hub only delays the next job. */
+    /** The groups as of at most {@link #KEEP} ago. A slow hub only delays the caller. */
     synchronized Groups groups() {
         Instant now = clock.instant();
         if (readAt != null && now.isBefore(readAt.plus(KEEP))) return last;

@@ -23,12 +23,4 @@ class WeeklyDigestSchedulerTest {
         // Wednesday after noon: next week
         assertEquals(Duration.ofDays(7).minusHours(1), WeeklyDigestScheduler.durationUntilNextWednesdayNoonUtc(at("2026-10-14T13:00:00Z")));
     }
-
-    @Test
-    void theClockCheckOnlyComplainsAboutMoreThanAClockQuirk() {
-        assertFalse(RuneMetricsClockCheck.looksWrong(0, 500));
-        assertFalse(RuneMetricsClockCheck.looksWrong(1, 500), "one odd row is noise");
-        assertFalse(RuneMetricsClockCheck.looksWrong(30, 10), "too few rows to say");
-        assertTrue(RuneMetricsClockCheck.looksWrong(95, 500), "a fifth of the rows in the future means the zone is wrong");
-    }
 }

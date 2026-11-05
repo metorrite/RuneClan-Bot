@@ -22,7 +22,6 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -31,7 +30,7 @@ import java.util.function.Supplier;
  * <ul>
  *   <li>{@code GET clan-site/cockpit} (site admins): members gone quiet (no XP on the clan Hiscores for the site's threshold), missed Citadel
  *   caps (2 of the last 4 finished weeks, weeks with no cap data at all left out; {@code available: false} with a {@code reason} and no rows
- *   once RuneMetrics is off, {@link CitadelCaps}), new members not linked in the server, and leaves of the
+ *  ), new members not linked in the server, and leaves of the
  *   last 7 days, each row with the staff's "done" mark when there is one. {@code canChangeSettings} says whether the asker may change the
  *   threshold.</li>
  *   <li>{@code PUT clan-site/cockpit/settings} {@code {quietDays}} (the site's owner): 7 to 90 days; answers the page.</li>
@@ -53,8 +52,6 @@ public class SiteCockpitAdmin {
     private final SiteRankAdvisor ranks;
     /** Marks per person: a burst of 10 (working down a list), then 2 a second. */
     private final RateLimiter marks = new RateLimiter(10, 500);
-    /** Whether Citadel caps can be counted (T-725): off once the bot stops asking RuneMetrics. See {@link CitadelCaps}. */
-    private final BooleanSupplier capsAvailable = CitadelCaps.fromEnv();
 
     public SiteCockpitAdmin(SiteCockpitStore store, SiteStatsRepository stats, AdminToolsStore activity, SiteRoleGuard siteRoles, SiteRankAdvisor ranks) {
         this.store = store;
@@ -115,16 +112,10 @@ public class SiteCockpitAdmin {
                     .put("mark", markJson(CockpitRules.activeMark(marks, "quiet", q.member().key(), q.lastXpAt(), now))));
         }
 
-        // T-725: caps come from the Adventurer's Log via RuneMetrics; see CitadelCaps and runeclans-hub docs/RUNEMETRICS-SUNSET.md
-        DataObject capsJson;
-        if (capsAvailable.getAsBoolean()) {
-            LocalDate thisWeek = RecapPeriod.citadelWeekStart(now.toLocalDate());
-            List<CapWeek> grid = stats.citadelGrid(guildId, CockpitRules.CAP_WEEKS + 1).stream()
-                    .map(w -> new CapWeek(w.rsn(), w.weekStart(), w.capped())).toList();
-            capsJson = capsJson(c, CockpitRules.caps(members, grid, activity.lastActivity(guildId), thisWeek), marks, now);
-        } else {
-            capsJson = capsUnavailableJson();
-        }
+        LocalDate thisWeek = RecapPeriod.citadelWeekStart(now.toLocalDate());
+        List<CapWeek> grid = stats.citadelGrid(guildId, CockpitRules.CAP_WEEKS + 1).stream()
+                .map(w -> new CapWeek(w.rsn(), w.weekStart(), w.capped())).toList();
+        DataObject capsJson = capsJson(c, CockpitRules.caps(members, grid, activity.lastActivity(guildId), thisWeek), marks, now);
 
         DataArray unlinked = DataArray.empty();
         if (!c.botless()) {
@@ -170,12 +161,6 @@ public class SiteCockpitAdmin {
         DataArray capWeeks = DataArray.empty();
         for (CockpitRules.Week w : caps.weeks()) capWeeks.add(DataObject.empty().put("start", w.start().toString()).put("hasData", w.hasData()));
         return DataObject.empty().put("available", true).put("reason", null).put("weeks", capWeeks).put("noLog", caps.noLog()).put("rows", capRows);
-    }
-
-    /** The missed-caps section once RuneMetrics is off (T-725): unavailable, with the reason, and no rows (never "nobody missed caps"). */
-    static DataObject capsUnavailableJson() {
-        return DataObject.empty().put("available", false).put("reason", CitadelCaps.UNAVAILABLE_REASON).put("weeks", DataArray.empty())
-                .put("noLog", 0).put("rows", DataArray.empty());
     }
 
     /** A row's name and, where the bot is in the server and the name is linked, the Discord account (its name from the cache only). */

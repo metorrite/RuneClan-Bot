@@ -1,6 +1,5 @@
 package com.runeclans.bot.ops;
 
-import com.runeclans.bot.runescape.polling.RuneMetricsBudget;
 
 import java.util.List;
 import java.util.Locale;
@@ -20,19 +19,13 @@ public final class OpsReport {
     }
 
     public static String text(String botName, OpsMetrics.Snapshot snap, List<MetricRegistry.Gauge> gauges, MetricRegistry registry,
-                              List<RuneMetricsBudget.Row> week, List<String> firing, long guilds, Previous previous) {
+                              List<String> firing, long guilds, Previous previous) {
         long requests = registry.counterTotal(OpsTelemetry.REQUESTS);
         long errors = registry.counterWhere(OpsTelemetry.REQUESTS, "status", "5xx");
         long discord429 = registry.counterTotal(OpsTelemetry.DISCORD_429);
         boolean sinceLast = previous.requests >= 0;
         String span = sinceLast ? "since last week's post" : "since the bot started";
 
-        long sent = 0;
-        long limited = 0;
-        for (RuneMetricsBudget.Row r : week) {
-            sent += r.counts().sent();
-            limited += r.counts().rateLimited();
-        }
         StringBuilder b = new StringBuilder();
         b.append("**").append(botName).append(" weekly numbers**\n");
         if (guilds >= 0) b.append("- Servers: ").append(guilds).append('\n');
@@ -40,13 +33,6 @@ public final class OpsReport {
                 .append(requests - Math.max(0, previous.requests)).append(" requests, ")
                 .append(errors - Math.max(0, previous.errors)).append(" server errors")
                 .append(requests == 0 ? " (counted only with METRICS_ENABLED=on)" : "").append('\n');
-        b.append("- RuneMetrics, last 7 days: ").append(sent).append(" requests sent, ").append(limited).append(" rate-limited");
-        double perMinute = gauge(gauges, "rc_poll_budget_per_minute");
-        double tenMinutes = gauge(gauges, "rc_poll_requests_last_10_minutes");
-        if (perMinute > 0) {
-            b.append("; budget ").append(fmt(perMinute)).append("/min, using ").append(Math.round(100 * (tenMinutes / 10.0) / perMinute)).append("% right now");
-        }
-        b.append('\n');
         b.append("- Discord job queue: ").append(snap.outboxDue() < 0 ? "unknown" : snap.outboxDue() + " due")
                 .append(snap.outboxOldestSeconds() > 0 ? ", oldest waiting " + OpsAlertRules.minutes(snap.outboxOldestSeconds()) : "").append('\n');
         b.append("- Discord 429s ").append(span).append(": ").append(discord429 - Math.max(0, previous.discord429)).append('\n');

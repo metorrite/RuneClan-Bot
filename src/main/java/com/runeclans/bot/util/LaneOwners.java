@@ -22,7 +22,6 @@ public final class LaneOwners {
 
     private static final Map<String, Owner> OWNERS = Map.ofEntries(
             // database, hub and outside-API work that reads no server list (posts, if any, go through the Discord job outbox)
-            Map.entry("runemetrics-clock-check", Owner.API),
             Map.entry("rsnlink-retention", Owner.API),
             Map.entry("linked-roles", Owner.API),
             Map.entry("premium-expiry", Owner.API),
@@ -36,8 +35,6 @@ public final class LaneOwners {
             Map.entry("event-export-expiry", Owner.API), // deletes expired wrap-up exports (T-698)
             // RuneMetrics polling, its budget and the event trackers that feed it: one budget, kept in the one gateway process (M1, M2).
             // Gateway, not api, because the poll targets are the servers the bot is in (RosterPollScheduler reads the server list).
-            Map.entry("poll-jobs", Owner.GATEWAY),
-            Map.entry("runemetrics-budget", Owner.GATEWAY),
             Map.entry("event-tracker", Owner.GATEWAY),
             Map.entry("plugin-xp-tracker", Owner.GATEWAY),
             Map.entry("hub-tracked", Owner.GATEWAY), // the names the hub should poll, from the servers the bot is in (T-851)

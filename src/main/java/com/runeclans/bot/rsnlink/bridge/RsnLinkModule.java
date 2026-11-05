@@ -8,8 +8,6 @@ import com.runeclans.bot.rsnlink.LinkHttp;
 import com.runeclans.bot.rsnlink.LinkService;
 import com.runeclans.bot.rsnlink.LinkSettings;
 import com.runeclans.bot.rsnlink.LinkVerifier;
-import com.runeclans.bot.rsnlink.verify.PgVerifyStore;
-import com.runeclans.bot.rsnlink.verify.VerifySettings;
 import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
@@ -34,7 +32,6 @@ import java.util.concurrent.TimeUnit;
  *   <li>prepares the link database's schema;</li>
  *   <li>mounts {@code /internal/rsnlink/} on the internal API (behind {@code X-Internal-Secret});</li>
  *   <li>runs the hourly retention sweep;</li>
- *   <li>when {@code LINK_VERIFY_ENABLED=true}, adds the "plugin knew it first" check (T-170) as a {@link LinkVerifier};</li>
  *   <li>gives the DM fallback (T-115) JonnyBot's gateway connection to send codes with.</li>
  * </ul>
  * A misconfigured service (keys missing or short) refuses to start and says which variables are wrong, but the bot keeps running.
@@ -56,10 +53,7 @@ public class RsnLinkModule implements InternalRouteModule {
                 log.info("RSN link service is off (LINK_DATABASE_URL not set).");
             } else {
                 LinkDatabase database = new LinkDatabase(settings.databaseUrl(), 4);
-                VerifySettings verify = VerifySettings.fromEnv(config::getLinkSetting, "RS Link verification (" + config.getJonnybotUrl() + ")");
-                PgVerifyStore verifyStore = new PgVerifyStore(database::connection, settings.schema());
-                // T-851/T-876: the bot makes no Jagex call of its own any more (the hub verifies links); LINK_VERIFY_ENABLED no longer starts the old checker
-                if (verify.enabled()) log.warn("LINK_VERIFY_ENABLED is set, but the bot's own \"plugin knew it first\" check was retired: the hub does link verification now.");
+                // the bot makes no Jagex call (the hub verifies links); no verifier is registered here
                 List<LinkVerifier> verifiers = List.of();
                 made = new LinkService(settings, database, dmSender, verifiers, Clock.systemUTC(), new SecureRandom());
                 made.start();

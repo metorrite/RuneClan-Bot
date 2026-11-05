@@ -4,7 +4,6 @@ import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.config.BotBrand;
 import com.runeclans.bot.config.BotConfig;
 import com.runeclans.bot.discord.Mentions;
-import com.runeclans.bot.runescape.polling.RuneMetricsBudget;
 import com.runeclans.bot.util.BotScheduler;
 import com.runeclans.bot.discord.Shards;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
@@ -43,17 +42,15 @@ public class OpsAlerts {
 
     private final BotConfig config;
     private final OpsMetrics metrics;
-    private final RuneMetricsBudget budget;
     private final ScheduledExecutorService lane = BotScheduler.lane("ops-alerts");
     private final OpsAlertRules rules;
     private final OpsReport.Previous previous = new OpsReport.Previous();
     private HttpClient http;
     private volatile JDA jda;
 
-    public OpsAlerts(BotConfig config, OpsMetrics metrics, RuneMetricsBudget budget) {
+    public OpsAlerts(BotConfig config, OpsMetrics metrics) {
         this.config = config;
         this.metrics = metrics;
-        this.budget = budget;
         this.rules = new OpsAlertRules(config.getOps429Threshold());
     }
 
@@ -92,7 +89,7 @@ public class OpsAlerts {
             Map<String, Boolean> health = new LinkedHashMap<>();
             for (String url : config.getOpsHealthUrls()) health.put(url, healthy(url));
             OpsMetrics.Snapshot s = metrics.snapshot();
-            for (OpsAlertRules.Alert a : rules.evaluate(new OpsAlertRules.Sample(Instant.now(), health, s.outboxOldestSeconds(), s.outboxDue(), s.pollBudgetExhausted(),
+            for (OpsAlertRules.Alert a : rules.evaluate(new OpsAlertRules.Sample(Instant.now(), health, s.outboxOldestSeconds(), s.outboxDue(),
                     s.discord429Total()))) {
                 log.warn("Ops alert {}: {}", a.rule(), a.text());
                 post((a.recovered() ? "✅ " : "⚠️ ") + a.text());
@@ -118,7 +115,7 @@ public class OpsAlerts {
     private void weekly() {
         try {
             JDA current = jda;
-            String text = OpsReport.text(BotBrand.NAME, metrics.snapshot(), metrics.gauges(), OpsTelemetry.registry(), budget.history(7), rules.firing(),
+            String text = OpsReport.text(BotBrand.NAME, metrics.snapshot(), metrics.gauges(), OpsTelemetry.registry(), rules.firing(),
                     current == null ? -1 : Shards.guilds(current).size(), previous);
             post(text);
         } catch (RuntimeException e) {

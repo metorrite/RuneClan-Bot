@@ -1,6 +1,5 @@
 package com.runeclans.bot.internal;
 
-import com.runeclans.bot.runescape.polling.PollOutcome;
 import com.runeclans.bot.runescape.stats.HubRefresh;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
@@ -11,19 +10,16 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** T-851: the website's Refresh through the bot goes to the hub's Refresh while the hub polls, with the presser's Discord id. */
+/** T-851: the website's Refresh through the bot goes to the hub's Refresh , with the presser's Discord id. */
 class DirectoryPlayerRefreshHubTest {
     private static final Instant NOW = Instant.parse("2026-11-04T12:00:00Z");
 
     private static final class HubDeps implements DirectoryPlayerRefreshRoutes.Deps {
         final List<String> asked = new ArrayList<>();
-        final List<String> invalidated = new ArrayList<>();
         HubRefresh.Result answer = new HubRefresh.Result(HubRefresh.Outcome.QUEUED, 0, null);
-        boolean polled;
 
         @Override
         public Instant lastPoll(String rsn) {
@@ -41,22 +37,6 @@ class DirectoryPlayerRefreshHubTest {
         }
 
         @Override
-        public CompletableFuture<PollOutcome> poll(String rsn) {
-            polled = true;
-            return CompletableFuture.completedFuture(PollOutcome.timedOut());
-        }
-
-        @Override
-        public void polled(String rsn) {
-            invalidated.add(rsn);
-        }
-
-        @Override
-        public boolean hubPolls() {
-            return true;
-        }
-
-        @Override
         public HubRefresh.Result hubRefresh(String rsn, String discordId) {
             asked.add(rsn + "|" + discordId);
             return answer;
@@ -66,7 +46,7 @@ class DirectoryPlayerRefreshHubTest {
     @Test
     void theHubsAnswersBecomeTheRoutesStatuses() {
         HubDeps deps = new HubDeps();
-        DirectoryPlayerRefreshRoutes.Refresher refresher = new DirectoryPlayerRefreshRoutes.Refresher(deps, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(2));
+        DirectoryPlayerRefreshRoutes.Refresher refresher = new DirectoryPlayerRefreshRoutes.Refresher(deps, Clock.fixed(NOW, ZoneOffset.UTC));
         String presser = "1".repeat(18);
 
         DirectoryPlayerRefreshRoutes.Reply queued = refresher.refresh(DataObject.empty().put("rsn", "Zezima").put("waitMinutes", "30").put("discordId", presser));
@@ -75,8 +55,6 @@ class DirectoryPlayerRefreshHubTest {
         assertFalse(queued.body().getBoolean("polled"));
         assertEquals(NOW.plus(Duration.ofMinutes(30)).toString(), queued.body().getString("nextAt"));
         assertEquals(List.of("Zezima|" + presser), deps.asked);
-        assertTrue(deps.invalidated.isEmpty(), "the cached profile is dropped when the poll lands (stats.updated), not while it still shows the old numbers");
-        assertFalse(deps.polled, "the bot's own queue is never used");
 
         deps.answer = new HubRefresh.Result(HubRefresh.Outcome.WAIT, 600, "refresh_wait");
         DirectoryPlayerRefreshRoutes.Reply wait = refresher.refresh(DataObject.empty().put("rsn", "Zezima"));
@@ -103,7 +81,7 @@ class DirectoryPlayerRefreshHubTest {
     @Test
     void theBotsOwnSiteWideCapStillHoldsWhileTheHubPolls() {
         HubDeps deps = new HubDeps();
-        DirectoryPlayerRefreshRoutes.Refresher refresher = new DirectoryPlayerRefreshRoutes.Refresher(deps, Clock.fixed(NOW, ZoneOffset.UTC), Duration.ofSeconds(2));
+        DirectoryPlayerRefreshRoutes.Refresher refresher = new DirectoryPlayerRefreshRoutes.Refresher(deps, Clock.fixed(NOW, ZoneOffset.UTC));
         for (int i = 0; i < DirectoryPlayerRefreshRoutes.GLOBAL_PER_MINUTE; i++) {
             assertEquals(200, refresher.refresh(DataObject.empty().put("rsn", "Player" + i)).status());
         }

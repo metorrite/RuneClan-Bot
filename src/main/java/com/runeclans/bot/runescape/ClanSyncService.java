@@ -2,10 +2,6 @@ package com.runeclans.bot.runescape;
 
 import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.configure.GuildSettingsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollOutcome;
-import com.runeclans.bot.runescape.polling.PollPriority;
-import com.runeclans.bot.runescape.polling.PollRequest;
 import com.runeclans.bot.tracking.ClassifiedEntry;
 import com.runeclans.bot.tracking.TrackingEventRouter;
 import com.runeclans.bot.tracking.TrackingGroup;
@@ -39,7 +35,6 @@ public class ClanSyncService {
 
     private final RuneScapeApiClient apiClient;
     private final ClanMemberRepository clanMemberRepository;
-    private final PollCoordinator pollCoordinator;
     private final RsnRenameService renameService;
     private final GuildSettingsService guildSettingsService;
     private final TrackingEventRouter trackingEventRouter;
@@ -57,14 +52,13 @@ public class ClanSyncService {
     private static final int MIN_DEPARTURE_CAP = 5;
 
     public ClanSyncService(RuneScapeApiClient apiClient, ClanMemberRepository clanMemberRepository,
-                            PollCoordinator pollCoordinator, RsnRenameService renameService,
+                            RsnRenameService renameService,
                             GuildSettingsService guildSettingsService,
                             TrackingEventRouter trackingEventRouter, WeeklyDigestRepository weeklyDigestRepository,
                             TrackingIconCatalog trackingIconCatalog, VerificationRoleSyncService roleSyncService,
                             PlayerLinkService linkService) {
         this.apiClient = apiClient;
         this.clanMemberRepository = clanMemberRepository;
-        this.pollCoordinator = pollCoordinator;
         this.renameService = renameService;
         this.guildSettingsService = guildSettingsService;
         this.trackingEventRouter = trackingEventRouter;
@@ -98,10 +92,8 @@ public class ClanSyncService {
 
     /**
      * Refreshes the roster (adds new members, updates ranks/XP/kills, marks anyone no longer listed
-     * as inactive) and then polls every currently-listed member's full RuneMetrics profile, same as
-     * a manual "Poll Now" would for a linked player. The polls go through the poll coordinator, which paces
-     * them with everything else the bot is polling and skips anyone polled within {@link #SYNC_MAX_AGE} — for a
-     * clan this size this call blocks for a few minutes, which is expected, not a hang.
+     * as inactive). The hub keeps every listed member's stats current, so nothing is polled here and every listed
+     * member counts as up to date in the result.
      * <p>
      * Also runs rename detection ({@link RsnRenameService}) against this cycle's departed/new sets
      * — takes a {@link Guild}, not just a guild ID, since a detected rename may need to DM the
@@ -191,12 +183,8 @@ public class ClanSyncService {
         // Only kept for names that just appeared (in any of the servers) — the rename check is the only thing
         // that needs the full profile result, not just pass/fail, and there's no reason to hold onto
         // every other roster member's full skills/activities in memory once its snapshot is saved.
-        // This poll isn't spread across a window like RosterPollScheduler's — it needs everyone's
-        // current data now, as fast as the shared request budget allows, so the daily diff/rename check has
-        // it to work with immediately.
         Map<String, ProfileResult> newMemberResults = new HashMap<>();
-        PollTally tally = pollRsns(roster.stream().map(RuneScapeApiClient.ClanMember::rsn).toList(), PollPriority.CLAN,
-                SYNC_MAX_AGE, Duration.ZERO, "clan sync", allNewLower, newMemberResults);
+        PollTally tally = pollRsns(roster.stream().map(RuneScapeApiClient.ClanMember::rsn).toList(), allNewLower, newMemberResults);
 
         for (var entry : changes.entrySet()) {
             Guild guild = entry.getKey();
@@ -345,8 +333,7 @@ public class ClanSyncService {
 
         Map<String, ProfileResult> newMemberResults = new HashMap<>();
         if (!change.newLower().isEmpty() && !change.departedLower().isEmpty()) {
-            // A member is waiting on this, so it goes ahead of any background pass; the names are new, so each needs a real poll.
-            pollRsns(change.newNames(), PollPriority.INTERACTIVE, Duration.ZERO, Duration.ZERO, "roster refresh", change.newLower(), newMemberResults);
+            pollRsns(change.newNames(), change.newLower(), newMemberResults);
         }
         Set<String> maybeRenamed = detectRenames(guild, change, newMemberResults);
 
@@ -403,65 +390,25 @@ public class ClanSyncService {
 
     public record RosterPollResult(int polled, int pollFailed) {}
 
-    /** A clan member polled within this long counts as current for a sync or a "send now": nobody needs a second request that soon. */
-    static final Duration SYNC_MAX_AGE = Duration.ofMinutes(15);
-    private static final Duration SEND_NOW_MAX_AGE = Duration.ofMinutes(2);
-    /** The longest a sync waits for its polls: a few hundred players at the shared rate, with room for rate-limit retries. */
-    private static final Duration POLL_WAIT = Duration.ofMinutes(90);
-
     /**
-     * Polls every currently-active clan-roster member's RuneMetrics profile, spread evenly across
-     * {@code window} instead of bursting everyone at once (a zero window queues them all, and the coordinator's
-     * request budget paces them). Tracking dispatch (drops/levels/quests/Citadel/etc., see
-     * {@link RuneScapeStatsService#fetchAndStore}) happens as a side effect of that poll, same as it does during
-     * {@link #syncAndPoll}. Doesn't touch the roster itself or run rename detection — that's still
-     * {@link #syncAndPoll}'s job, once a day; this is what keeps every member's data (and the tracking feed) fresh the
-     * rest of the time, regardless of whether they've ever linked their Discord to their RSN.
+     * What the "send now" tools report for a server's clan: every currently-active roster member counts as polled, because the hub keeps
+     * them current on its own (the bot polls nothing). Doesn't touch the roster itself or run rename detection, that is
+     * {@link #syncAndPoll}'s job, once a day.
      */
     public RosterPollResult pollActiveRosterOnly(long guildId, Duration window) {
-        List<String> rsns = clanMemberRepository.getAll(guildId, true).stream()
-                .map(ClanMemberRepository.ClanMemberRow::rsn)
-                .toList();
-        if (rsns.isEmpty()) return new RosterPollResult(0, 0);
-
-        PollTally tally = pollRsns(rsns, PollPriority.CLAN, SEND_NOW_MAX_AGE, window, "send now", Set.of(), new HashMap<>());
-        return new RosterPollResult(tally.polled(), tally.pollFailed());
+        int count = clanMemberRepository.getAll(guildId, true).size();
+        return new RosterPollResult(count, 0);
     }
 
     private record PollTally(int polled, int pollFailed) {}
 
     /**
-     * Shared by {@link #syncAndPoll}, {@link #refreshRosterIfStale} and {@link #pollActiveRosterOnly}: hands the names to the
-     * poll coordinator and waits for all of them. {@code newLower}/{@code newMemberResultsOut} are only meaningful for the
-     * first two (rename detection needs the full profile of a name that just appeared, so those are always polled for real);
-     * pass {@code Set.of()}/a throwaway map otherwise. A player the coordinator found already current counts as polled.
+     * Shared by {@link #syncAndPoll} and {@link #refreshRosterIfStale}: the hub keeps every roster member current (T-851), so there is nothing
+     * to queue and every name counts as polled; the rename check reads the hub's snapshots itself, so a name that just appeared gets an
+     * "unavailable" result here.
      */
-    private PollTally pollRsns(List<String> rsns, PollPriority priority, Duration maxAge, Duration spread, String source,
-                               Set<String> newLower, Map<String, ProfileResult> newMemberResultsOut) {
-        int count = rsns.size();
-        if (pollCoordinator.hubPolls()) {
-            // T-851: the hub keeps every roster member current; nothing to queue, and the rename check reads the hub's snapshots itself
-            for (String rsn : rsns) if (newLower.contains(rsn.toLowerCase())) newMemberResultsOut.put(rsn.toLowerCase(), new ProfileResult.Unavailable());
-            return new PollTally(count, 0);
-        }
-        List<PollRequest> requests = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            String rsn = rsns.get(i);
-            Duration age = newLower.contains(rsn.toLowerCase()) ? Duration.ZERO : maxAge;
-            requests.add(new PollRequest(rsn, priority, age, spread.multipliedBy(i).dividedBy(Math.max(1, count)), source));
-        }
-
-        List<PollOutcome> outcomes = pollCoordinator.awaitAll(pollCoordinator.submitAll(requests), POLL_WAIT.plus(spread));
-        int polled = 0;
-        int pollFailed = 0;
-        for (int i = 0; i < count; i++) {
-            PollOutcome outcome = i < outcomes.size() ? outcomes.get(i) : PollOutcome.failed(0);
-            if (outcome.hasFreshData()) polled++;
-            else pollFailed++;
-
-            String lower = rsns.get(i).toLowerCase();
-            if (newLower.contains(lower)) newMemberResultsOut.put(lower, outcome.resultOrUnavailable());
-        }
-        return new PollTally(polled, pollFailed);
+    private PollTally pollRsns(List<String> rsns, Set<String> newLower, Map<String, ProfileResult> newMemberResultsOut) {
+        for (String rsn : rsns) if (newLower.contains(rsn.toLowerCase())) newMemberResultsOut.put(rsn.toLowerCase(), new ProfileResult.Unavailable());
+        return new PollTally(rsns.size(), 0);
     }
 }

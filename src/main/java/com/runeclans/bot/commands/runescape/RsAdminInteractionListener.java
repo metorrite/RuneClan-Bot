@@ -20,9 +20,6 @@ import com.runeclans.bot.runescape.ProfileResult;
 import com.runeclans.bot.runescape.RsnRenameService;
 import com.runeclans.bot.runescape.RuneScapeSkillCatalog;
 import com.runeclans.bot.runescape.RuneScapeStatsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollPriority;
-import com.runeclans.bot.runescape.polling.PollRequest;
 import com.runeclans.bot.runescape.RuneScapeTestDataSeeder;
 import com.runeclans.bot.runescape.RuneScapeXpTable;
 import com.runeclans.bot.runescape.SkillValue;
@@ -97,7 +94,6 @@ public class RsAdminInteractionListener extends ListenerAdapter {
 
     private final PlayerLinkService linkService;
     private final RuneScapeStatsService statsService;
-    private final PollCoordinator pollCoordinator;
     private final AdminRoleFilter adminRoleFilter;
     private final RuneScapeTestDataSeeder testDataSeeder;
     private final MonthlyRecapService monthlyRecapService;
@@ -120,8 +116,7 @@ public class RsAdminInteractionListener extends ListenerAdapter {
                                        RsInteractionListener rsInteractionListener,
                                        ConfigureInteractionListener configureListener,
                                        WeeklyDigestService weeklyDigestService,
-                                       UnverifiedGuestService unverifiedGuestService, PollCoordinator pollCoordinator) {
-        this.pollCoordinator = pollCoordinator;
+                                       UnverifiedGuestService unverifiedGuestService) {
         this.unverifiedGuestService = unverifiedGuestService;
         this.linkService = linkService;
         this.statsService = statsService;
@@ -444,17 +439,8 @@ public class RsAdminInteractionListener extends ListenerAdapter {
     }
 
     private void doPollAll(ComponentInteraction event, Guild guild) {
-        // Deferred edit, not a plain edit — polling every linked player is a series of HTTP calls
-        // that will very likely take longer than Discord's 3-second ack window once there's more
-        // than a couple of players.
+        // The bot polls nobody: the hub keeps every tracked player current on its own cycle, so "update all" just redraws the panel.
         event.deferEdit().queue();
-        List<PlayerLink> links = linkService.getAllLinks(guild.getIdLong());
-        // A bulk refresh queues at the clan tier, not the interactive one: dozens of players must not jump ahead of the people
-        // pressing Update. Anyone polled in the last few minutes is already current and is skipped.
-        List<PollRequest> requests = links.stream()
-                .map(link -> PollRequest.background(link.rsn(), PollPriority.CLAN, java.time.Duration.ofMinutes(5), "admin poll all"))
-                .toList();
-        pollCoordinator.awaitAll(pollCoordinator.submitAll(requests), java.time.Duration.ofMinutes(30));
         event.getHook().editOriginalComponents(List.of(buildPanel(guild, event.getMember()))).useComponentsV2(true).queue();
     }
 
@@ -773,14 +759,13 @@ public class RsAdminInteractionListener extends ListenerAdapter {
     // --- Per-player actions ---
 
     /**
-     * A fresh look at one player for the lookup card: the bot's own poll, or, while the hub polls (T-851), the hub's Refresh on behalf of the admin
+     * A fresh look at one player for the lookup card: the hub's Refresh on behalf of the admin
      * who pressed plus the hub's newest snapshot (the refresh itself lands within a minute; press Update again to see it).
      */
-    /** What a lookup found, and (while the hub polls) what the hub said about refreshing it, for a toast under the card; null when nothing needs saying. */
+    /** What a lookup found, and what the hub said about refreshing it, for a toast under the card; null when nothing needs saying. */
     private record Lookup(ProfileResult result, String note) {}
 
     private Lookup lookup(String rsn, long pressedBy) {
-        if (!statsService.hubPolls()) return new Lookup(pollCoordinator.pollNow(rsn, "admin lookup").resultOrUnavailable(), null);
         com.runeclans.bot.runescape.stats.HubRefresh.Result viaHub = statsService.refreshViaHub(rsn, pressedBy);
         return new Lookup(statsService.latestAsResult(rsn), com.runeclans.bot.runescape.stats.HubRefresh.describe(viaHub, rsn));
     }

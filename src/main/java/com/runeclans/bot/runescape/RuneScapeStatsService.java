@@ -24,7 +24,6 @@ import java.util.Map;
 
 @BService
 public class RuneScapeStatsService {
-    private final RuneScapeApiClient apiClient;
     private final PlayerLinkRepository repository;
     private final TrackingEventClassifier classifier;
     private final TrackingEventRouter router;
@@ -37,12 +36,11 @@ public class RuneScapeStatsService {
     // method here works fine without it, so it's fine to be null briefly right after boot.
     private volatile JDA jda;
 
-    public RuneScapeStatsService(RuneScapeApiClient apiClient, PlayerLinkRepository repository,
+    public RuneScapeStatsService(PlayerLinkRepository repository,
                                   TrackingEventClassifier classifier, TrackingEventRouter router,
                                   ClanMemberRepository clanMemberRepository, StatsBackends backends, RuneClansHubClient hub) {
         this.backends = backends;
         this.hub = hub;
-        this.apiClient = apiClient;
         this.repository = repository;
         this.classifier = classifier;
         this.router = router;
@@ -52,47 +50,6 @@ public class RuneScapeStatsService {
     @BEventListener
     public void onJdaReady(InjectedJDAEvent event) {
         this.jda = event.getJda();
-    }
-
-    /**
-     * A player's data belongs to the player, not to a server: one poll, one stored snapshot, whichever server asked, and
-     * every server reads the same history.
-     * <p>
-     * Fetches the player's current profile and saves a snapshot of it — the per-skill breakdown and any new activities go
-     * into their own tables (see {@link PlayerLinkRepository}), not just the summary row — then announces what's new. The
-     * reason a failure happened is kept ({@link ProfileResult}) instead of collapsed to empty, and nothing is saved unless
-     * the profile was fetched. Always writes a fresh snapshot on a successful fetch, even if nothing about the player changed
-     * since last time — a database write here is cheap, and keeping "polled X ago" accurate and the code simple is worth
-     * more than skipping an unchanged write. (An earlier version of this method kept an in-memory copy of each player's
-     * last-known stats specifically to skip that write; that traded a negligible amount of database traffic for held-in-memory
-     * state, the wrong side of that tradeoff for this app — see the memory/cost report from 2026-09-26.)
-     * <p>
-     * This is one raw poll, with no pacing, no queueing and no memory of recent polls. Nothing but the poll coordinator
-     * calls it: everything else asks {@code PollCoordinator}, which decides when (and whether) the poll happens. A rate-limited
-     * ({@code HTTP 429}) fetch comes back as {@link ProfileResult.RateLimited} for the coordinator to retry.
-     */
-    public ProfileResult fetchAndStore(String rsn) {
-        // T-851: while the hub polls, the bot asks RuneMetrics for nobody and writes no snapshot (the hub's are read instead)
-        if (backends.hubPolls()) return new ProfileResult.Unavailable();
-        ProfileResult result = apiClient.fetchProfileResult(rsn);
-        if (result instanceof ProfileResult.Found(var profile)) {
-            long snapshotId = repository.saveSnapshot(rsn, profile, serializeSkills(profile.skills()));
-            repository.saveSkillSnapshot(snapshotId, profile.skills());
-            List<PlayerActivity> newActivities = repository.saveActivities(rsn, profile.activities());
-            dispatchNewActivities(rsn, newActivities);
-        }
-        return result;
-    }
-
-    /**
-     * Announces what a poll found to every server whose clan this player is currently in: the same player in two servers'
-     * clans (or the same clan tracked by two servers) is announced in each, from the one poll. No-ops if JDA isn't ready
-     * yet or nothing new classified, because the tracking feed is a bonus on top of polling, never a reason to fail it.
-     * Servers the player isn't a clan member of hear nothing: polling and the personal {@code /rs} profile work for
-     * anyone linked, but the tracking feed is a clan-wide announcement channel, not an "every RSN anyone has linked" one.
-     */
-    private void dispatchNewActivities(String rsn, List<PlayerActivity> newActivities) {
-        announce(rsn, newActivities);
     }
 
     /**
@@ -177,11 +134,6 @@ public class RuneScapeStatsService {
     }
 
     // ---------- the hub's polling (T-851) ----------
-
-    /** True while the hub polls RuneMetrics instead of the bot ({@link StatsBackends}): reads come from the hub and polls go through its Refresh. */
-    public boolean hubPolls() {
-        return backends.hubPolls();
-    }
 
     /** Asks the hub to poll {@code rsn} now on behalf of Discord user {@code discordId} (the person who pressed): what "Update now" does while the hub polls. */
     public HubRefresh.Result refreshViaHub(String rsn, long discordId) {

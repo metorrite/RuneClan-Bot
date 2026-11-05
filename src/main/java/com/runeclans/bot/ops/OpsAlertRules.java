@@ -17,7 +17,6 @@ import java.util.Map;
  * <ul>
  *     <li><b>health</b>: an {@code OPS_HEALTH_URLS} address failed {@link #HEALTH_FAILS} checks in a row (a slow deploy is not an alert);</li>
  *     <li><b>queue</b>: the oldest due Discord job has waited more than {@link #QUEUE_AGE_LIMIT};</li>
- *     <li><b>poll</b>: due RuneMetrics work has waited on an empty budget for {@link #POLL_EXHAUSTED_FOR} without a break;</li>
  *     <li><b>429</b>: Discord answered 429 at least {@code threshold} times within {@link #SPIKE_WINDOW}.</li>
  * </ul>
  * Not thread-safe: the ops lane calls it one sample at a time.
@@ -25,12 +24,11 @@ import java.util.Map;
 public final class OpsAlertRules {
     public static final int HEALTH_FAILS = 3;
     public static final Duration QUEUE_AGE_LIMIT = Duration.ofMinutes(5);
-    public static final Duration POLL_EXHAUSTED_FOR = Duration.ofMinutes(15);
     public static final Duration SPIKE_WINDOW = Duration.ofMinutes(5);
     public static final Duration REMIND_AFTER = Duration.ofHours(1);
 
     /** One minute's look. {@code health} maps each checked address to whether it answered 2xx; a negative number means "couldn't read". */
-    public record Sample(Instant at, Map<String, Boolean> health, double outboxOldestSeconds, long outboxDue, boolean pollExhausted, long discord429Total) {}
+    public record Sample(Instant at, Map<String, Boolean> health, double outboxOldestSeconds, long outboxDue, long discord429Total) {}
 
     /** A line for the ops channel. */
     public record Alert(String rule, boolean recovered, String text) {}
@@ -41,7 +39,6 @@ public final class OpsAlertRules {
     private final Map<String, Integer> healthFails = new HashMap<>();
     private final Map<String, Instant> firing = new LinkedHashMap<>();
     private final Deque<Count> counts429 = new ArrayDeque<>();
-    private Instant pollEmptySince;
 
     public OpsAlertRules(int spikeThreshold) {
         this.spikeThreshold = Math.max(1, spikeThreshold);
@@ -63,14 +60,6 @@ public final class OpsAlertRules {
                     "Discord job queue is behind: " + s.outboxDue() + " due, the oldest waiting " + minutes(s.outboxOldestSeconds()) + ".",
                     "Discord job queue caught up.");
         }
-
-        if (!s.pollExhausted()) pollEmptySince = null;
-        else if (pollEmptySince == null) pollEmptySince = s.at();
-        boolean pollLong = pollEmptySince != null && !Duration.between(pollEmptySince, s.at()).minus(POLL_EXHAUSTED_FOR).isNegative();
-        rule(out, s.at(), "poll", pollLong,
-                "RuneMetrics poll budget used up for " + (pollEmptySince == null ? 0 : Duration.between(pollEmptySince, s.at()).toMinutes())
-                        + " minutes: due updates are waiting. Raise RUNESCAPE_POLL_REQUESTS_PER_MINUTE only if RuneMetrics allows it, or lengthen the poll windows.",
-                "RuneMetrics poll budget has room again.");
 
         if (s.discord429Total() >= 0) {
             counts429.addLast(new Count(s.at(), s.discord429Total()));
