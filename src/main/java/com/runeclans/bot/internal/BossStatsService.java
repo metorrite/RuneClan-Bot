@@ -76,10 +76,11 @@ public class BossStatsService {
         List<ActivityRow> dropRows = new ArrayList<>();
         for (ActivityRow row : stats.activitiesBetween(guildId, null, period.from(), period.to())) {
             if (hidden.contains(row.rsn().toLowerCase(Locale.ROOT))) continue;
-            var boss = ActivityKinds.bossOf(row.text());
+            var kind = ActivityKinds.kindOf(row.type(), row.text());
+            var boss = kind == ActivityKinds.Kind.BOSS ? ActivityKinds.bossOf(row.text()) : java.util.Optional.<String>empty();
             if (boss.isPresent()) {
                 kills.add(new Kill(row.rsn(), bossRef(boss.get()), ActivityKinds.killCount(row.text()), row.recordedAt()));
-            } else if (ActivityKinds.dropOf(row.text()).isPresent()) {
+            } else if (kind == ActivityKinds.Kind.DROP) {
                 dropRows.add(row);
             }
         }

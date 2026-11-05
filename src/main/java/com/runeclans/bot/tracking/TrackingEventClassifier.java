@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -55,6 +56,11 @@ public class TrackingEventClassifier {
             "dungeoneering tokens", "charm sprites", "Livid Farm", "court summons", "Golden Cannon",
             "Royale Cannon", "Master Student", "Fight Kiln", "chimp ices", "Dagannoth Kings' Rex",
             "Duel Arena");
+
+    /** The hub's adventure-log event codes the rules above are keyed on. */
+    private static final Set<String> LEVEL_UP_CODES = Set.of("rs_plog_levelup_count", "rs_plog_levelup");
+    private static final Set<String> KILL_CODES = Set.of("rs_plog_npc_defeat", "rs_plog_npc_kill_count", "rs_plog_npc_kill");
+    private static final Set<String> FOUND_CODES = Set.of("rs_plog_item_drop", "rs_plog_item_found", "rs_plog_item_found_nowhere");
 
     private final SkillEmojiCatalog skillEmojiCatalog;
     private final TrackingIconCatalog trackingIconCatalog;
@@ -95,28 +101,33 @@ public class TrackingEventClassifier {
 
     private Optional<ClassifiedEntry> classifyActivity(String rsn, PlayerActivity activity, int count) {
         String text = activity.text();
+        String type = activity.type();
+        // The hub's event code sorts the line; the text only decides inside one code. No code, no entry.
+        if (type == null || text == null) return Optional.empty();
         String bold = "**" + rsn + "**";
 
-        if (text.startsWith("Capped at my Clan Citadel")) {
-            return entry(TrackingGroup.CITADEL_ACTIVITY, null, bold + " capped at the Clan Citadel.");
-        }
-        if (text.startsWith("Visited my Clan Citadel")) {
-            return entry(TrackingGroup.CITADEL_ACTIVITY, null, bold + " visited the Clan Citadel.");
-        }
-        if (text.startsWith("Maintained Clan Fealty")) {
-            return entry(TrackingGroup.CITADEL_ACTIVITY, null, bold + " " + lowerFirst(text));
+        if ("rs_plog_special_event".equals(type)) {
+            if (text.startsWith("Capped at my Clan Citadel")) {
+                return entry(TrackingGroup.CITADEL_ACTIVITY, null, bold + " capped at the Clan Citadel.");
+            }
+            if (text.startsWith("Visited my Clan Citadel")) {
+                return entry(TrackingGroup.CITADEL_ACTIVITY, null, bold + " visited the Clan Citadel.");
+            }
+            if (text.startsWith("Maintained Clan Fealty")) {
+                return entry(TrackingGroup.CITADEL_ACTIVITY, null, bold + " " + lowerFirst(text));
+            }
         }
 
         Matcher quest = QUEST_COMPLETE.matcher(text);
-        if (quest.matches()) {
+        if ("rs_plog_quest".equals(type) && quest.matches()) {
             return entry(TrackingGroup.QUESTS, trackingIconCatalog.mentionForCategory("quest"),
                     bold + " completed the quest **" + quest.group(1).trim() + "**.");
         }
-        if (text.contains("Quest points obtained") || text.contains("Quest Points obtained")) {
+        if ("rs_plog_qp_milestone".equals(type)) {
             return entry(TrackingGroup.QUESTS, trackingIconCatalog.mentionForCategory("quest"), bold + " " + lowerFirst(text));
         }
 
-        Optional<DropItemCatalog.DropItem> drop = DropItemCatalog.findIn(text);
+        Optional<DropItemCatalog.DropItem> drop = FOUND_CODES.contains(type) ? DropItemCatalog.findIn(text) : Optional.empty();
         if (drop.isPresent()) {
             DropItemCatalog.DropItem item = drop.get();
             String message = count == 1
@@ -126,28 +137,28 @@ public class TrackingEventClassifier {
         }
 
         Matcher levelUp = SKILL_LEVEL_UP.matcher(text);
-        if (levelUp.matches()) {
+        if (LEVEL_UP_CODES.contains(type) && levelUp.matches()) {
             String skillName = levelUp.group(1).trim();
             return entry(TrackingGroup.SKILL_MILESTONES, skillEmojiMention(skillName),
                     bold + " levelled up **" + skillName + "**.");
         }
         Matcher xpMilestone = XP_MILESTONE.matcher(text);
-        if (xpMilestone.matches()) {
+        if ("rs_plog_xp_milestone".equals(type) && xpMilestone.matches()) {
             long xp = Long.parseLong(xpMilestone.group(1).replace(",", ""));
             String skillName = xpMilestone.group(2).trim();
             return entry(TrackingGroup.SKILL_MILESTONES, skillEmojiMention(skillName),
                     bold + " reached " + XpText.amount(xp) + " XP in " + skillName + ".");
         }
-        if (text.contains("total levels gained") || text.startsWith("Levelled all skills over")) {
+        if ("rs_plog_levelup_total_milestone".equals(type) || "rs_plog_levelup_all_milestone".equals(type)) {
             return entry(TrackingGroup.SKILL_MILESTONES, null, bold + " " + lowerFirst(text));
         }
 
         Matcher championWin = CHAMPION_WIN.matcher(text);
-        if (championWin.find()) {
+        if ("rs_plog_champions_challenge".equals(type) && championWin.find()) {
             return entry(TrackingGroup.BOSS_KILLS, null,
                     bold + " won a challenge against the **" + championWin.group(1).trim() + " Champion**.");
         }
-        if (text.startsWith("I killed") || text.startsWith("I defeated")) {
+        if (KILL_CODES.contains(type) && (text.startsWith("I killed") || text.startsWith("I defeated"))) {
             for (BossCatalog.Boss boss : BossCatalog.all()) {
                 if (text.contains(boss.name())) {
                     String message = count == 1
@@ -177,7 +188,7 @@ public class TrackingEventClassifier {
             return entry(TrackingGroup.PETS, trackingIconCatalog.mentionForDefaultBoss(), bold + " " + lowerFirst(text));
         }
 
-        if (text.toLowerCase(Locale.ROOT).contains("treasure trail completed")) {
+        if ("rs_plog_finished_trail".equals(type)) {
             return entry(TrackingGroup.CLUE_SCROLLS, trackingIconCatalog.mentionForCategory("clue"), bold + " " + lowerFirst(text));
         }
 

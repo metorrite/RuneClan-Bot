@@ -6,14 +6,14 @@ import com.runeclans.bot.tracking.DropItemCatalog;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Sorts a RuneMetrics adventure-log line into a kind the website can icon and filter on, and picks the
- * boss/kill count or drop out of the lines that carry one. Pure text matching over the same phrasing the
- * tracking feed already recognises ({@link com.runeclans.bot.tracking.TrackingEventClassifier}); anything it
- * doesn't recognise is {@link Kind#OTHER}, which the site's feed simply leaves out.
+ * boss/kill count or drop out of the lines that carry one. The hub's event code ({@code type}) picks the kind; the text only reads names and counts out of a line.
+ * Anything it doesn't recognise is {@link Kind#OTHER}, which the site's feed simply leaves out.
  */
 final class ActivityKinds {
     private ActivityKinds() {}
@@ -31,18 +31,32 @@ final class ActivityKinds {
     private static final List<BossCatalog.Boss> BOSSES_BY_LENGTH = BossCatalog.all().stream()
             .sorted(Comparator.comparingInt((BossCatalog.Boss b) -> b.name().length()).reversed()).toList();
 
-    static Kind kindOf(String text) {
-        if (text.startsWith("Capped at my Clan Citadel")) return Kind.CITADEL_CAP;
-        if (text.startsWith("Visited my Clan Citadel")) return Kind.CITADEL_VISIT;
-        if (QUEST.matcher(text).matches()) return Kind.QUEST;
-        if (LEVEL_UP.matcher(text).matches()) return Kind.LEVEL_UP;
-        if (XP_MILESTONE.matcher(text).matches()) return Kind.XP_MILESTONE;
-        if (CHALLENGE.matcher(text).find()) return Kind.CHALLENGE;
-        if (PET.matcher(text).matches() || text.contains("I adopted TzRek-Jad") || text.toLowerCase().contains("effigy pet")) return Kind.PET;
-        if (text.toLowerCase().contains("treasure trail completed")) return Kind.CLUE;
-        if (bossOf(text).isPresent()) return Kind.BOSS;
-        if (dropOf(text).isPresent()) return Kind.DROP;
+    /** The hub's event codes (the adventure log's own {@code type}); the code decides the kind, the text only picks within one code. */
+    private static final Set<String> LEVEL_UP_CODES = Set.of("rs_plog_levelup_count", "rs_plog_levelup");
+    private static final Set<String> KILL_CODES = Set.of("rs_plog_npc_defeat", "rs_plog_npc_kill_count", "rs_plog_npc_kill");
+    private static final Set<String> FOUND_CODES = Set.of("rs_plog_item_drop", "rs_plog_item_found", "rs_plog_item_found_nowhere");
+    private static final Set<String> PET_CODES = Set.of("rs_plog_item_found", "rs_plog_item_found_nowhere", "rs_plog_item_drop", "rs_plog_special_event");
+
+    /** The kind of a line by its event code; a line with no code ({@code null}) or a code we don't sort is {@link Kind#OTHER}. */
+    static Kind kindOf(String type, String text) {
+        if (type == null || text == null) return Kind.OTHER;
+        if ("rs_plog_quest".equals(type)) return QUEST.matcher(text).matches() ? Kind.QUEST : Kind.OTHER;
+        if (LEVEL_UP_CODES.contains(type)) return Kind.LEVEL_UP;
+        if ("rs_plog_xp_milestone".equals(type)) return XP_MILESTONE.matcher(text).matches() ? Kind.XP_MILESTONE : Kind.OTHER;
+        if ("rs_plog_champions_challenge".equals(type)) return CHALLENGE.matcher(text).find() ? Kind.CHALLENGE : Kind.OTHER;
+        if ("rs_plog_finished_trail".equals(type)) return Kind.CLUE;
+        if ("rs_plog_special_event".equals(type)) {
+            if (text.startsWith("Capped at my Clan Citadel")) return Kind.CITADEL_CAP;
+            if (text.startsWith("Visited my Clan Citadel")) return Kind.CITADEL_VISIT;
+        }
+        if (KILL_CODES.contains(type)) return bossOf(text).isPresent() ? Kind.BOSS : Kind.OTHER;
+        if (PET_CODES.contains(type) && isPet(text)) return Kind.PET;
+        if (FOUND_CODES.contains(type) && dropOf(text).isPresent()) return Kind.DROP;
         return Kind.OTHER;
+    }
+
+    private static boolean isPet(String text) {
+        return PET.matcher(text).matches() || text.contains("I adopted TzRek-Jad") || text.toLowerCase().contains("effigy pet");
     }
 
     /**

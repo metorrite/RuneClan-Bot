@@ -77,7 +77,7 @@ public class HubActivityPosts implements HubFeedListener {
             String text = data.getString("text", null);
             if (rsn == null || rsn.isBlank() || text == null) return;
             if (data.hasKey("id") && !data.isNull("id") && !seen.add(data.getLong("id"))) return;
-            pending.computeIfAbsent(rsn, k -> new ArrayList<>()).add(new PlayerActivity(data.getString("date", ""), text, data.getString("details", "")));
+            pending.computeIfAbsent(rsn, k -> new ArrayList<>()).add(new PlayerActivity(data.getString("date", ""), text, data.getString("details", ""), data.getString("type", null)));
         }
 
         @Override

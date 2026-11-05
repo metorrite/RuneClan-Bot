@@ -98,25 +98,29 @@ public final class HubStatsBackend implements StatsBackend {
     }
 
     /** One adventure-log line as the hub lists it; {@code occurredAt} null when the source's date couldn't be read. */
-    record Line(String rsn, String text, String details, String date, Instant occurredAt, Instant recordedAt) {
+    record Line(String rsn, String text, String details, String date, Instant occurredAt, Instant recordedAt, String type) {
         Instant happened() {
             return occurredAt != null ? occurredAt : recordedAt;
         }
 
         boolean capped() {
-            return text != null && text.startsWith(CAPPED);
+            return special() && text != null && text.startsWith(CAPPED);
+        }
+
+        private boolean special() {
+            return "rs_plog_special_event".equals(type);
         }
 
         boolean citadel() {
-            return text != null && (text.startsWith(CAPPED) || text.startsWith(VISITED));
+            return special() && text != null && (text.startsWith(CAPPED) || text.startsWith(VISITED));
         }
 
         PlayerActivity activity() {
-            return new PlayerActivity(date, text, details);
+            return new PlayerActivity(date, text, details, type);
         }
 
         SiteStatsRepository.ActivityRow row(String memberName) {
-            return new SiteStatsRepository.ActivityRow(memberName, text, details, date, recordedAt.atOffset(ZoneOffset.UTC));
+            return new SiteStatsRepository.ActivityRow(memberName, text, details, date, recordedAt.atOffset(ZoneOffset.UTC), type);
         }
     }
 
@@ -780,7 +784,7 @@ public final class HubStatsBackend implements StatsBackend {
             DataObject a = arr.getObject(i);
             Instant recorded = instant(a.getString("recordedAt", null));
             if (recorded == null) continue;
-            out.add(new Line(a.getString("rsn", rsn), a.getString("text", null), a.getString("details", null), a.getString("date", null), instant(a.getString("occurredAt", null)), recorded));
+            out.add(new Line(a.getString("rsn", rsn), a.getString("text", null), a.getString("details", null), a.getString("date", null), instant(a.getString("occurredAt", null)), recorded, a.getString("type", null)));
         }
         out.sort(Comparator.comparing(Line::recordedAt));
         return out;

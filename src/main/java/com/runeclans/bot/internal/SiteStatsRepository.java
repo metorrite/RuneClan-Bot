@@ -88,7 +88,12 @@ public class SiteStatsRepository {
 
     public record Giveaway(long amount, String description, OffsetDateTime at) {}
 
-    public record ActivityRow(String rsn, String text, String details, String date, OffsetDateTime recordedAt) {}
+    public record ActivityRow(String rsn, String text, String details, String date, OffsetDateTime recordedAt, String type) {
+        /** A row from the bot's own tables, which carry no event code. */
+        public ActivityRow(String rsn, String text, String details, String date, OffsetDateTime recordedAt) {
+            this(rsn, text, details, date, recordedAt, null);
+        }
+    }
 
     public record BigDay(String rsn, LocalDate date, long xp) {}
 
@@ -336,13 +341,13 @@ public class SiteStatsRepository {
         StatsBackend hub = stats.hub();
         if (hub != null) return hub.activitiesBetween(guildId, rsn, from, to);
         return query("activities in window", """
-                SELECT m.rsn, a.activity_text, a.activity_details, a.activity_date, a.recorded_at
+                SELECT m.rsn, a.activity_text, a.activity_details, a.activity_date, a.recorded_at, a.activity_type
                 FROM younglings.player_activity a
                 JOIN younglings.clan_member m ON LOWER(m.rsn) = LOWER(a.rsn) AND m.active
                 WHERE m.guild_id = ? AND (?::text IS NULL OR LOWER(a.rsn) = LOWER(?)) AND a.recorded_at >= ? AND a.recorded_at < ?
                 ORDER BY a.recorded_at
                 """, rs -> new ActivityRow(rs.getString("rsn"), rs.getString("activity_text"), rs.getString("activity_details"),
-                rs.getString("activity_date"), rs.getObject("recorded_at", OffsetDateTime.class)), guildId, rsn, rsn, from, to);
+                rs.getString("activity_date"), rs.getObject("recorded_at", OffsetDateTime.class), rs.getString("activity_type")), guildId, rsn, rsn, from, to);
     }
 
     /** Clan points awarded inside the window, per member (or just one). */
@@ -394,12 +399,12 @@ public class SiteStatsRepository {
         StatsBackend hub = stats.hub();
         if (hub != null) return hub.recentActivities(guildId, limit);
         return query("recent activities", """
-                SELECT m.rsn, a.activity_text, a.activity_details, a.activity_date, a.recorded_at
+                SELECT m.rsn, a.activity_text, a.activity_details, a.activity_date, a.recorded_at, a.activity_type
                 FROM younglings.player_activity a
                 JOIN younglings.clan_member m ON LOWER(m.rsn) = LOWER(a.rsn) AND m.active
                 WHERE m.guild_id = ? ORDER BY a.recorded_at DESC, a.id DESC LIMIT ?
                 """, rs -> new ActivityRow(rs.getString("rsn"), rs.getString("activity_text"), rs.getString("activity_details"),
-                rs.getString("activity_date"), rs.getObject("recorded_at", OffsetDateTime.class)), guildId, limit);
+                rs.getString("activity_date"), rs.getObject("recorded_at", OffsetDateTime.class), rs.getString("activity_type")), guildId, limit);
     }
 
     /** Every active member's activities whose text starts with {@code prefix} — for the PvM and drop tallies. */
@@ -407,12 +412,12 @@ public class SiteStatsRepository {
         StatsBackend hub = stats.hub();
         if (hub != null) return hub.activitiesStartingWith(guildId, prefix);
         return query("activities by prefix", """
-                SELECT m.rsn, a.activity_text, a.activity_details, a.activity_date, a.recorded_at
+                SELECT m.rsn, a.activity_text, a.activity_details, a.activity_date, a.recorded_at, a.activity_type
                 FROM younglings.player_activity a
                 JOIN younglings.clan_member m ON LOWER(m.rsn) = LOWER(a.rsn) AND m.active
                 WHERE m.guild_id = ? AND a.activity_text LIKE ? ORDER BY a.recorded_at DESC, a.id DESC
                 """, rs -> new ActivityRow(rs.getString("rsn"), rs.getString("activity_text"), rs.getString("activity_details"),
-                rs.getString("activity_date"), rs.getObject("recorded_at", OffsetDateTime.class)), guildId, prefix + "%");
+                rs.getString("activity_date"), rs.getObject("recorded_at", OffsetDateTime.class), rs.getString("activity_type")), guildId, prefix + "%");
     }
 
     /** The biggest single-day XP gains anyone has had, from the daily snapshot history. */

@@ -840,7 +840,7 @@ public class SiteApi {
         // one kind (pets for the rare drops wall) is rarer than the rest, so look further back for it
         for (var row : stats.recentActivities(guildId, wanted == null ? limit * 6 : Math.max(limit * 6, KIND_SCAN))) {
             if (!shown(hiddenLogs, row.rsn())) continue;
-            ActivityKinds.Kind kind = ActivityKinds.kindOf(row.text());
+            ActivityKinds.Kind kind = ActivityKinds.kindOf(row.type(), row.text());
             if (kind == ActivityKinds.Kind.OTHER || kind == ActivityKinds.Kind.CITADEL_VISIT) continue;
             if (wanted != null && kind != wanted) continue;
             items.add(DataObject.empty().put("rsn", row.rsn()).put("kind", kind.name()).put("text", row.text()).put("details", row.details())
@@ -1066,6 +1066,7 @@ public class SiteApi {
         for (String prefix : List.of("I killed", "I defeated")) {
             for (var row : stats.activitiesStartingWith(guildId, prefix)) {
                 if (!shown(hiddenLogs, row.rsn())) continue;
+                if (ActivityKinds.kindOf(row.type(), row.text()) != ActivityKinds.Kind.BOSS) continue;
                 var boss = ActivityKinds.bossOf(row.text());
                 if (boss.isEmpty()) continue;
                 int kills = ActivityKinds.killCount(row.text());
@@ -1097,6 +1098,7 @@ public class SiteApi {
         Set<String> hiddenLogs = profiles.hiddenRsns(guildId, false);
         for (var row : stats.activitiesStartingWith(guildId, "I found")) {
             if (!shown(hiddenLogs, row.rsn())) continue;
+            if (ActivityKinds.kindOf(row.type(), row.text()) != ActivityKinds.Kind.DROP) continue;
             var item = ActivityKinds.dropOf(row.text());
             if (item.isEmpty()) continue;
             tally.merge(item.get(), 1, Integer::sum);
