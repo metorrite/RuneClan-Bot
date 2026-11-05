@@ -926,7 +926,7 @@ public class PlayerLinkRepository {
         StatsBackend hub = stats.hub();
         if (hub != null) return hub.activitiesSince(rsn, since);
         String sql = """
-                SELECT activity_date, activity_text, activity_details
+                SELECT activity_date, activity_text, activity_details, activity_type
                 FROM younglings.player_activity
                 WHERE LOWER(rsn) = LOWER(?) AND recorded_at >= ?
                 ORDER BY recorded_at ASC
@@ -943,7 +943,7 @@ public class PlayerLinkRepository {
             try (ResultSet rs = statement.executeQuery()) {
                 while (rs.next()) {
                     results.add(new PlayerActivity(rs.getString("activity_date"),
-                            rs.getString("activity_text"), rs.getString("activity_details")));
+                            rs.getString("activity_text"), rs.getString("activity_details"), rs.getString("activity_type")));
                 }
             }
             return results;
@@ -1131,8 +1131,8 @@ public class PlayerLinkRepository {
         if (activities.isEmpty()) return List.of();
 
         String sql = """
-                INSERT INTO younglings.player_activity (rsn, activity_date, activity_text, activity_details, occurred_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO younglings.player_activity (rsn, activity_date, activity_text, activity_details, occurred_at, activity_type)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (LOWER(rsn), activity_date, activity_text) DO NOTHING
                 """;
 
@@ -1147,6 +1147,7 @@ public class PlayerLinkRepository {
                 java.time.Instant occurred = RuneMetricsDates.toInstant(activity.date());
                 if (occurred == null) statement.setNull(5, java.sql.Types.TIMESTAMP_WITH_TIMEZONE);
                 else statement.setTimestamp(5, java.sql.Timestamp.from(occurred));
+                statement.setString(6, activity.type());
                 statement.addBatch();
             }
             int[] results = statement.executeBatch();
@@ -1170,7 +1171,7 @@ public class PlayerLinkRepository {
         StatsBackend hub = stats.hub();
         if (hub != null) return hub.recentActivities(rsn, limit);
         String sql = """
-                SELECT activity_date, activity_text, activity_details
+                SELECT activity_date, activity_text, activity_details, activity_type
                 FROM younglings.player_activity
                 WHERE LOWER(rsn) = LOWER(?)
                 ORDER BY recorded_at DESC, id ASC
@@ -1188,7 +1189,7 @@ public class PlayerLinkRepository {
             try (ResultSet rs = statement.executeQuery()) {
                 while (rs.next()) {
                     results.add(new PlayerActivity(rs.getString("activity_date"),
-                            rs.getString("activity_text"), rs.getString("activity_details")));
+                            rs.getString("activity_text"), rs.getString("activity_details"), rs.getString("activity_type")));
                 }
             }
             return results;

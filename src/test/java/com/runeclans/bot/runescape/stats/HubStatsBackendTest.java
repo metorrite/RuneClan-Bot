@@ -67,7 +67,16 @@ class HubStatsBackendTest {
     }
 
     private static DataObject line(long id, String rsn, String text, Instant occurred, Instant recorded) {
-        return DataObject.empty().put("id", id).put("rsn", rsn).put("date", "04-Nov-2026 10:00").put("text", text).put("details", "d").put("occurredAt", occurred.toString()).put("recordedAt", recorded.toString());
+        return DataObject.empty().put("id", id).put("rsn", rsn).put("date", "04-Nov-2026 10:00").put("text", text).put("details", "d").put("occurredAt", occurred.toString()).put("recordedAt", recorded.toString()).put("type", typeOf(text));
+    }
+
+    /** The event code the hub puts on a line of this text. */
+    private static String typeOf(String text) {
+        if (text.startsWith("Capped") || text.startsWith("Visited")) return "rs_plog_special_event";
+        if (text.startsWith("Levelled up")) return "rs_plog_levelup_count";
+        if (text.startsWith("Quest complete")) return "rs_plog_quest";
+        if (text.startsWith("I killed")) return "rs_plog_npc_kill_count";
+        return "rs_plog_item_drop";
     }
 
     private static Answer ok(DataObject json) {

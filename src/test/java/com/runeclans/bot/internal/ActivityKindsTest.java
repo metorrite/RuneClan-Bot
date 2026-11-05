@@ -8,14 +8,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ActivityKindsTest {
     @Test
-    void recognisesTheCommonLines() {
-        assertEquals(Kind.LEVEL_UP, ActivityKinds.kindOf("Levelled up Cooking."));
-        assertEquals(Kind.XP_MILESTONE, ActivityKinds.kindOf("200000000XP in Necromancy"));
-        assertEquals(Kind.QUEST, ActivityKinds.kindOf("Quest complete: Heralds of Crimson"));
-        assertEquals(Kind.CITADEL_CAP, ActivityKinds.kindOf("Capped at my Clan Citadel."));
-        assertEquals(Kind.CITADEL_VISIT, ActivityKinds.kindOf("Visited my Clan Citadel."));
-        assertEquals(Kind.BOSS, ActivityKinds.kindOf("I killed 12 Amascuts."));
-        assertEquals(Kind.OTHER, ActivityKinds.kindOf("Maintained Clan Fealty 5"));
+    void theEventCodeSortsTheLine() {
+        assertEquals(Kind.LEVEL_UP, ActivityKinds.kindOf("rs_plog_levelup_count", "Levelled up Cooking."));
+        assertEquals(Kind.XP_MILESTONE, ActivityKinds.kindOf("rs_plog_xp_milestone", "200000000XP in Necromancy"));
+        assertEquals(Kind.QUEST, ActivityKinds.kindOf("rs_plog_quest", "Quest complete: Heralds of Crimson"));
+        assertEquals(Kind.CITADEL_CAP, ActivityKinds.kindOf("rs_plog_special_event", "Capped at my Clan Citadel."));
+        assertEquals(Kind.CITADEL_VISIT, ActivityKinds.kindOf("rs_plog_special_event", "Visited my Clan Citadel."));
+        assertEquals(Kind.BOSS, ActivityKinds.kindOf("rs_plog_npc_kill_count", "I killed 12 Amascuts."));
+        assertEquals(Kind.PET, ActivityKinds.kindOf("rs_plog_item_found", "I found Shrimpy, the Fishing pet."));
+        assertEquals(Kind.CLUE, ActivityKinds.kindOf("rs_plog_finished_trail", "Medium treasure trail completed."));
+        assertEquals(Kind.OTHER, ActivityKinds.kindOf("rs_plog_special_event", "Maintained Clan Fealty 5"));
+    }
+
+    @Test
+    void textAloneNeverSortsALine() {
+        assertEquals(Kind.OTHER, ActivityKinds.kindOf(null, "Levelled up Cooking."));
+        assertEquals(Kind.OTHER, ActivityKinds.kindOf(null, "Capped at my Clan Citadel."));
+        // a capped line under another code is not a cap
+        assertEquals(Kind.OTHER, ActivityKinds.kindOf("rs_plog_quest", "Capped at my Clan Citadel."));
+        assertEquals(Kind.OTHER, ActivityKinds.kindOf("rs_plog_unknown", "Levelled up Cooking."));
     }
 
     @Test

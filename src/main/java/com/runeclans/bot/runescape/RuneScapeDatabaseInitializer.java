@@ -497,6 +497,11 @@ public class RuneScapeDatabaseInitializer {
                 ALTER TABLE younglings.player_activity ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ NULL;
                 """,
 
+                // The log's own event code (rs_plog_*), which sorts a line; null for lines the bot's old polls saved without one.
+                """
+                ALTER TABLE younglings.player_activity ADD COLUMN IF NOT EXISTS activity_type TEXT NULL;
+                """,
+
                 """
                 CREATE INDEX IF NOT EXISTS player_activity_occurred_idx
                 ON younglings.player_activity (occurred_at);

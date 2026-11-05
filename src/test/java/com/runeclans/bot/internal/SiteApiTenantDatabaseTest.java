@@ -156,9 +156,9 @@ class SiteApiTenantDatabaseTest {
         long after = links.saveSnapshotAt(rsn, now.minusMinutes(5), profile(rsn, 200_000_000), "[]");
         links.saveSkillSnapshot(after, List.of(new SkillValue(0, 99, 200_000_000, 4)));
         String date = RUNEMETRICS.format(now.minusHours(2).atZoneSameInstant(ZoneId.of("Europe/London")));
-        links.saveActivities(rsn, List.of(new PlayerActivity(date, "Capped at my Clan Citadel.", "x"), new PlayerActivity(date, "I killed 5 General Graardors.", "x"),
-                new PlayerActivity(date, "I found a Bandos hilt.", "x"), new PlayerActivity(date, "Levelled up Attack.", "x"),
-                new PlayerActivity(date, "Quest complete: Desperate Measures", "x"), new PlayerActivity(date, "I found Shrimpy, the Fishing pet.", "x")));
+        links.saveActivities(rsn, List.of(new PlayerActivity(date, "Capped at my Clan Citadel.", "x", "rs_plog_special_event"), new PlayerActivity(date, "I killed 5 General Graardors.", "x", "rs_plog_npc_kill_count"),
+                new PlayerActivity(date, "I found a Bandos hilt.", "x", "rs_plog_item_drop"), new PlayerActivity(date, "Levelled up Attack.", "x", "rs_plog_levelup_count"),
+                new PlayerActivity(date, "Quest complete: Desperate Measures", "x", "rs_plog_quest"), new PlayerActivity(date, "I found Shrimpy, the Fishing pet.", "x", "rs_plog_item_found")));
         sql("INSERT INTO younglings.clan_roster_event (guild_id, rsn, event_type, event_at) VALUES (?, ?, 'JOIN', NOW() - INTERVAL '3 days')", guildId, rsn);
         sql("INSERT INTO younglings.coffer_donation (guild_id, donor_name, amount, submitted_by_discord_id) VALUES (?, ?, 1000000, ?)", guildId, rsn, userId);
     }
