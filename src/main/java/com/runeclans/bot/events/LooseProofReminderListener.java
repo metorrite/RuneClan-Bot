@@ -4,6 +4,7 @@ import com.runeclans.bot.BotListener;
 import com.runeclans.bot.config.PrivilegedIntents;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.highlight.HighlightService;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.permission.AdminRoleFilter;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.Permission;
@@ -31,11 +32,11 @@ public class LooseProofReminderListener extends ListenerAdapter implements BotLi
     static final long EVERY_MILLIS = TimeUnit.HOURS.toMillis(1);
 
     private final EventSubmissions submissions;
-    private final EventService service;
+    private final HubEvents service;
     private final AdminRoleFilter adminRoleFilter;
     private final Map<String, Long> reminded = new ConcurrentHashMap<>();
 
-    public LooseProofReminderListener(EventSubmissions submissions, EventService service, AdminRoleFilter adminRoleFilter) {
+    public LooseProofReminderListener(EventSubmissions submissions, HubEvents service, AdminRoleFilter adminRoleFilter) {
         this.submissions = submissions;
         this.service = service;
         this.adminRoleFilter = adminRoleFilter;

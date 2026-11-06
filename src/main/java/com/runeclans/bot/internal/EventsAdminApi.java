@@ -264,11 +264,11 @@ public class EventsAdminApi implements AdminRouteExtension {
         if (parts.length == 4 && what.equals("signup") && (parts[3].equals("close") || parts[3].equals("reopen"))) {
             AdminRouteExtension.requireMethod(method, "POST");
             if (parts[3].equals("reopen")) {
-                signups.reopenSignups(guild, id);
+                signups.reopenSignups(guild, id, com.runeclans.bot.hubevents.HubEventClient.Actor.of(actor.getIdLong(), guild.getIdLong(), true));
                 log.info("Dashboard: {} reopened the signups of event {}", actor.getId(), id);
                 return detail(guild, id);
             }
-            EventSignups.Closed closed = signups.closeSignups(guild, id, actor.getIdLong());
+            EventSignups.Closed closed = signups.closeSignups(guild, id, com.runeclans.bot.hubevents.HubEventClient.Actor.of(actor.getIdLong(), guild.getIdLong(), true));
             log.info("Dashboard: {} closed the signups of event {} ({} added by the last sync, {} on the roster)", actor.getId(), id, closed.added(), closed.active());
             DataArray refused = DataArray.empty();
             closed.refused().forEach(r -> refused.add(DataObject.empty().put("userId", Long.toString(r.userId())).put("userName", name(guild, r.userId())).put("reason", r.reason())));
@@ -427,7 +427,15 @@ public class EventsAdminApi implements AdminRouteExtension {
         EventSettings settings = EventSettings.parse(eventJson(e).getObject("config"));
         // for an event scored by team: how strong each player looks, and whether they may be put on a team right now
         boolean teamEvent = e.scoringMode() == ScoringMode.TEAM;
-        List<TeamBuilder.Player> builderPlayers = teamEvent ? eventTeams.players(guild.getIdLong(), e) : List.of();
+        List<TeamBuilder.Player> builderPlayers = List.of();
+        if (teamEvent) {
+            try {
+                builderPlayers = eventTeams.players(guild.getIdLong(), e);
+            } catch (EventProblem problem) {
+                // T-934: the team builder's players come from RuneClans now; an event the hub doesn't know has none to show here
+                log.debug("No team builder players for event {}: {}", id, problem.getMessage());
+            }
+        }
         Map<Long, Integer> suggestedRatings = TeamBuilder.suggestedRatings(builderPlayers);
         Map<Long, Integer> effectiveRatings = TeamBuilder.effectiveRatings(builderPlayers);
         Map<Long, TeamBuilder.Strength> strengths = new java.util.HashMap<>();

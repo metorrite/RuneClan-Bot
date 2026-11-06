@@ -87,23 +87,31 @@ class EventsAdminApiTest {
         EventSignups signups = Mockito.mock(EventSignups.class);
         Mockito.when(signups.stateOf(ArgumentMatchers.any())).thenReturn(new EventSignups.State(false, false, 0, false));
         // closing and reopening do the engine's part here; pausing the Discord signup is the mocked part
-        Mockito.when(signups.closeSignups(ArgumentMatchers.any(), ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong())).thenAnswer(invocation -> {
+        Mockito.when(signups.closeSignups(ArgumentMatchers.any(), ArgumentMatchers.anyLong(), ArgumentMatchers.any())).thenAnswer(invocation -> {
             long eventId = invocation.getArgument(1);
-            service.closeSignups(G, eventId, invocation.getArgument(2));
+            service.closeSignups(G, eventId, ((com.runeclans.bot.hubevents.HubEventClient.Actor) invocation.getArgument(2)).discordId());
             return new EventSignups.Closed(0, (int) repository.participants(eventId).stream().filter(p -> !p.waiting()).count(), 0, List.of());
         });
         Mockito.doAnswer(invocation -> {
             service.reopenSignups(G, invocation.getArgument(1));
             return null;
-        }).when(signups).reopenSignups(ArgumentMatchers.any(), ArgumentMatchers.anyLong());
+        }).when(signups).reopenSignups(ArgumentMatchers.any(), ArgumentMatchers.anyLong(), ArgumentMatchers.any());
         EventBoardPanels panels = Mockito.mock(EventBoardPanels.class);
         Mockito.when(panels.refresh(ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong())).thenReturn("Posted the board.");
         links = Mockito.mock(com.runeclans.bot.runescape.PlayerLinkRepository.class);
+        // T-934: the team builder's players and suggestions come from RuneClans; the dashboard's copy of the engine has none to show
+        com.runeclans.bot.events.EventTeams teamsOnHub = Mockito.mock(com.runeclans.bot.events.EventTeams.class);
+        Mockito.when(teamsOnHub.players(ArgumentMatchers.anyLong(), ArgumentMatchers.any())).thenReturn(List.of());
+        Mockito.when(teamsOnHub.teams(ArgumentMatchers.anyLong())).thenReturn(List.of());
+        Mockito.when(teamsOnHub.suggest(ArgumentMatchers.anyLong(), ArgumentMatchers.anyLong())).thenAnswer(invocation -> {
+            if (service.event(G, invocation.getArgument(1)).scoringMode() != com.runeclans.bot.events.EventRules.ScoringMode.TEAM) throw new com.runeclans.bot.events.EventProblem(409, "This event is scored by player.");
+            return new com.runeclans.bot.events.TeamBuilder.Suggestion(List.of(), List.of());
+        });
         var eventSetup = new com.runeclans.bot.events.EventSetup(service, templates, new com.runeclans.bot.events.EventDraftRepository(supplier), new com.runeclans.bot.events.EventBlueprintRepository(supplier),
                 new com.runeclans.bot.events.EventDefaultsRepository(supplier), new com.runeclans.bot.events.BingoPools(Mockito.mock(com.runeclans.bot.events.BingoTileRepository.class)));
         apiWith = pluginXp -> new EventsAdminApi(service, repository, templates, signups, new BingoTemplate(), panels, links,
                 new com.runeclans.bot.events.BingoTiles(new com.runeclans.bot.internal.WikiCatalog()), new EventSetupApi(eventSetup),
-                new com.runeclans.bot.events.EventTeams(service, repository, links), new com.runeclans.bot.events.BingoPools(Mockito.mock(com.runeclans.bot.events.BingoTileRepository.class)),
+                teamsOnHub, new com.runeclans.bot.events.BingoPools(Mockito.mock(com.runeclans.bot.events.BingoTileRepository.class)),
                 pluginXp);
         api = apiWith.apply(null);
 
@@ -388,39 +396,27 @@ class EventsAdminApiTest {
         call("POST", "events/" + id + "/teams", "{\"name\":\"Red\"}");
         call("POST", "events/" + id + "/teams", "{\"name\":\"Blue\"}");
 
-        // what is known about each player: strength from the linked account, and a rating suggested from it
+        // T-934: strengths and suggested ratings come from RuneClans now (the hub's team builder); the dashboard's copy shows none
         var detail = call("GET", "events/" + id, null);
-        var main = playerOf(detail, "101");
-        assertEquals("Main", main.getObject("strength").getString("rsn"));
-        assertEquals(2800, main.getObject("strength").getInt("totalLevel"));
-        assertEquals(5_000_000_000L, main.getObject("strength").getLong("totalXp"));
-        assertEquals(5, main.getInt("suggestedRating"), "the most XP of the two with stats");
-        assertEquals(1, playerOf(detail, "102").getInt("suggestedRating"));
-        assertTrue(playerOf(detail, "103").isNull("strength"));
-        assertTrue(playerOf(detail, "103").isNull("suggestedRating"));
-        assertEquals(3, playerOf(detail, "103").getInt("effectiveRating"), "nothing known counts as average");
+        assertTrue(playerOf(detail, "101").isNull("strength"));
         assertTrue(playerOf(detail, "101").isNull("teamBlock"));
 
         // an organiser's rating wins, can be cleared, and is checked
         detail = call("PUT", "events/" + id + "/participants/102/rating", "{\"rating\":4}");
         assertEquals(4, playerOf(detail, "102").getInt("rating"));
-        assertEquals(4, playerOf(detail, "102").getInt("effectiveRating"));
         assertEquals(400, failure("PUT", "events/" + id + "/participants/102/rating", "{\"rating\":9}").status);
         detail = call("PUT", "events/" + id + "/participants/102/rating", "{\"rating\":null}");
         assertTrue(playerOf(detail, "102").isNull("rating"));
-        assertEquals(1, playerOf(detail, "102").getInt("effectiveRating"), "back to the one worked out from their stats");
         assertEquals(404, failure("PUT", "events/" + id + "/participants/999/rating", "{\"rating\":3}").status);
 
-        // a suggestion changes nothing until it is applied through the bulk route
-        var suggestion = call("POST", "events/" + id + "/teams/suggest", "{}");
-        assertEquals(4, count(suggestion.getArray("moves")));
-        assertTrue(suggestion.getArray("notes").isEmpty());
+        // the bulk route moves everyone at once (T-934: the suggestion itself is the hub's)
         detail = call("GET", "events/" + id, null);
-        for (String user : List.of("101", "102", "103", "104")) assertTrue(playerOf(detail, user).isNull("teamId"));
+        String firstTeam = teamIdNamed(detail, "Red");
+        String secondTeam = teamIdNamed(detail, "Blue");
         StringBuilder assignments = new StringBuilder("{\"assignments\":[");
-        for (int i = 0; i < suggestion.getArray("moves").length(); i++) {
-            var move = suggestion.getArray("moves").getObject(i);
-            assignments.append(i > 0 ? "," : "").append("{\"userId\":\"").append(move.getString("userId")).append("\",\"teamId\":\"").append(move.getString("teamId")).append("\"}");
+        List<String> users = List.of("101", "102", "103", "104");
+        for (int i = 0; i < users.size(); i++) {
+            assignments.append(i > 0 ? "," : "").append("{\"userId\":\"").append(users.get(i)).append("\",\"teamId\":\"").append(i % 2 == 0 ? firstTeam : secondTeam).append("\"}");
         }
         detail = call("PUT", "events/" + id + "/teams/assign", assignments.append("]}").toString());
         for (String user : List.of("101", "102", "103", "104")) assertFalse(playerOf(detail, user).isNull("teamId"), user + " has a team now");

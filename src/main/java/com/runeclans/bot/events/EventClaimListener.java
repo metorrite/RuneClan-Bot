@@ -3,6 +3,8 @@ package com.runeclans.bot.events;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.events.EventRepository.Event;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.permission.AdminRoleFilter;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -28,7 +30,7 @@ import java.util.concurrent.ThreadFactory;
 
 /**
  * The Approve and Deny buttons under a player's proof in the event's review channel. Staff and the event's own organisers may use them; the decision
- * is the same {@link EventService#decideClaim} the dashboard uses, so it is counted once whichever is clicked first. Deny asks for the reason, which is
+ * is the hub's ({@link HubEvents#decideClaim}, the same the website uses), so it is counted once whichever is clicked first. Deny asks for the reason, which is
  * sent to the player. Registered with JDA by {@code Bot} because it is a {@link BotListener}.
  */
 @BService
@@ -38,7 +40,7 @@ public class EventClaimListener extends ListenerAdapter implements BotListener {
     static final String DENY = "event_claim:deny:";
     static final String DENY_MODAL = "event_claim_deny:";
 
-    private final EventService service;
+    private final HubEvents service;
     private final AdminRoleFilter adminRoleFilter;
     private Executor worker = Executors.newFixedThreadPool(2, (ThreadFactory) runnable -> {
         Thread thread = new Thread(runnable, "event-claim-decisions");
@@ -46,7 +48,7 @@ public class EventClaimListener extends ListenerAdapter implements BotListener {
         return thread;
     });
 
-    public EventClaimListener(EventService service, AdminRoleFilter adminRoleFilter) {
+    public EventClaimListener(HubEvents service, AdminRoleFilter adminRoleFilter) {
         this.service = service;
         this.adminRoleFilter = adminRoleFilter;
     }
@@ -73,9 +75,12 @@ public class EventClaimListener extends ListenerAdapter implements BotListener {
         }
     }
 
+    private boolean isStaff(Guild guild, Member member) {
+        return member != null && (member.hasPermission(Permission.MANAGE_SERVER) || adminRoleFilter.isAuthorized(guild, member));
+    }
+
     private boolean mayDecide(Guild guild, Member member, Event event) {
-        boolean staff = member != null && (member.hasPermission(Permission.MANAGE_SERVER) || adminRoleFilter.isAuthorized(guild, member));
-        return member != null && service.mayOrganise(event, member.getIdLong(), staff);
+        return member != null && service.mayOrganise(event, member.getIdLong(), isStaff(guild, member));
     }
 
     @Override
@@ -152,7 +157,7 @@ public class EventClaimListener extends ListenerAdapter implements BotListener {
     private void decide(Guild guild, Ids ids, boolean approve, String reason, Member who, String content, net.dv8tion.jda.api.interactions.InteractionHook hook) {
         String verdict;
         try {
-            service.decideClaim(guild.getIdLong(), ids.eventId(), ids.claimId(), approve, reason, who.getIdLong());
+            service.decideClaim(guild.getIdLong(), ids.eventId(), ids.claimId(), approve, reason, Actor.of(who.getIdLong(), guild.getIdLong(), isStaff(guild, who)));
             verdict = approve ? "✅ Approved by " + who.getAsMention() : "❌ Denied by " + who.getAsMention() + ": " + reason;
         } catch (EventProblem p) {
             // most often someone else decided it first (here or on the dashboard); say so and take the buttons away

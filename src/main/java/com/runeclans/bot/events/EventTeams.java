@@ -3,6 +3,7 @@ package com.runeclans.bot.events;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventRules.ScoringMode;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.runescape.PlayerLink;
 import com.runeclans.bot.runescape.PlayerLinkRepository;
@@ -19,17 +20,16 @@ import java.util.Set;
 
 /**
  * What the team builder knows about an event's players beyond who is on which team: how strong each looks (their linked RuneScape account's latest stats, and
- * the rating an organiser gave), and a starting suggestion for the teams ({@link TeamBuilder}). Reads only; changing teams is {@link EventService}'s.
+ * the rating an organiser gave), and a starting suggestion for the teams ({@link TeamBuilder}). Reads only, from the hub ({@link HubEvents}); changing
+ * teams is the hub's.
  */
 @BService
 public class EventTeams {
-    private final EventService service;
-    private final EventRepository repository;
+    private final HubEvents service;
     private final PlayerLinkRepository links;
 
-    public EventTeams(EventService service, EventRepository repository, PlayerLinkRepository links) {
+    public EventTeams(HubEvents service, PlayerLinkRepository links) {
         this.service = service;
-        this.repository = repository;
         this.links = links;
     }
 
@@ -61,14 +61,14 @@ public class EventTeams {
 
     /** Everyone who holds a place in the event (not the waitlist), as the team builder sees them. */
     public List<TeamBuilder.Player> players(long guildId, Event event) {
-        List<Participant> active = repository.participants(event.id()).stream().filter(p -> !p.waiting()).toList();
+        List<Participant> active = service.participants(event.id()).stream().filter(p -> !p.waiting() && p.userId() != 0).toList();
         Map<Long, TeamBuilder.Strength> strengths = strengths(guildId, active.stream().map(Participant::userId).toList());
         return active.stream().map(p -> new TeamBuilder.Player(p.userId(), p.kind(), p.teamId(), p.rating(), strengths.get(p.userId()))).toList();
     }
 
     /** The event's teams as the team builder sees them. */
     public List<TeamBuilder.Team> teams(long eventId) {
-        return repository.teams(eventId).stream().map(t -> new TeamBuilder.Team(t.id(), t.name(), t.captainId())).toList();
+        return service.teams(eventId).stream().map(t -> new TeamBuilder.Team(t.id(), t.name(), t.captainId())).toList();
     }
 
     /**
@@ -80,7 +80,7 @@ public class EventTeams {
         if (event.scoringMode() != ScoringMode.TEAM) throw new EventProblem(409, Text.of(guildId, "events.problem.this_event_is_scored_by_player_2"));
         List<TeamBuilder.Player> players = players(guildId, event);
         Map<Long, Participant> byId = new HashMap<>();
-        repository.participants(eventId).forEach(p -> byId.put(p.userId(), p));
+        service.participants(eventId).forEach(p -> byId.put(p.userId(), p));
         Set<Long> eligible = new HashSet<>();
         for (TeamBuilder.Player p : players) {
             if (service.teamBlock(event, byId.get(p.userId())) == null) eligible.add(p.userId());
