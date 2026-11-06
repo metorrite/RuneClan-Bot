@@ -8,7 +8,7 @@ Any server that uses RuneClan Bot (a clan server or a community server with no c
 
 ## 1. What exists
 
-- Event engine with `EventRules.Scope { PRIVATE, ALLIANCE, PUBLIC }` stored on every event (`EventsAdminApi` defaults to PRIVATE) but **not used for any listing yet**.
+- Event engine with `EventRules.Scope { PRIVATE, ALLIANCE, PUBLIC }` stored on every event (the old dashboard route `EventsAdminApi`, removed in T-942, defaulted to PRIVATE) but **not used for any listing yet**.
 - `EventKinds` / `TeamRules.Kind { HOME_CLAN, HOME_OTHER, PARTNER }` and `QueueRules.Policy { FIRST_COME, CLAN_FIRST }`: who may join and in what order.
 - Website member routes `events/join|leave` (`MemberEventsApi`): refuse non-members of the host server and show the clan profile's apply link (D10).
 - Clans hub (`src/app/hub`: directory, `c/[slug]`, `events`, `leaderboards`), beta gate `HUB_PUBLIC`, own navbar, host `clans.<apex>`. Its `events` page today lists **Discord scheduled events** shared through `shared_event` (PUBLIC/ALLIANCE), not engine events.

@@ -99,7 +99,6 @@ public class FeatureStatusRepository {
         enabled("/levels/chat-levels", "chat_level_config");
         exists("/voice/temp-voice", "tempvoice_hub", "");
         enabled("/voice/voice-text", "voice_text_config");
-        exists("/event-tools/event-manager", "event", "NOT t.archived AND t.template <> 'quick-group'");
         enabled("/event-tools/event-announcer", "eventannounce_config");
         exists("/event-tools/citadel-wheel", "citadel_wheel_settings", "t.auto_post AND t.channel_id IS NOT NULL");
         // the coffer is in use once someone holds gp in it

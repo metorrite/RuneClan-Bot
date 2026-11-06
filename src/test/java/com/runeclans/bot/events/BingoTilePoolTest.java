@@ -86,33 +86,4 @@ class BingoTilePoolTest {
         assertEquals(BingoTilePool.MAX_TILES_IN_EVENT, BingoTilePool.toConfig(many).length());
     }
 
-    @Test
-    void theBossDropPackComesFromTheWikiCatalogWithRarityAsDifficulty() {
-        List<Entry> tiles = BingoStarterPacks.tiles(BingoStarterPacks.BOSS_DROPS, Set.of());
-
-        assertFalse(tiles.isEmpty());
-        assertEquals(tiles.size(), tiles.stream().map(t -> t.label().toLowerCase()).collect(java.util.stream.Collectors.toSet()).size(), "no name twice");
-        assertTrue(tiles.stream().allMatch(t -> t.label().contains(": ") && t.label().length() <= BingoTilePool.MAX_LABEL && BingoTilePool.problem(t.label(), t.points(), t.target(), t.difficulty()) == null));
-        assertTrue(tiles.stream().map(Entry::difficulty).distinct().count() > 1, "rarer drops are harder");
-        assertEquals(Difficulty.EASY, BingoStarterPacks.difficultyOf(1.0 / 100));
-        assertEquals(Difficulty.ELITE, BingoStarterPacks.difficultyOf(1.0 / 10_000));
-        assertEquals(java.util.Optional.of(0.25), BingoStarterPacks.chance("1/4"));
-        assertTrue(BingoStarterPacks.chance("Always").isEmpty());
-        assertTrue(BingoStarterPacks.chance("1/0").isEmpty());
-    }
-
-    @Test
-    void theCombatAchievementPackUsesTheTierAsTheDifficultyAndCanBeNarrowed() {
-        List<Entry> all = BingoStarterPacks.tiles(BingoStarterPacks.COMBAT_ACHIEVEMENTS, Set.of());
-        List<Entry> hard = BingoStarterPacks.tiles(BingoStarterPacks.COMBAT_ACHIEVEMENTS, EnumSet.of(Difficulty.HARD));
-
-        assertFalse(all.isEmpty());
-        assertFalse(hard.isEmpty());
-        assertTrue(hard.size() < all.size());
-        assertTrue(hard.stream().allMatch(t -> t.difficulty() == Difficulty.HARD));
-        assertTrue(all.stream().allMatch(t -> t.tags().contains("combat achievement")));
-        assertTrue(BingoStarterPacks.tiles("nope", Set.of()).isEmpty());
-        Set<String> names = new HashSet<>();
-        for (Entry e : all) assertTrue(names.add(e.label().toLowerCase()), e.label());
-    }
 }

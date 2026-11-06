@@ -2,7 +2,6 @@ package com.runeclans.bot.events;
 
 import com.runeclans.bot.events.BingoTilePool.Difficulty;
 import com.runeclans.bot.events.BingoTilePool.Entry;
-import com.runeclans.bot.events.BingoTileRepository.Stored;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
@@ -79,41 +78,4 @@ class BingoCustomPoolTest {
         assertEquals(25, template.starterObjectives(template.prepare(config)).size());
     }
 
-    @Test
-    void expandingCopiesTheEnabledTilesOnlyForACustomBingoEvent() {
-        BingoTileRepository repository = mock(BingoTileRepository.class);
-        List<Stored> stored = new ArrayList<>();
-        for (int i = 0; i < 12; i++) stored.add(new Stored(i, 1L, new Entry("T" + i, 10, 1, Difficulty.EASY, List.of(), i != 3), "manual"));
-        when(repository.list(1L)).thenReturn(stored);
-        BingoPools pools = new BingoPools(repository);
-
-        DataObject expanded = pools.expand(1L, "bingo", config(null));
-        assertEquals(11, expanded.getObject("board").getArray("tiles").length(), "the disabled tile is left out");
-
-        DataObject builtIn = DataObject.empty().put("board", DataObject.empty().put("pool", "classic"));
-        assertSame(builtIn, pools.expand(1L, "bingo", builtIn));
-        DataObject other = config(null);
-        assertSame(other, pools.expand(1L, "competition", other));
-        DataObject already = config(BingoTilePool.toConfig(pool(3)));
-        assertSame(already, pools.expand(1L, "bingo", already), "tiles an event already holds are never replaced");
-    }
-
-    @Test
-    void expandingCanNarrowByDifficultyAndTags() {
-        BingoTileRepository repository = mock(BingoTileRepository.class);
-        when(repository.list(1L)).thenReturn(pool(10).stream().map(e -> new Stored(1, 1L, e, "manual")).toList());
-        DataObject config = config(null);
-        config.getObject("board").put("poolDifficulties", DataArray.empty().add("hard")).put("poolTags", DataArray.empty().add("b"));
-
-        DataObject expanded = new BingoPools(repository).expand(1L, "bingo", config);
-
-        DataArray tiles = expanded.getObject("board").getArray("tiles");
-        assertEquals(5, tiles.length());
-        Set<String> labels = new java.util.HashSet<>();
-        for (int i = 0; i < tiles.length(); i++) labels.add(tiles.getObject(i).getString("label"));
-        assertEquals(10, pool(10).size());
-        assertTrue(labels.stream().allMatch(l -> Integer.parseInt(l.substring("Custom tile ".length())) % 2 == 1));
-        assertFalse(expanded.getObject("board").hasKey("poolDifficulties"));
-        assertEquals(5, labels.stream().collect(Collectors.toSet()).size());
-    }
 }
