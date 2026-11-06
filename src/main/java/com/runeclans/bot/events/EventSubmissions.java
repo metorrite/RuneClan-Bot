@@ -70,7 +70,7 @@ public class EventSubmissions {
 
     /** The channel staff review proof in: the one the event names, which the roles and channels setup also fills in. Null when there is none. */
     public TextChannel reviewChannel(Guild guild, Event event) {
-        Long id = service.settingsOf(event).reviewChannelId();
+        Long id = EventSpaces.reviewChannelOf(event, space);
         return id == null ? null : guild.getTextChannelById(id);
     }
 
@@ -101,7 +101,7 @@ public class EventSubmissions {
             if (error != null) {
                 log.warn("Could not deliver claim {} of event {}", claimId, event.id(), error);
                 try {
-                    service.decideClaim(guild.getIdLong(), event.id(), claimId, false, "Couldn't be sent to the review channel", Actor.APP);
+                    service.decideClaim(guild.getIdLong(), event.id(), claimId, false, "Couldn't be sent to the review channel", service.self(guild.getIdLong()));
                 } catch (RuntimeException problem) {
                     log.warn("Claim {} of event {} couldn't be denied after its delivery failed: {}", claimId, event.id(), problem.getMessage());
                 }

@@ -219,7 +219,7 @@ public class EventSignups {
 
     /**
      * Closes the event's signups: the hub marks them closed first (so the website and {@code /events join} refuse new self-signups), the Discord signup is
-     * paused, then whoever had signed up is added one final time. {@code actor} is who closed them ({@link Actor#APP} when the deadline did it).
+     * paused, then whoever had signed up is added one final time. {@code actor} is who closed them (the hub closes them itself at the deadline, T-945).
      */
     public Closed closeSignups(Guild guild, long eventId, Actor actor) {
         events.closeSignups(guild.getIdLong(), eventId, actor);
@@ -278,7 +278,7 @@ public class EventSignups {
             }
             try {
                 // added by the bot itself, so the deadline doesn't refuse a signup made in time; the hub's queue and seat rules still apply
-                events.join(guild.getIdLong(), eventId, entry.userId(), null, true, Actor.APP);
+                events.join(guild.getIdLong(), eventId, entry.userId(), null, true, events.self(guild.getIdLong()));
                 map.addSignupEntry(eventId, entry.userId());
                 map.clearRefusal(eventId, entry.userId());
                 added++;
@@ -310,7 +310,7 @@ public class EventSignups {
                 continue;
             }
             try {
-                events.leave(guild.getIdLong(), event.id(), userId, Actor.APP);
+                events.leave(guild.getIdLong(), event.id(), userId, events.self(guild.getIdLong()));
                 map.removeSignupEntry(event.id(), userId);
                 log.info("{} was taken off the roster of event {}: they are no longer on its Discord signup", userId, event.id());
             } catch (EventProblem e) {
@@ -360,47 +360,6 @@ public class EventSignups {
         }
     }
 
-    /** Closes signups at their deadline, for every event that has one (with or without a Discord signup), as an organiser pressing the button would. */
-    private void closePastDeadline(JDA jda) {
-        for (Event listed : events.eventsInStatus(Status.SIGNUPS)) {
-            Guild guild = Shards.guild(jda, listed.guildId());
-            if (guild == null) continue;
-            try {
-                // the list is compact (no settings): the event is read in full only to learn its deadline
-                Event event = events.event(listed.guildId(), listed.id());
-                Instant closes = settingsOf(event).signupClosesAt();
-                if (closes == null || Instant.now().isBefore(closes) || events.setup(event.id()).signupsClosed()) continue;
-                Closed closed = closeSignups(guild, event.id(), Actor.APP);
-                log.info("Signups of event {} closed at their deadline: {} added by the last sync, {} on the roster", event.id(), closed.added(), closed.active());
-            } catch (EventProblem e) {
-                log.debug("Signups of event {} weren't closed at the deadline: {}", listed.id(), e.getMessage());
-            } catch (RuntimeException e) {
-                log.warn("Closing the signups of event {} at the deadline failed", listed.id(), e);
-            }
-        }
-    }
-
-    /**
-     * Seat quotas (T-220): once an event's host quota places are released (its release time has passed, or signups closed), free places go to whoever is
-     * waiting, in the event's queue order, by asking the hub to fill the seats. Events without a host quota, or not yet released, are left alone.
-     */
-    void releaseQuotas() {
-        Instant now = Instant.now();
-        for (Event listed : events.eventsInStatus(Status.SIGNUPS)) {
-            if (listed.maxParticipants() <= 0) continue;
-            try {
-                Event event = events.event(listed.guildId(), listed.id());
-                QueueRules.QuotaSetting setting = QueueRules.quotaSetting(DataObject.fromJson(event.config()));
-                if (setting.host() == null) continue;
-                if (!QueueRules.released(now, settingsOf(event).signupClosesAt(), events.setup(event.id()).signupsClosed(), setting.releaseHours())) continue;
-                int moved = events.fillSeats(event.guildId(), event.id());
-                if (moved > 0) log.info("Released seat quota places of event {}: {} waiting player(s) moved in", event.id(), moved);
-            } catch (RuntimeException e) {
-                log.warn("Releasing the seat quotas of event {} failed", listed.id(), e);
-            }
-        }
-    }
-
     /** Pauses the Discord signup and redraws its panels, so they say PAUSED at once instead of when someone next clicks one. */
     private void pause(Guild guild, long signupId) {
         if (!signups.isSignupActive(signupId)) return;
@@ -411,8 +370,6 @@ public class EventSignups {
     void sweep(JDA jda) {
         if (AutoPostRouter.diverting() || !events.enabled()) return;
         try {
-            closePastDeadline(jda);
-            releaseQuotas();
             for (HubEventMap.Row row : map.eventsWithSignup()) {
                 Guild guild = Shards.guild(jda, row.guildId());
                 if (guild == null) continue;

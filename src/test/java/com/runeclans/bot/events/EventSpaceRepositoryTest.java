@@ -1,7 +1,6 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.events.EventRules.Scope;
-import com.runeclans.bot.events.EventRules.ScoringMode;
+import com.runeclans.bot.hubevents.HubEventMap;
 import com.runeclans.bot.testsupport.LocalDatabase;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
 import org.junit.jupiter.api.AfterEach;
@@ -14,18 +13,24 @@ import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** What is recorded about an event's roles and channels, on the developer's local Postgres. Skipped where there is none. Everything is made in made-up servers and removed afterwards. */
+/**
+ * What is recorded about an event's roles and channels, on the developer's local Postgres. Skipped where there is none. Events are the hub's (T-934): the
+ * rows name them by their local id in {@link HubEventMap}, which is also where a server's events are looked up. Everything is made in made-up servers
+ * and removed afterwards.
+ */
 class EventSpaceRepositoryTest {
     private static final long G = 999_000_000_000_000_031L;
     private static final long OTHER = 999_000_000_000_000_032L;
+    private static final UUID CLAN = UUID.randomUUID(), OTHER_CLAN = UUID.randomUUID();
 
     private static ConnectionSupplier supplier;
-    private EventRepository events;
+    private static HubEventMap map;
     private EventSpaceRepository space;
     private long eventId;
     private long otherEventId;
@@ -33,19 +38,21 @@ class EventSpaceRepositoryTest {
     @BeforeAll
     static void connect() throws Exception {
         supplier = LocalDatabase.supplier();
+        map = new HubEventMap(supplier);
     }
 
     @BeforeEach
     void setUp() {
-        events = new EventRepository(supplier);
-        space = new EventSpaceRepository(supplier, events);
-        eventId = events.createEvent(G, "custom", "First event", "", Scope.PRIVATE, ScoringMode.INDIVIDUAL, null, null, 0, "{}", 1L);
-        otherEventId = events.createEvent(OTHER, "custom", "Other server", "", Scope.PRIVATE, ScoringMode.INDIVIDUAL, null, null, 0, "{}", 1L);
+        space = new EventSpaceRepository(supplier, map);
+        eventId = map.localId(UUID.randomUUID(), CLAN, G);
+        otherEventId = map.localId(UUID.randomUUID(), OTHER_CLAN, OTHER);
     }
 
     @AfterEach
     void cleanUp() throws Exception {
-        try (Connection c = supplier.getConnection(); PreparedStatement s = c.prepareStatement("DELETE FROM younglings.event WHERE guild_id IN (?, ?)")) {
+        space.clear(eventId);
+        space.clear(otherEventId);
+        try (Connection c = supplier.getConnection(); PreparedStatement s = c.prepareStatement("DELETE FROM younglings.hub_event_map WHERE guild_id IN (?, ?)")) {
             s.setLong(1, G);
             s.setLong(2, OTHER);
             s.executeUpdate();
@@ -125,37 +132,10 @@ class EventSpaceRepositoryTest {
     }
 
     @Test
-    void theStateOfTheSetupIsKeptWithTheRestOfTheEventsSetup() {
-        assertFalse(events.setup(eventId).spaceApplied());
-        events.markSpace(eventId, 42L, false, "the channel x is missing");
-        EventRepository.Setup first = events.setup(eventId);
-        assertTrue(first.spaceApplied());
-        assertFalse(first.spaceComplete());
-        assertEquals("the channel x is missing", first.spaceNote());
-        assertEquals(42L, first.spaceAppliedBy());
-
-        events.markSpace(eventId, 43L, true, "");
-        EventRepository.Setup second = events.setup(eventId);
-        assertTrue(second.spaceComplete());
-        assertEquals(first.spaceAppliedAt(), second.spaceAppliedAt(), "when it was first set up stays");
-        assertEquals(42L, second.spaceAppliedBy());
-
-        events.clearSpace(eventId);
-        assertFalse(events.setup(eventId).spaceApplied());
-        assertFalse(events.setup(eventId).spaceComplete());
-    }
-
-    @Test
-    void deletingTheEventDeletesWhatWasRecordedForIt() throws Exception {
-        space.saveRole(eventId, "participant", 111, "Players");
-        space.addMember(eventId, "participant", 7);
+    void anEventTheHubForgotIsNoLongerAmongTheServersEventsWithChannels() {
         space.saveChannel(eventId, "general", 222, "first-event-general", true, "category");
-        try (Connection c = supplier.getConnection(); PreparedStatement s = c.prepareStatement("DELETE FROM younglings.event WHERE id = ?")) {
-            s.setLong(1, eventId);
-            s.executeUpdate();
-        }
-        assertTrue(space.roles(eventId).isEmpty());
-        assertTrue(space.channels(eventId).isEmpty());
-        assertTrue(space.members(eventId).isEmpty());
+        map.forget(eventId);
+        assertTrue(space.eventsWithSpace(G).isEmpty(), "the sweep no longer meets it");
+        assertTrue(space.channels(eventId).size() == 1, "its rows stay until the ops clear them (the deletion is announced on the feed)");
     }
 }

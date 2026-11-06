@@ -59,7 +59,7 @@ class EventUpdatesApiTest {
     @BeforeEach
     void setUp() {
         repository = new EventRepository(supplier);
-        posts = new EventUpdateRepository(supplier, repository);
+        posts = new EventUpdateRepository(supplier);
         EventService service = Mockito.mock(EventService.class);
         Mockito.when(service.event(ArgumentMatchers.eq(G), ArgumentMatchers.anyLong())).thenAnswer(inv -> repository.event(G, inv.getArgument(1)).orElseThrow());
         Mockito.when(service.objectives(ArgumentMatchers.anyLong())).thenReturn(List.of());

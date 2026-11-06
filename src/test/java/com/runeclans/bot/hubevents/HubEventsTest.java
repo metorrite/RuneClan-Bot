@@ -249,4 +249,79 @@ class HubEventsTest {
         assertEquals("/v1/events/" + EVENT + "/board.png?mine=true", hub.last().path());
         assertEquals("55", hub.last().headers().get(HubEventClient.ACTOR_HEADER));
     }
+
+    // ---------- what the boards, spaces and co-host panels read and write (PR 2) ----------
+
+    @Test
+    void theProgressLogComesBackAsTheBotsRows() {
+        long local = mapped();
+        hub.ok("GET /v1/events/" + EVENT + "/progress", DataObject.empty().put("progress", DataArray.empty().add(DataObject.empty().put("id", UUID.randomUUID().toString())
+                .put("objectiveKey", "t1").put("personId", UUID.randomUUID().toString()).put("discordId", "501").put("teamId", TEAM.toString()).put("amount", 2).put("source", "AUTO")
+                .put("sourceKey", "drop:1").put("note", "").put("at", "2026-11-06T01:00:00Z"))));
+        List<com.runeclans.bot.events.EventRepository.Progress> rows = events.progress(local);
+        assertEquals(1, rows.size());
+        assertEquals(501L, rows.get(0).userId());
+        assertEquals(map.localId(HubEventMap.TEAM, TEAM, local), rows.get(0).teamId());
+        assertEquals("t1", rows.get(0).objectiveKey());
+        assertEquals(2, rows.get(0).amount());
+        assertEquals(com.runeclans.bot.events.EventRules.Source.AUTO, rows.get(0).source());
+        assertEquals(java.time.Instant.parse("2026-11-06T01:00:00Z"), rows.get(0).createdAt());
+        assertTrue(hub.last().headers().isEmpty(), "read as the application");
+    }
+
+    @Test
+    void coHostsAndTheirAnswersAreRead() {
+        long local = mapped();
+        UUID ally = UUID.randomUUID();
+        hub.ok("GET /v1/events/" + EVENT + "/cohosts", DataObject.empty().put("cohosts", DataArray.empty()
+                .add(DataObject.empty().put("clanId", ally.toString()).put("clanName", "Allies").put("status", "ACCEPTED").put("quota", 5))
+                .add(DataObject.empty().put("clanId", UUID.randomUUID().toString()).put("clanName", "Others").put("status", "INVITED").put("quota", null))));
+        List<HubEvents.Cohost> cohosts = events.cohosts(local);
+        assertEquals(2, cohosts.size());
+        assertEquals(ally, cohosts.get(0).clanId());
+        assertEquals("ACCEPTED", cohosts.get(0).status());
+        assertEquals(5, cohosts.get(0).quota());
+        assertNull(cohosts.get(1).quota());
+    }
+
+    @Test
+    void theRolesAndChannelsAreReportedToTheHubAsTheBotItself() {
+        long local = mapped();
+        events.useSelf(77L);
+        hub.ok("POST /v1/events/" + EVENT + "/space/applied", eventJson("SIGNUPS"));
+        events.markSpace(G, local, false, "the channel x is missing");
+        FakeEventHub.Call call = hub.last();
+        assertEquals("/v1/events/" + EVENT + "/space/applied", call.path());
+        assertTrue(call.json().getBoolean("applied"));
+        assertFalse(call.json().getBoolean("complete"));
+        assertEquals("the channel x is missing", call.json().getString("note"));
+        assertEquals("77", call.headers().get(HubEventClient.ACTOR_HEADER), "the bot itself, not the bare application key");
+        assertEquals(Long.toString(G), call.headers().get(HubEventClient.STAFF_HEADER), "as a staff member of the server");
+
+        events.clearSpace(G, local);
+        assertFalse(hub.last().json().getBoolean("applied"));
+    }
+
+    @Test
+    void beforeTheBotIsConnectedItsOwnDoingsAreTheApplications() {
+        assertTrue(events.self(G).headers().isEmpty());
+        events.useSelf(77L);
+        assertEquals("77", events.self(G).headers().get(HubEventClient.ACTOR_HEADER));
+    }
+
+    @Test
+    void aPlayerFromACoHostJoinsWithThatClanAsTheirOrigin() {
+        long local = mapped();
+        events.useSelf(77L);
+        UUID ally = UUID.randomUUID();
+        hub.ok("POST /v1/events/" + EVENT + "/participants", DataObject.empty().put("waiting", true).put("position", 2));
+        Joined joined = events.join(G, local, 56L, ally, events.self(G));
+        assertTrue(joined.waiting());
+        assertEquals(2, joined.position());
+        FakeEventHub.Call call = hub.last();
+        assertEquals("56", call.json().getString("discordId"));
+        assertEquals(ally.toString(), call.json().getString("originClanId"));
+        assertEquals("77", call.headers().get(HubEventClient.ACTOR_HEADER));
+        assertTrue(published.stream().anyMatch(c -> c.kind() == EventChanges.Kind.PLAYER_JOINED && c.userId() == 56L));
+    }
 }

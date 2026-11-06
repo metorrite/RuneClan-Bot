@@ -273,7 +273,7 @@ public class EventsCommand {
                 .whenComplete((message, error) -> {
                     if (error != null) {
                         try {
-                            service.decideClaim(guildId, eventId, claimId, false, "Couldn't be sent to the review channel", Actor.APP);
+                            service.decideClaim(guildId, eventId, claimId, false, "Couldn't be sent to the review channel", service.self(guildId));
                         } catch (RuntimeException ignored) {
                             // the claim stays waiting on the website; staff see it there
                         }

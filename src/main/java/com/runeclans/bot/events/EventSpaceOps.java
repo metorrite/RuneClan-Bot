@@ -11,6 +11,7 @@ import com.runeclans.bot.events.EventSpace.Overwrite;
 import com.runeclans.bot.events.EventSpace.Plan;
 import com.runeclans.bot.events.EventSpace.Principal;
 import com.runeclans.bot.events.EventSpace.RoleItem;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.jobs.JobRepository;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
@@ -55,6 +56,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * whenever one of those changes, whenever a player joins the server, and every quarter of an hour.
  * <p>
  * Setting up and removing run in the background (Discord limits how fast channels can be made), one at a time per event; {@link #job} says how far one got.
+ * The event, its roster and teams are the hub's; the hub is told when the space is set up or gone (T-934, T-945), and keeps no role or channel ids.
  */
 @BService
 public class EventSpaceOps {
@@ -210,8 +212,7 @@ public class EventSpaceOps {
         }
     }
 
-    private final EventRepository events;
-    private final EventService service;
+    private final HubEvents events;
     private final EventSpaceRepository space;
     private final EventSpaces spaces;
     private final EventChanges changes;
@@ -228,12 +229,10 @@ public class EventSpaceOps {
     private final Map<Long, ScheduledFuture<?>> pending = new ConcurrentHashMap<>();
     private volatile JDA jda;
 
-    public EventSpaceOps(EventRepository events, EventService service, EventSpaceRepository space, EventSpaces spaces, EventChanges changes,
-                         com.runeclans.bot.config.BotConfig botConfig, JobRepository jobs) {
+    public EventSpaceOps(HubEvents events, EventSpaceRepository space, EventSpaces spaces, EventChanges changes, com.runeclans.bot.config.BotConfig botConfig, JobRepository jobs) {
         this.botConfig = botConfig;
         this.jobs = jobs;
         this.events = events;
-        this.service = service;
         this.space = space;
         this.spaces = spaces;
         this.changes = changes;
@@ -341,7 +340,7 @@ public class EventSpaceOps {
     }
 
     private void runSetup(Guild guild, long guildId, long eventId, long actorId, boolean removeUnneeded, Job job) {
-        Event event = service.event(guildId, eventId);
+        Event event = events.event(guildId, eventId);
         EventSpaces.Gathered gathered = spaces.gather(guild, event);
         Plan plan = EventSpace.plan(gathered.facts());
         if (!plan.blockers().isEmpty()) {
@@ -349,7 +348,7 @@ public class EventSpaceOps {
             return;
         }
         // from here the event counts as set up (or part way), so it can't be deleted while its roles and channels exist
-        events.markSpace(eventId, actorId, false, "Setting up…");
+        events.markSpace(guildId, eventId, false, "Setting up…");
         job.total((int) (plan.newRoles() + plan.newChannels() + plan.count(Action.REPAIR) + (removeUnneeded ? plan.count(Action.REMOVE) : 0)) + 1);
         try {
             make(guild, event, gathered, plan, actorId, removeUnneeded, job);
@@ -358,7 +357,7 @@ public class EventSpaceOps {
         } catch (RuntimeException e) {
             // what was made is recorded; say what is still missing so the checklist and the page tell the truth
             try {
-                events.markSpace(eventId, actorId, false, noteOf(EventSpace.plan(spaces.gather(guild, service.event(guildId, eventId)).facts())));
+                events.markSpace(guildId, eventId, false, noteOf(EventSpace.plan(spaces.gather(guild, events.event(guildId, eventId)).facts())));
             } catch (RuntimeException ignored) {
                 // the original failure is the one to report
             }
@@ -430,7 +429,6 @@ public class EventSpaceOps {
             if (c.action() == Action.USE_EXISTING && c.id() != null) {
                 GuildChannel chosen = guild.getGuildChannelById(c.id());
                 space.saveChannel(eventId, c.key(), c.id(), chosen == null ? "" : chosen.getName(), false, null);
-                useAsEngineChannel(guildId, eventId, c.kind(), c.id());
                 continue;
             }
             if (c.action() != Action.CREATE) continue;
@@ -441,7 +439,6 @@ public class EventSpaceOps {
             for (Overwrite o : EventSpace.overwrites(c.access(), idsOf)) action = o.isRole() ? action.addRolePermissionOverride(o.id(), o.allow(), o.deny()) : action.addMemberPermissionOverride(o.id(), o.allow(), o.deny());
             var made = action.reason("Channels for the event " + event.name()).complete();
             space.saveChannel(eventId, c.key(), made.getIdLong(), made.getName(), true, c.parent());
-            useAsEngineChannel(guildId, eventId, c.kind(), made.getIdLong());
             welcome(guild, event, c, made, welcomes, teamNames);
             job.step("Made the channel #" + c.name() + ".");
         }
@@ -477,10 +474,10 @@ public class EventSpaceOps {
         }
 
         job.say("Giving out the roles…");
-        int failed = syncMembers(guild, service.event(guildId, eventId));
+        int failed = syncMembers(guild, events.event(guildId, eventId));
         job.step("Gave out the roles.");
-        Plan after = EventSpace.plan(spaces.gather(guild, service.event(guildId, eventId)).facts());
-        events.markSpace(eventId, actorId, after.complete(), noteOf(after));
+        Plan after = EventSpace.plan(spaces.gather(guild, events.event(guildId, eventId)).facts());
+        events.markSpace(guildId, eventId, after.complete(), noteOf(after));
         changes.publish(EventChanges.Kind.SETUP, guildId, eventId);
         job.finish(after.complete() ? "The roles and channels are set up." + (failed > 0 ? " " + failed + " roles couldn't be given out yet." : "") : "Set up, but something is still missing: " + noteOf(after));
     }
@@ -524,17 +521,7 @@ public class EventSpaceOps {
         return topic.length() > 1000 ? topic.substring(0, 1000) : topic;
     }
 
-    /** The event's board and proof channels are the ones the rest of the engine posts to, so a channel set up for those becomes the event's setting. */
-    private void useAsEngineChannel(long guildId, long eventId, Kind kind, long channelId) {
-        String key = kind == Kind.BOARD ? "boardChannelId" : kind == Kind.REVIEW ? "reviewChannelId" : null;
-        if (key == null) return;
-        Event event = service.event(guildId, eventId);
-        DataObject config = DataObject.fromJson(event.config());
-        String id = Long.toString(channelId);
-        if (config.hasKey(key) && !config.isNull(key) && id.equals(config.getString(key))) return;
-        config.put(key, id);
-        events.setConfig(guildId, eventId, config.toString());
-    }
+    // The board and review channels a setup makes are found in the bot's own records ({@link EventSpaces#boardChannelOf}): the hub keeps no channel ids.
 
     private static String noteOf(Plan plan) {
         String note = String.join(", ", plan.missing());
@@ -567,8 +554,6 @@ public class EventSpaceOps {
         List<EventSpaceRepository.ChannelRow> channels = space.channels(eventId);
         List<EventSpaceRepository.RoleRow> roles = space.roles(eventId);
         job.total((int) (channels.stream().filter(EventSpaceRepository.ChannelRow::owned).count() + roles.size()) + 1);
-        Event event = service.event(guildId, eventId);
-        DataObject config = DataObject.fromJson(event.config());
         // children before the categories that hold them
         List<EventSpaceRepository.ChannelRow> ordered = new ArrayList<>(channels.stream().filter(c -> !EventSpace.isCategoryKey(c.key())).toList());
         ordered.addAll(channels.stream().filter(c -> EventSpace.isCategoryKey(c.key())).toList());
@@ -579,9 +564,6 @@ public class EventSpaceOps {
             }
             job.say("Removing #" + c.name() + "…");
             deleteChannel(guild, eventId, c.key(), c.channelId());
-            for (String key : new String[]{"boardChannelId", "reviewChannelId"}) {
-                if (config.hasKey(key) && !config.isNull(key) && Long.toString(c.channelId()).equals(config.getString(key))) config.remove(key);
-            }
             job.step("Removed #" + c.name() + ".");
         }
         for (EventSpaceRepository.RoleRow r : roles) {
@@ -590,8 +572,7 @@ public class EventSpaceOps {
             job.step("Removed the role " + r.name() + ".");
         }
         space.clear(eventId);
-        events.clearSpace(eventId);
-        events.setConfig(guildId, eventId, config.toString());
+        events.clearSpace(guildId, eventId);
         changes.publish(EventChanges.Kind.SETUP, guildId, eventId);
         job.step("Done.");
         job.finish("Everything the bot made for this event has been removed.");
@@ -697,6 +678,15 @@ public class EventSpaceOps {
     // ---------- keeping it right ----------
 
     private void onChange(EventChanges.Change change) {
+        if (change.kind() == EventChanges.Kind.STAGE && "deleted".equals(change.note())) {
+            // the event is gone from the hub: the bot's record of its roles and channels goes too (what was made on Discord was removed before the hub let it go)
+            try {
+                space.clear(change.eventId());
+            } catch (RuntimeException e) {
+                log.warn("Could not forget the roles and channels of deleted event {}", change.eventId(), e);
+            }
+            return;
+        }
         switch (change.kind()) {
             case ROSTER, TEAMS, STAGE, SETUP -> schedule(change.guildId(), change.eventId());
             default -> { }
@@ -734,7 +724,12 @@ public class EventSpaceOps {
         if (client == null) return;
         try {
             Guild guild = Shards.guild(client, guildId);
-            Event event = events.event(guildId, eventId).orElse(null);
+            Event event;
+            try {
+                event = guild == null ? null : events.event(guildId, eventId);
+            } catch (EventProblem e) {
+                event = null;
+            }
             if (guild == null || event == null || event.status() == Status.DONE || event.status() == Status.CANCELLED || !space.hasSpace(eventId)) return;
             ReentrantLock lock = lockOf(eventId);
             if (!lock.tryLock()) return; // a setup or removal is running; it ends with the same work
@@ -744,7 +739,7 @@ public class EventSpaceOps {
                 if (setup.spaceApplied() && !jobRunning(eventId)) {
                     Plan plan = EventSpace.plan(spaces.gather(guild, event).facts());
                     String note = noteOf(plan);
-                    if (plan.complete() != setup.spaceComplete() || !note.equals(setup.spaceNote())) events.markSpace(eventId, null, plan.complete(), note);
+                    if (plan.complete() != setup.spaceComplete() || !note.equals(setup.spaceNote())) events.markSpace(guildId, eventId, plan.complete(), note);
                 }
             } finally {
                 lock.unlock();

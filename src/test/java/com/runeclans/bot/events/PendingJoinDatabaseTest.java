@@ -1,11 +1,8 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.points.PointsRepository;
-import com.runeclans.bot.points.PointsService;
-import com.runeclans.bot.points.RewardsRepository;
+import com.runeclans.bot.hubevents.HubEventMap;
 import com.runeclans.bot.testsupport.LocalDatabase;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
-import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,47 +12,52 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The co-host panel and pending-join records over real SQL (T-221). Runs over the developer's local Postgres (skipped without one). */
+/** Pending joins and panels of co-host servers (T-221), keyed by hub events' local ids (T-934), on the developer's local Postgres. Skipped where there is none. */
 class PendingJoinDatabaseTest {
     private static final long HOST = 999_000_000_000_000_081L, ALLY = 999_000_000_000_000_082L, OTHER_HOST = 999_000_000_000_000_083L;
+    private static final UUID CLAN = UUID.randomUUID(), OTHER_CLAN = UUID.randomUUID();
+
     private static ConnectionSupplier supplier;
-    private EventRepository repository;
+    private static HubEventMap map;
     private EventCohostRepository cohosts;
-    private EventService service;
 
     @BeforeAll
     static void connect() throws Exception {
         supplier = LocalDatabase.supplier();
+        map = new HubEventMap(supplier);
     }
 
     @BeforeEach
     void setUp() {
-        repository = new EventRepository(supplier);
-        cohosts = new EventCohostRepository(supplier);
-        service = new EventService(repository, new EventTemplates(List.of(new CustomTemplate())), new EventKinds(null, null) {
-            @Override
-            public TeamRules.Kind kindOf(long hostGuildId, long userGuildId, long userId) {
-                return TeamRules.Kind.HOME_OTHER;
-            }
-        }, new PointsService(new PointsRepository(supplier), new RewardsRepository(supplier)), new EventChanges());
+        cohosts = new EventCohostRepository(supplier, map);
     }
 
     @AfterEach
     void cleanUp() throws Exception {
-        try (Connection c = supplier.getConnection(); PreparedStatement s = c.prepareStatement("DELETE FROM younglings.event WHERE guild_id IN (?, ?)")) {
-            s.setLong(1, HOST);
-            s.setLong(2, OTHER_HOST);
-            s.executeUpdate();
+        try (Connection c = supplier.getConnection()) {
+            for (String table : List.of("event_pending_join", "event_cohost")) {
+                try (PreparedStatement s = c.prepareStatement("DELETE FROM younglings." + table + " WHERE event_id IN (SELECT local_id FROM younglings.hub_event_map WHERE guild_id IN (?, ?))")) {
+                    s.setLong(1, HOST);
+                    s.setLong(2, OTHER_HOST);
+                    s.executeUpdate();
+                }
+            }
+            try (PreparedStatement s = c.prepareStatement("DELETE FROM younglings.hub_event_map WHERE guild_id IN (?, ?)")) {
+                s.setLong(1, HOST);
+                s.setLong(2, OTHER_HOST);
+                s.executeUpdate();
+            }
         }
     }
 
+    /** A hub event of {@code host}, as the bot meets it: a local id in the map. */
     private long event(long host) {
-        return service.createEvent(host, 9L, new EventService.EventInput("Joint event", "", "custom", EventRules.Scope.ALLIANCE, EventRules.ScoringMode.INDIVIDUAL, null, null, 0,
-                DataObject.empty()));
+        return map.localId(UUID.randomUUID(), host == HOST ? CLAN : OTHER_CLAN, host);
     }
 
     @Test

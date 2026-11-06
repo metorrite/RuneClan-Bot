@@ -1,6 +1,7 @@
 package com.runeclans.bot.events;
 
 import com.runeclans.bot.database.SchemaBootstrapper;
+import com.runeclans.bot.hubevents.HubEventMap;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
@@ -35,14 +36,18 @@ public class EventSpaceRepository {
 
     private final ConnectionSupplier connectionSupplier;
 
-    /** The event repository is a dependency only so its tables exist first: these refer to them. */
-    public EventSpaceRepository(ConnectionSupplier connectionSupplier, EventRepository events) {
+    /**
+     * Events are the hub's (T-934): {@code event_id} is the event's local id from {@link HubEventMap}, whose table the server lookups join, so the map is a
+     * dependency only so its table exists first. Rows are no longer tied to the bot's old event table: an event that is gone from the hub has its rows
+     * cleared by {@link EventSpaceOps} instead.
+     */
+    public EventSpaceRepository(ConnectionSupplier connectionSupplier, HubEventMap map) {
         this.connectionSupplier = connectionSupplier;
         SchemaBootstrapper.run(connectionSupplier, log, "event roles and channels", List.of(
                 "CREATE SCHEMA IF NOT EXISTS younglings;",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_role (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     role_key TEXT NOT NULL,
                     role_id BIGINT NOT NULL,
                     name TEXT NOT NULL,
@@ -53,7 +58,7 @@ public class EventSpaceRepository {
                 "CREATE INDEX IF NOT EXISTS event_role_id ON younglings.event_role (role_id);",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_channel (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     channel_key TEXT NOT NULL,
                     channel_id BIGINT NOT NULL,
                     name TEXT NOT NULL,
@@ -64,6 +69,9 @@ public class EventSpaceRepository {
                 );
                 """,
                 "CREATE INDEX IF NOT EXISTS event_channel_id ON younglings.event_channel (channel_id);",
+                // T-934: the rows name hub events by their local id, which the bot's old event table never held
+                "ALTER TABLE younglings.event_role DROP CONSTRAINT IF EXISTS event_role_event_id_fkey;",
+                "ALTER TABLE younglings.event_channel DROP CONSTRAINT IF EXISTS event_channel_event_id_fkey;",
                 // the welcome message JonnyBot posted when it made the channel (T-209), so it is only ever posted once
                 "ALTER TABLE younglings.event_channel ADD COLUMN IF NOT EXISTS welcome_message_id BIGINT NULL;",
                 // who JonnyBot has given each of an event's roles to, so it can take the role back from exactly those people (members who are offline aren't cached)
@@ -204,7 +212,7 @@ public class EventSpaceRepository {
     public Optional<ChannelRow> channelById(long guildId, long channelId) {
         String sql = """
                 SELECT c.event_id, c.channel_key, c.channel_id, c.name, c.owned, c.parent_key FROM younglings.event_channel c
-                JOIN younglings.event e ON e.id = c.event_id WHERE e.guild_id = ? AND c.channel_id = ? ORDER BY c.event_id DESC LIMIT 1
+                JOIN younglings.hub_event_map e ON e.local_id = c.event_id WHERE e.guild_id = ? AND c.channel_id = ? ORDER BY c.event_id DESC LIMIT 1
                 """;
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
             s.setLong(1, guildId);
@@ -220,7 +228,7 @@ public class EventSpaceRepository {
     /** The channels other events of the server already use, so one isn't chosen for two events. Maps the channel to the event. */
     public Map<Long, Long> channelsOfOtherEvents(long guildId, long exceptEventId) {
         String sql = """
-                SELECT c.channel_id, c.event_id FROM younglings.event_channel c JOIN younglings.event e ON e.id = c.event_id
+                SELECT c.channel_id, c.event_id FROM younglings.event_channel c JOIN younglings.hub_event_map e ON e.local_id = c.event_id
                 WHERE e.guild_id = ? AND c.event_id <> ?
                 """;
         Map<Long, Long> used = new LinkedHashMap<>();
@@ -239,9 +247,9 @@ public class EventSpaceRepository {
     /** Ids of the events of the server that have a role or channel recorded, whether or not setting them up finished. */
     public List<Long> eventsWithSpace(long guildId) {
         String sql = """
-                SELECT DISTINCT e.id FROM younglings.event e
-                WHERE e.guild_id = ? AND (EXISTS (SELECT 1 FROM younglings.event_role r WHERE r.event_id = e.id) OR EXISTS (SELECT 1 FROM younglings.event_channel c WHERE c.event_id = e.id))
-                ORDER BY e.id
+                SELECT DISTINCT e.local_id FROM younglings.hub_event_map e
+                WHERE e.guild_id = ? AND (EXISTS (SELECT 1 FROM younglings.event_role r WHERE r.event_id = e.local_id) OR EXISTS (SELECT 1 FROM younglings.event_channel c WHERE c.event_id = e.local_id))
+                ORDER BY e.local_id
                 """;
         List<Long> ids = new ArrayList<>();
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
@@ -313,7 +321,7 @@ public class EventSpaceRepository {
     /** The events of the server in which {@code userId} holds a role JonnyBot gave them. */
     public List<Long> eventsHeldBy(long guildId, long userId) {
         String sql = """
-                SELECT DISTINCT m.event_id FROM younglings.event_role_member m JOIN younglings.event e ON e.id = m.event_id WHERE e.guild_id = ? AND m.user_id = ?
+                SELECT DISTINCT m.event_id FROM younglings.event_role_member m JOIN younglings.hub_event_map e ON e.local_id = m.event_id WHERE e.guild_id = ? AND m.user_id = ?
                 """;
         List<Long> ids = new ArrayList<>();
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
