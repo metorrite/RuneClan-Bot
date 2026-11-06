@@ -6,9 +6,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * The looks a bingo board can have: what its tiles are drawn on. Every board shape has its own picture in each look, and a square grid has a
- * backdrop painted for it. A look is chosen per event ({@code board.look} in the event's settings). Adding a look is one entry here, a picture for
- * each shape (see {@link BingoLayout#image(String)}) and a painter for the grid ({@link BingoBackdrops}).
+ * The looks a bingo board can have: what its tiles are drawn on. A look is chosen per event ({@code board.look} in the event's settings). The
+ * hub draws the picture (T-941, {@code GET /v1/events/{id}/board.png}); the bot only knows the ids so an event's settings can be checked.
  * <p>
  * A board whose settings name no look keeps how it was always drawn: the shapes in their {@link #CLASSIC} pictures, a square grid as the plain dark board.
  */

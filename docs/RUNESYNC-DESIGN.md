@@ -6,7 +6,7 @@ Read with: `docs/LINK-SYSTEM.md` (RuneLink, T-112) and `docs/ECOSYSTEM.md`.
 
 ## 0. In one paragraph
 
-RuneSync is a Lua plugin in each member's own RS3 client. It reports **only the local player's own** XP, loot, boss kills and clue completions to RuneClan Bot's existing plugin ingest API, and only the categories that member has switched on (everything starts off). It does not pair by itself: it depends on **RuneLink** (T-116), asks it for a short-lived signed assertion, and sends that with every batch, so RuneClan Bot knows which Discord member the data belongs to without RuneSync ever holding a secret of its own. The data feeds what already exists (event objectives through `PluginEventFeed`, the points ledger, the member profile) and every setting lives on the website first: the member's profile for personal consent and data, the dashboard for clan settings.
+RuneSync is a Lua plugin in each member's own RS3 client. It reports **only the local player's own** XP, loot, boss kills and clue completions to RuneClan Bot's existing plugin ingest API, and only the categories that member has switched on (everything starts off). It does not pair by itself: it depends on **RuneLink** (T-116), asks it for a short-lived signed assertion, and sends that with every batch, so RuneClan Bot knows which Discord member the data belongs to without RuneSync ever holding a secret of its own. The data feeds what already exists (event objectives through the hub's progress routes, the points ledger, the member profile) and every setting lives on the website first: the member's profile for personal consent and data, the dashboard for clan settings.
 
 ## 1. Hard limits (not design choices)
 
@@ -24,7 +24,7 @@ RuneSync is a Lua plugin in each member's own RS3 client. It reports **only the 
 | Ingest API, schema v1, per-event rejects, 100-event batches, 14-day max age | `plugin/PluginPayload.java`, `internal/PluginApi.java` (`/internal/plugin/ingest`, `whoami`, `me`) | every RuneSync upload |
 | Consent per category, enforced on the server | `plugin/PluginCategory.java`, `PluginRepository` (`plugin_consent`) | gate on what is stored |
 | Idempotent store, retention 180 days | `PluginRepository`, `PluginRetention` | raw events |
-| Event sinks | `PluginEventSink` -> `events/PluginEventFeed` + `PluginObjectiveMatcher` | bingo/scavenger/boss-night auto ticks |
+| Event sinks | `PluginEventSink` -> the hub's progress routes + `PluginObjectiveMatcher` | bingo/scavenger/boss-night auto ticks |
 | Points ledger | `points/*` | per-clan point rules (T-061) |
 | Member profile Plugin tab | website `src/app/profile` (`PluginPanel`, `pluginActions.ts`) | tokens, consent, delete my data |
 | Dashboard coverage page | website `src/app/dashboard/[guildId]/plugin` | clan counts only |

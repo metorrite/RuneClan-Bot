@@ -1,6 +1,5 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.events.BingoBoardImage.TileView;
 import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import com.runeclans.bot.events.EventScoring.Standing;
 import net.dv8tion.jda.api.utils.data.DataArray;
@@ -14,6 +13,17 @@ import java.util.function.Function;
 
 /** Turns an event's board, objectives and standings into the tiles to draw. Pure. */
 public final class BingoBoardView {
+    /** One tile as a board shows it: its number, label and points, whether it is done, how many subjects have it (shared boards), its icon, who had it first, and whether it is still locked. */
+    public record TileView(int number, String label, long points, boolean done, int count, int of, String iconKey, String by, boolean locked) {
+        public TileView(int number, String label, long points, boolean done, int count, int of) {
+            this(number, label, points, done, count, of, null, null, false);
+        }
+
+        public TileView(int number, String label, long points, boolean done, int count, int of, String iconKey) {
+            this(number, label, points, done, count, of, iconKey, null, false);
+        }
+    }
+
     private BingoBoardView() {}
 
     /** The board's objective keys in reading order, or an empty list when the event has no board. */

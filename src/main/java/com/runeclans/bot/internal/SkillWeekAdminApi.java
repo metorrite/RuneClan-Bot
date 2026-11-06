@@ -1,10 +1,9 @@
 package com.runeclans.bot.internal;
 
-import com.runeclans.bot.events.SkillWeekRepository;
+import com.runeclans.bot.events.EventProblem;
 import com.runeclans.bot.events.SkillWeekRules;
 import com.runeclans.bot.events.SkillWeekService;
 import com.runeclans.bot.internal.TicketAdminApi.ApiError;
-import com.runeclans.bot.runescape.RuneScapeSkillCatalog;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
@@ -34,11 +33,9 @@ public class SkillWeekAdminApi implements AdminRouteExtension {
     private static final Logger log = LoggerFactory.getLogger(SkillWeekAdminApi.class);
 
     private final SkillWeekService weeks;
-    private final SkillWeekRepository repository;
 
-    public SkillWeekAdminApi(SkillWeekService weeks, SkillWeekRepository repository) {
+    public SkillWeekAdminApi(SkillWeekService weeks) {
         this.weeks = weeks;
-        this.repository = repository;
     }
 
     @Override
@@ -62,10 +59,14 @@ public class SkillWeekAdminApi implements AdminRouteExtension {
         return overview(guild.getIdLong());
     }
 
-    /** The announcement channel saved now, or null for none. */
+    /** The announcement channel saved now (the hub's), or null for none. */
     private Long savedChannel(long guildId) {
-        SkillWeekRepository.Settings saved = repository.settings(guildId);
-        return saved == null || saved.options() == null ? null : saved.options().announceChannelId();
+        try {
+            String raw = weeks.view(guildId, 1).getString("announceChannelId", null);
+            return raw == null || !raw.matches("\\d{1,20}") ? null : Long.parseLong(raw);
+        } catch (EventProblem e) {
+            return null;
+        }
     }
 
     /** The announcement channel sent, or null for none; a value that isn't a Discord id is refused. */
@@ -82,9 +83,7 @@ public class SkillWeekAdminApi implements AdminRouteExtension {
     }
 
     DataObject overview(long guildId) {
-        DataArray skills = DataArray.empty();
-        for (int id = 0; id < RuneScapeSkillCatalog.skillCount(); id++) skills.add(DataObject.empty().put("id", id).put("name", RuneScapeSkillCatalog.nameFor(id)));
-        return weeks.view(guildId, 10).put("skills", skills).put("maxRota", SkillWeekRules.MAX_ROTA);
+        return weeks.view(guildId, 10);
     }
 
     DataObject save(long guildId, long actorId, DataObject body) {
@@ -98,23 +97,21 @@ public class SkillWeekAdminApi implements AdminRouteExtension {
         }
         String mode = body.getString("mode", "rota");
         if (!mode.equals("rota") && !mode.equals("vote")) throw new ApiError(400, "Choose the rota or a members' vote.");
-        SkillWeekRepository.Options options = new SkillWeekRepository.Options(mode.equals("vote") ? SkillWeekRepository.Mode.VOTE : SkillWeekRepository.Mode.ROTA,
-                channelOf(body), body.getBoolean("autoEnrol", false));
+        Long channel = channelOf(body);
         List<String> problems = SkillWeekRules.rotaProblems(rota, enabled);
-        if (enabled && options.mode() == SkillWeekRepository.Mode.VOTE && rota.size() < 2) problems.add("A vote needs at least two skills to choose from.");
+        if (enabled && mode.equals("vote") && rota.size() < 2) problems.add("A vote needs at least two skills to choose from.");
         if (enabled && !weeks.available()) problems.add("Skill of the week counts XP from RuneSync, through the RuneClans hub, and this bot isn't connected to it.");
         if (!problems.isEmpty()) throw new ApiError(400, "Skill of the week can't be saved.", problems);
-        repository.save(guildId, enabled, rota, options, actorId);
-        log.info("Dashboard: {} saved skill of the week ({}, {} skills, {}, posts {}, auto-enrol {})", actorId, enabled ? "on" : "off", rota.size(), mode,
-                options.announceChannelId() == null ? "off" : "on", options.autoEnrol() ? "on" : "off");
-        if (enabled) {
-            // this week starts now rather than at the next pass
-            try {
-                weeks.open(guildId, java.time.Instant.now());
-            } catch (RuntimeException e) {
-                log.warn("Could not open skill of the week in {} on saving", guildId, e);
-            }
+        DataObject sent = DataObject.empty().put("enabled", enabled).put("rota", DataArray.fromCollection(rota)).put("mode", mode)
+                .put("announceChannelId", channel == null ? null : Long.toString(channel)).put("autoEnrol", body.getBoolean("autoEnrol", false));
+        DataObject out;
+        try {
+            out = weeks.save(guildId, actorId, sent); // the hub opens this week straight away when switched on
+        } catch (EventProblem e) {
+            throw new ApiError(e.status(), e.getMessage(), e.problems());
         }
-        return overview(guildId);
+        log.info("Dashboard: {} saved skill of the week ({}, {} skills, {}, posts {}, auto-enrol {})", actorId, enabled ? "on" : "off", rota.size(), mode,
+                channel == null ? "off" : "on", body.getBoolean("autoEnrol", false) ? "on" : "off");
+        return out;
     }
 }

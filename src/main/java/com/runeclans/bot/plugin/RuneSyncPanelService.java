@@ -4,7 +4,6 @@ import com.runeclans.bot.discord.DiscordLookups;
 import com.runeclans.bot.discord.DiscordLookups.MemberLookup;
 import com.runeclans.bot.discord.DiscordLookups.Outcome;
 import com.runeclans.bot.discord.Shards;
-import com.runeclans.bot.events.BingoBoardImage;
 import com.runeclans.bot.events.BingoBoardView;
 import com.runeclans.bot.events.BingoTemplate;
 import com.runeclans.bot.events.EventRepository;
@@ -240,7 +239,7 @@ public class RuneSyncPanelService {
     }
 
     /** A board for the client: its width and each tile's label and whether it is done (tiles in reading order). */
-    static DataObject board(List<BingoBoardImage.TileView> tiles, int size) {
+    static DataObject board(List<BingoBoardView.TileView> tiles, int size) {
         DataArray cells = DataArray.empty();
         for (var t : tiles) cells.add(DataObject.empty().put("label", t.label()).put("done", t.done()).put("locked", t.locked()));
         int width = size > 0 ? size : (int) Math.ceil(Math.sqrt(Math.max(1, tiles.size())));
