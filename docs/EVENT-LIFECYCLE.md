@@ -1,5 +1,7 @@
 # The event lifecycle project
 
+> **T-942 (2026-11-06):** the bot dashboard's event manager is gone. Events are set up and run on runeclans.com (`/events/host`) against the RuneClans hub; the bot's dashboard routes below (`EventsAdminApi`, `EventSetupApi`, `EventWinApi`, `EventUpdatesApi`, `EventWrapupApi`, `EventSpaceApi`, `EventCohostApi`, `BingoPoolAdminApi`) were deleted. The Discord-side classes this page describes (spaces, wrap-up steps, boards, panels) stay. Read the route and test names below as history.
+
 What was asked for, what has been decided, what is built, and what is next for the event lifecycle (first written 2026-10-17).
 
 ## The goal

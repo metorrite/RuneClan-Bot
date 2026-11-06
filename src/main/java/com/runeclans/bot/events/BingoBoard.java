@@ -195,7 +195,7 @@ public final class BingoBoard {
 
     public static final String POOL_DROPS = "drops";
     public static final String POOL_CLASSIC = "classic";
-    /** The server's own tiles, kept in the event itself ({@code board.tiles}); see {@link BingoPools}. */
+    /** The server's own tiles, kept in the event itself ({@code board.tiles}); the hub keeps the pool. */
     public static final String POOL_CUSTOM = "custom";
 
     /** The tile pools an organiser can start a board from. */
