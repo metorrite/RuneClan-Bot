@@ -92,6 +92,9 @@ public class HubEvents {
     @BEventListener
     public void onJdaReady(InjectedJDAEvent event) {
         this.selfId = event.getJda().getSelfUser().getIdLong();
+        // the hub counts competitions and XP tiles from RuneSync's XP (T-885), so both are offered whenever the bot talks to it (T-941)
+        com.runeclans.bot.events.CompetitionTemplate.offerPluginSource(hub.enabled());
+        com.runeclans.bot.events.PluginObjectiveMatcher.offerXpTiles(hub.enabled());
     }
 
     /** For tests: the bot's own user id without a JDA start-up event. */
@@ -544,6 +547,12 @@ public class HubEvents {
         return claim;
     }
 
+    /** The proof behind a claim, once the bot has re-hosted it (T-945 {@code PATCH .../claims/{claimId}}): the review channel's copy outlives the player's own attachment link. */
+    public void setClaimProof(long guildId, long id, long claimId, String proofUrl) {
+        UUID claimHub = map.hubId(HubEventMap.CLAIM, claimId).orElseThrow(() -> new EventProblem(404, "That claim doesn't exist."));
+        hub.send("PATCH", path(guildId, id) + "/claims/" + claimHub, DataObject.empty().put("proofUrl", proofUrl), self(guildId));
+    }
+
     public Optional<Claim> claim(long eventId, long claimId) {
         HubEventMap.Row row = row(eventId);
         Optional<UUID> claimHub = map.hubId(HubEventMap.CLAIM, claimId);
@@ -608,8 +617,80 @@ public class HubEvents {
         hub.send("POST", path(guildId, id) + "/space/applied", DataObject.empty().put("applied", false), self(guildId));
     }
 
-    /** A clan invited to co-host the event, and its answer ({@code INVITED}, {@code ACCEPTED}, {@code DECLINED}). */
-    public record Cohost(UUID clanId, String clanName, String status, Integer quota) {}
+    // ---------- how the event is won, its draws, and its wrap-up (T-941: the hub's, the bot only shows and reports) ----------
+
+    /** {@code GET .../win}: the rules in words, who would qualify for a draw now, the finishing order so far and the draw (organisers). */
+    public DataObject win(long guildId, long id, Actor actor) {
+        return hub.get(path(guildId, id) + "/win", actor);
+    }
+
+    /** {@code PUT .../win}: the win rules; the hub refuses them once the winners are drawn or the awards worked out. */
+    public DataObject saveWin(long guildId, long id, DataObject settings, Actor actor) {
+        return hub.send("PUT", path(guildId, id) + "/win", settings, actor);
+    }
+
+    /** "Draw now": the hub draws the winners and announces them ({@code clan_event.draw}, posted by {@link HubEventPosts}). */
+    public DataObject drawNow(long guildId, long id, Actor actor) {
+        return hub.send("POST", path(guildId, id) + "/win/draw", DataObject.empty(), actor);
+    }
+
+    /** Draws again for {@code place}, whose winner didn't claim. */
+    public DataObject reroll(long guildId, long id, int place, Actor actor) {
+        return hub.send("POST", path(guildId, id) + "/win/reroll", DataObject.empty().put("place", place), actor);
+    }
+
+    /** {@code GET .../wrapup}: the wrap-up setting, which Discord steps are done and when the rest are due (organisers and the bot itself). */
+    public DataObject wrapup(long guildId, long id) {
+        return hub.get(path(guildId, id) + "/wrapup", Actor.APP);
+    }
+
+    /** The wrap-up as {@link #wrapup}, read with the local id only (the sweep knows the event, not the server it ran in). */
+    public DataObject wrapupById(long id) {
+        return hub.get("/v1/events/" + row(id).hubId() + "/wrapup", Actor.APP);
+    }
+
+    /**
+     * Tells the hub a wrap-up step was done in Discord ({@code POST .../wrapup {step, how?}}): {@code lock}, {@code roles} or {@code channels}
+     * (with how: archived, compressed or deleted). A step the hub already has is fine (409: nothing changes).
+     */
+    public void recordWrapup(long guildId, long id, String step, String how) {
+        DataObject body = DataObject.empty().put("step", step);
+        if (how != null) body.put("how", how);
+        try {
+            hub.send("POST", path(guildId, id) + "/wrapup", body, self(guildId));
+        } catch (EventProblem e) {
+            if (e.status() != 409) throw e;
+        }
+    }
+
+    /** The hub's CSV export of the event (its data, roster, progress and claims), for a link on the dashboard: the hub's own route, read with the app's key. */
+    public String exportPath(long id) {
+        return "/v1/events/" + row(id).hubId() + "/export.csv";
+    }
+
+    /**
+     * Sets (or clears) the Discord channel a co-host clan's signup panel goes in, on the hub's co-host row ({@code PUT .../cohosts/{clanId}/channel},
+     * T-941): the co-host's own staff, acting from their server.
+     */
+    public void setCohostChannel(long eventId, UUID clanId, Long channelId, Actor actor) {
+        HubEventMap.Row row = map.event(eventId).orElseThrow(() -> new EventProblem(404, "That event doesn't exist."));
+        hub.send("PUT", "/v1/events/" + row.hubId() + "/cohosts/" + clanId + "/channel", DataObject.empty().put("panelChannelId", channelId == null ? null : Long.toString(channelId)), actor);
+    }
+
+    // ---------- the clan's bingo tile pool (the hub's, T-941) ----------
+
+    /** {@code GET /v1/clans/{clanId}/bingo-pool}: the server's clan's tiles, the starter packs, the difficulties and the limits. */
+    public DataObject bingoPool(long guildId, Actor actor) {
+        return hub.get("/v1/clans/" + requireClan(guildId) + "/bingo-pool", actor);
+    }
+
+    /** A write to the clan's bingo pool: {@code path} is what follows {@code /bingo-pool} ({@code /tiles}, {@code /tiles/{id}}, {@code /seed}, {@code /clear}). */
+    public DataObject bingoPool(String method, long guildId, String path, DataObject body, Actor actor) {
+        return hub.send(method, "/v1/clans/" + requireClan(guildId) + "/bingo-pool" + path, body, actor);
+    }
+
+    /** A clan invited to co-host the event, its answer ({@code INVITED}, {@code ACCEPTED}, {@code DECLINED}) and, once accepted, its own panel channel (T-941). */
+    public record Cohost(UUID clanId, String clanName, String status, Integer quota, Long panelChannelId) {}
 
     public List<Cohost> cohosts(long eventId) {
         HubEventMap.Row row = row(eventId);
@@ -619,7 +700,8 @@ public class HubEvents {
             DataObject h = list.getObject(i);
             UUID clan = uuid(h.getString("clanId", null));
             if (clan == null) continue;
-            out.add(new Cohost(clan, h.getString("clanName", ""), h.getString("status", ""), h.hasKey("quota") && !h.isNull("quota") ? h.getInt("quota") : null));
+            long panel = discordId(h.getString("panelChannelId", null));
+            out.add(new Cohost(clan, h.getString("clanName", ""), h.getString("status", ""), h.hasKey("quota") && !h.isNull("quota") ? h.getInt("quota") : null, panel == 0 ? null : panel));
         }
         return out;
     }

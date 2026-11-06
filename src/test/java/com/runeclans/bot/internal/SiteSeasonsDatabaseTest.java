@@ -5,7 +5,6 @@ import com.runeclans.bot.discord.jobs.DiscordOutbox;
 import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventScoring.Standing;
 import com.runeclans.bot.events.EventService;
-import com.runeclans.bot.events.EventWrapupRepository;
 import com.runeclans.bot.internal.SeasonRules.Row;
 import com.runeclans.bot.internal.SeasonRules.Season;
 import com.runeclans.bot.internal.SeasonRules.Weights;
@@ -64,7 +63,6 @@ class SiteSeasonsDatabaseTest {
         supplier = LocalDatabase.supplier();
         RuneScapeDatabaseInitializer schema = new RuneScapeDatabaseInitializer(supplier);
         EventRepository repo = new EventRepository(supplier);
-        new EventWrapupRepository(supplier, repo);
         store = new SiteSeasonStore(supplier, schema, repo);
     }
 

@@ -30,6 +30,7 @@ import java.util.UUID;
  *       signup attached to it, its panel and its update post.</li>
  *   <li>{@code hub_event_ids}: the same for a hub team or claim named in a button or an option (kind, local id, hub id).</li>
  *   <li>{@code hub_event_board_panel}: the board messages posted for an event, by subject.</li>
+ *   <li>{@code hub_event_cohost_panel}: the signup panel message posted in each co-host server (its channel is on the hub's co-host row, T-941).</li>
  *   <li>{@code hub_event_claim_receipt}: the receipt posted in a player's channel for a claim.</li>
  *   <li>{@code hub_event_signup_entry}: which players came in from the event's Discord signup, so the signup sweep knows whom to follow.</li>
  *   <li>{@code hub_event_signup_refusal}: a Discord signup entry the hub turned away, and why, told to the player once.</li>
@@ -115,6 +116,15 @@ public class HubEventMap {
                     event_local_id BIGINT NOT NULL REFERENCES younglings.hub_event_map (local_id) ON DELETE CASCADE,
                     user_id BIGINT NOT NULL,
                     PRIMARY KEY (event_local_id, user_id)
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS younglings.hub_event_cohost_panel (
+                    event_local_id BIGINT NOT NULL REFERENCES younglings.hub_event_map (local_id) ON DELETE CASCADE,
+                    guild_id BIGINT NOT NULL,
+                    channel_id BIGINT NOT NULL,
+                    message_id BIGINT NOT NULL,
+                    PRIMARY KEY (event_local_id, guild_id)
                 );
                 """,
                 """
@@ -325,6 +335,56 @@ public class HubEventMap {
                 s.setLong(3, channelId);
                 s.setLong(4, messageId);
                 s.setString(5, hash);
+                s.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** A signup panel message the bot posted in a co-host server for the event (the channel to use is the hub's co-host row's, T-941). */
+    public record CohostPanel(long guildId, long channelId, long messageId) {}
+
+    /** The co-host panel messages the bot posted for the event, by server. */
+    public List<CohostPanel> cohostPanels(long eventLocalId) {
+        return sql(c -> {
+            try (PreparedStatement s = c.prepareStatement("SELECT guild_id, channel_id, message_id FROM younglings.hub_event_cohost_panel WHERE event_local_id = ?")) {
+                s.setLong(1, eventLocalId);
+                try (ResultSet rs = s.executeQuery()) {
+                    List<CohostPanel> out = new ArrayList<>();
+                    while (rs.next()) out.add(new CohostPanel(rs.getLong(1), rs.getLong(2), rs.getLong(3)));
+                    return out;
+                }
+            }
+        });
+    }
+
+    /** The panel message posted in {@code guildId} for the event, if one is up. */
+    public Optional<CohostPanel> cohostPanel(long eventLocalId, long guildId) {
+        return cohostPanels(eventLocalId).stream().filter(p -> p.guildId() == guildId).findFirst();
+    }
+
+    /** Remembers the co-host panel message of the event in {@code guildId}. */
+    public void setCohostPanel(long eventLocalId, long guildId, long channelId, long messageId) {
+        sql(c -> {
+            try (PreparedStatement s = c.prepareStatement("""
+                    INSERT INTO younglings.hub_event_cohost_panel (event_local_id, guild_id, channel_id, message_id) VALUES (?, ?, ?, ?)
+                    ON CONFLICT (event_local_id, guild_id) DO UPDATE SET channel_id = EXCLUDED.channel_id, message_id = EXCLUDED.message_id""")) {
+                s.setLong(1, eventLocalId);
+                s.setLong(2, guildId);
+                s.setLong(3, channelId);
+                s.setLong(4, messageId);
+                s.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** Forgets the co-host panel message of the event in {@code guildId} (it was deleted, or is gone). */
+    public void clearCohostPanel(long eventLocalId, long guildId) {
+        sql(c -> {
+            try (PreparedStatement s = c.prepareStatement("DELETE FROM younglings.hub_event_cohost_panel WHERE event_local_id = ? AND guild_id = ?")) {
+                s.setLong(1, eventLocalId);
+                s.setLong(2, guildId);
                 s.executeUpdate();
             }
             return null;

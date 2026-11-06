@@ -75,7 +75,7 @@ class EventCohostPanelRouteTest {
         when(events.setConfig(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(cohosts.forGuild(anyLong())).thenReturn(List.of());
         when(cohosts.forEvent(EVENT)).thenReturn(List.of());
-        when(cohosts.panel(anyLong(), anyLong())).thenReturn(Optional.empty());
+        when(panels.panel(anyLong(), anyLong())).thenReturn(Optional.empty());
     }
 
     /** The ally's server, where JonnyBot may post in {@link #CHANNEL} if {@code canPost}. */
@@ -98,8 +98,7 @@ class EventCohostPanelRouteTest {
         when(cohosts.get(EVENT, ALLY)).thenReturn(Optional.of(new Cohost(EVENT, ALLY, Status.INVITED, 7L, null, NOW, null)));
         when(cohosts.decide(EVENT, ALLY, Status.INVITED, Status.ACCEPTED, 7L)).thenReturn(true);
         call(ally(true), "POST", "cohost-events/42/accept", "{\"panelChannelId\":\"" + CHANNEL + "\"}");
-        verify(cohosts).setPanelChannel(EVENT, ALLY, CHANNEL);
-        verify(panels).post(event, ALLY);
+        verify(panels).setChannel(eq(event), eq(ALLY), eq(CHANNEL), Mockito.any());
     }
 
     @Test
@@ -116,9 +115,7 @@ class EventCohostPanelRouteTest {
         assertThrows(ApiError.class, () -> call(ally(true), "PUT", "cohost-events/42/panel", "{\"panelChannelId\":\"" + CHANNEL + "\"}"));
         when(cohosts.get(EVENT, ALLY)).thenReturn(Optional.of(new Cohost(EVENT, ALLY, Status.ACCEPTED, 7L, 8L, NOW, NOW)));
         call(ally(true), "PUT", "cohost-events/42/panel", "{\"panelChannelId\":\"" + CHANNEL + "\"}");
-        verify(panels).remove(event, ALLY);
-        verify(cohosts).setPanelChannel(EVENT, ALLY, CHANNEL);
-        verify(panels).post(event, ALLY);
+        verify(panels).setChannel(eq(event), eq(ALLY), eq(CHANNEL), Mockito.any());
     }
 
     @Test

@@ -2,7 +2,6 @@ package com.runeclans.bot.leagues;
 
 import com.runeclans.bot.events.ClanVsClan;
 import com.runeclans.bot.events.EventChanges;
-import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventRoster;
@@ -10,7 +9,7 @@ import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Scope;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.events.PrizeRules.BuyInStatus;
 import com.runeclans.bot.events.TeamRules.Kind;
 import com.runeclans.bot.runeclans.HubWriteQueue;
@@ -48,8 +47,7 @@ class LeagueReporterTest {
     private final Map<String, RuneClansHubClient.Read> answers = new HashMap<>();
     private final List<String> written = new ArrayList<>();
     private int forgotten;
-    private EventRepository events;
-    private EventService service;
+    private HubEvents events;
     private LeagueReporter reporter;
     private LeagueHub hub;
 
@@ -87,11 +85,10 @@ class LeagueReporterTest {
         for (long g : new long[] {HOST, GUEST}) {
             answers.put("/v1/guilds/" + g + "/site", new RuneClansHubClient.Read(new RuneClansHubClient.Answer(200, DataObject.empty().put("clanId", g == HOST ? "c1" : "c2")), false, false));
         }
-        events = mock(EventRepository.class);
-        service = mock(EventService.class);
+        events = mock(HubEvents.class);
         when(events.participants(77)).thenReturn(List.of(player(1, 10L), player(2, 10L), player(4, 20L)));
-        when(service.standings(HOST, 77)).thenReturn(List.of(new Standing("t:10", 340, 3, Map.of(), null), new Standing("t:20", 120, 1, Map.of(), null)));
-        reporter = new LeagueReporter(events, service, hub, new EventChanges());
+        when(events.standings(HOST, 77)).thenReturn(List.of(new Standing("t:10", 340, 3, Map.of(), null), new Standing("t:20", 120, 1, Map.of(), null)));
+        reporter = new LeagueReporter(events, hub, new EventChanges());
     }
 
     @Test
@@ -118,34 +115,34 @@ class LeagueReporterTest {
         assertEquals(409, reporter.report(done).status(), "a clan without a hub clan: nothing goes out");
         assertEquals(1, written.size(), "no refusal reached the hub");
         assertEquals(1, forgotten);
-        assertEquals(503, new LeagueReporter(events, service, LeagueHub.off(), new EventChanges()).report(done).status());
+        assertEquals(503, new LeagueReporter(events, LeagueHub.off(), new EventChanges()).report(done).status());
     }
 
     @Test
     void onlyADoneEventIsReportedAndACancelledOneIsDetached() {
         hubSays(round(2, 77L, "running", true));
-        when(events.event(HOST, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.RUNNING)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.RUNNING)));
         reporter.onStage(HOST, 77);
         assertTrue(written.isEmpty(), "a running event has no result to report");
-        when(events.event(HOST, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.SCORING)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.SCORING)));
         reporter.onStage(HOST, 77);
         assertTrue(written.isEmpty(), "nor a scoring one");
-        when(events.event(HOST, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.DONE)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.DONE)));
         reporter.onStage(HOST, 77);
         assertEquals(1, written.size());
         assertTrue(written.get(0).contains("/rounds/2/results "), written.get(0));
-        when(events.event(HOST, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.CANCELLED)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.CANCELLED)));
         reporter.onStage(HOST, 77);
         assertEquals(2, written.size());
         assertTrue(written.get(1).contains("/rounds/2/event ") && written.get(1).contains("\"eventId\":null"), "a cancelled event is detached: " + written.get(1));
         assertEquals(2, forgotten);
-        when(events.event(HOST, 78)).thenReturn(Optional.of(event(78, "bingo", Status.DONE)));
+        when(events.eventById(78)).thenReturn(Optional.of(event(78, "bingo", Status.DONE)));
         reporter.onStage(HOST, 78);
-        when(events.event(HOST, 79)).thenReturn(Optional.empty());
+        when(events.eventById(79)).thenReturn(Optional.empty());
         reporter.onStage(HOST, 79);
         assertEquals(2, written.size(), "a bingo event and a missing one write nothing");
         hubSays(round(2, 77L, "final", true));
-        when(events.event(HOST, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.CANCELLED)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.CANCELLED)));
         reporter.onStage(HOST, 77);
         assertEquals(2, written.size(), "a final round keeps its event");
         assertFalse(reporter.detach(event(77, ClanVsClan.KEY, Status.CANCELLED)).ok());

@@ -289,13 +289,13 @@ public class SiteSeasonStore {
     // ---------- event wins ----------
 
     /**
-     * The server's events that finished inside {@code [from, to)}: status DONE, finished when the wrap-up noted it, or else at its end time.
-     * Cancelled events never count.
+     * The server's old bot-table events that finished inside {@code [from, to)}: status DONE, finished at its end time (the wrap-up record is the hub's
+     * since T-941). Cancelled events never count.
      */
     public List<Long> eventsFinishedBetween(long guildId, OffsetDateTime from, OffsetDateTime to) {
         String sql = """
-                SELECT e.id FROM younglings.event e LEFT JOIN younglings.event_wrapup w ON w.event_id = e.id
-                WHERE e.guild_id = ? AND e.status = 'DONE' AND COALESCE(w.finished_at, e.ends_at, e.updated_at) >= ? AND COALESCE(w.finished_at, e.ends_at, e.updated_at) < ?
+                SELECT e.id FROM younglings.event e
+                WHERE e.guild_id = ? AND e.status = 'DONE' AND COALESCE(e.ends_at, e.updated_at) >= ? AND COALESCE(e.ends_at, e.updated_at) < ?
                 ORDER BY e.id
                 """;
         try (Connection c = connection(); PreparedStatement s = c.prepareStatement(sql)) {
