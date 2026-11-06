@@ -7,6 +7,8 @@ import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.Scope;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -14,9 +16,12 @@ import org.mockito.Mockito;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -25,15 +30,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Joining from a co-host's signup panel (T-221): someone in the host's Discord joins at once with the co-host as their origin; someone who isn't gets the
- * invite and a pending join; a pending join completes when they join the host's Discord while signups are open, and is gone either way after.
+ * Joining from a co-host's signup panel (T-221, on hub events since T-934): someone in the host's Discord joins at once with the co-host's clan as their
+ * origin; someone who isn't gets the invite and a pending join; a pending join completes when they join the host's Discord while signups are open, and is
+ * gone either way after. Whether a server co-hosts is the hub's word.
  */
 class CohostPanelsTest {
     private static final long HOST = 100, ALLY = 200, EVENT = 42, USER = 7;
+    private static final UUID ALLY_CLAN = UUID.randomUUID();
     private static final Instant NOW = Instant.parse("2026-10-22T10:00:00Z");
+    private static final Actor BOT = Actor.of(77L, HOST, true);
 
-    private EventRepository events;
-    private EventService service;
+    private HubEvents events;
     private EventCohostRepository cohosts;
     private GuildSettingsService guildSettings;
     private CohostPanels panels;
@@ -41,21 +48,22 @@ class CohostPanelsTest {
 
     @BeforeEach
     void setUp() {
-        events = mock(EventRepository.class);
-        service = mock(EventService.class);
+        events = mock(HubEvents.class);
         cohosts = mock(EventCohostRepository.class);
         guildSettings = mock(GuildSettingsService.class, Mockito.RETURNS_DEEP_STUBS);
         ClanProfileRepository profiles = mock(ClanProfileRepository.class);
         when(profiles.get(anyLong())).thenReturn(Optional.empty());
         when(guildSettings.getEffective(HOST).inviteUrl()).thenReturn("https://discord.gg/example");
-        panels = new CohostPanels(events, service, cohosts,
+        panels = new CohostPanels(events, cohosts,
                 new com.runeclans.bot.clanprofile.JoinLinks(guildSettings, mock(com.runeclans.bot.clanprofile.ClanRecruitingRepository.class, Mockito.RETURNS_DEEP_STUBS)),
                 profiles, new EventChanges());
         event = new Event(EVENT, HOST, "bingo", "Joint Bingo", "", Status.SIGNUPS, Scope.ALLIANCE, ScoringMode.INDIVIDUAL, NOW.plusSeconds(86_400), null, 0, "{}", 1, NOW, null, false);
         when(events.eventById(EVENT)).thenReturn(Optional.of(event));
-        EventRepository.Setup open = mock(EventRepository.Setup.class);
-        when(events.setup(EVENT)).thenReturn(open);
-        when(service.settingsOf(event)).thenReturn(EventSettings.defaults());
+        when(events.setup(EVENT)).thenReturn(EventRepository.Setup.NONE);
+        when(events.settingsOf(event)).thenReturn(EventSettings.defaults());
+        when(events.self(HOST)).thenReturn(BOT);
+        when(events.clanOf(ALLY)).thenReturn(Optional.of(ALLY_CLAN));
+        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "ACCEPTED", null)));
     }
 
     @Test
@@ -68,44 +76,51 @@ class CohostPanelsTest {
     }
 
     @Test
+    void whetherAServerCoHostsIsTheHubsWord() {
+        assertEquals(ALLY_CLAN, panels.acceptedCohost(EVENT, ALLY));
+        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "INVITED", null)));
+        assertNull(panels.acceptedCohost(EVENT, ALLY), "invited but not accepted");
+        when(events.clanOf(ALLY)).thenReturn(Optional.empty());
+        assertNull(panels.acceptedCohost(EVENT, ALLY), "a server with no clan on the hub co-hosts nothing");
+    }
+
+    @Test
     void someoneInTheHostsDiscordJoinsAtOnceThroughTheCoHost() {
-        when(service.join(HOST, EVENT, ALLY, USER, null, false, null)).thenReturn(new EventService.Joined(false, 0));
-        String answer = panels.joinNow(event, ALLY, USER);
-        verify(service).join(HOST, EVENT, ALLY, USER, null, false, null);
+        when(events.join(HOST, EVENT, USER, ALLY_CLAN, BOT)).thenReturn(new EventService.Joined(false, 0));
+        String answer = panels.joinNow(event, ALLY_CLAN, USER);
+        verify(events).join(HOST, EVENT, USER, ALLY_CLAN, BOT);
         assertTrue(answer.startsWith("You're in **Joint Bingo**"), answer);
     }
 
     @Test
     void theEventsOwnRulesStillDecide() {
-        when(service.join(HOST, EVENT, ALLY, USER, null, false, null)).thenThrow(new EventProblem(409, "This event isn't open to players from other servers."));
-        assertEquals("This event isn't open to players from other servers.", panels.joinNow(event, ALLY, USER));
+        when(events.join(HOST, EVENT, USER, ALLY_CLAN, BOT)).thenThrow(new EventProblem(409, "This event isn't open to players from other servers."));
+        assertEquals("This event isn't open to players from other servers.", panels.joinNow(event, ALLY_CLAN, USER));
     }
 
     @Test
     void someoneNotInTheHostsDiscordGetsTheInviteAndAPendingJoin() {
         String answer = panels.joinLater(event, ALLY, USER, NOW);
         verify(cohosts).savePendingJoin(EVENT, USER, ALLY, NOW.plusSeconds(86_400));
-        verify(service, never()).join(anyLong(), anyLong(), anyLong(), anyLong(), Mockito.any(), Mockito.anyBoolean(), Mockito.any());
+        verify(events, never()).join(anyLong(), anyLong(), anyLong(), any(UUID.class), any());
         assertTrue(answer.contains("https://discord.gg/example") && answer.contains("automatically"), answer);
     }
 
     @Test
     void joiningTheHostsDiscordCompletesThePendingJoinOnce() {
         when(cohosts.pendingJoins(USER, HOST, NOW)).thenReturn(List.of(new PendingJoin(EVENT, USER, ALLY, NOW.plusSeconds(3_600))));
-        when(service.join(HOST, EVENT, ALLY, USER, null, false, null)).thenReturn(new EventService.Joined(false, 0));
+        when(events.join(HOST, EVENT, USER, ALLY_CLAN, BOT)).thenReturn(new EventService.Joined(false, 0));
         assertEquals(1, panels.completePendingJoins(HOST, USER, NOW));
-        verify(service).join(HOST, EVENT, ALLY, USER, null, false, null);
+        verify(events).join(HOST, EVENT, USER, ALLY_CLAN, BOT);
         verify(cohosts).deletePendingJoin(EVENT, USER);
     }
 
     @Test
     void aPendingJoinForAnEventThatClosedIsDroppedWithoutJoining() {
-        EventRepository.Setup closed = mock(EventRepository.Setup.class);
-        when(closed.signupsClosed()).thenReturn(true);
-        when(events.setup(EVENT)).thenReturn(closed);
+        when(events.setup(EVENT)).thenReturn(new EventRepository.Setup(NOW, null, null, null, null, null, null, null, false, "", null, null));
         when(cohosts.pendingJoins(USER, HOST, NOW)).thenReturn(List.of(new PendingJoin(EVENT, USER, ALLY, NOW.plusSeconds(3_600))));
         assertEquals(0, panels.completePendingJoins(HOST, USER, NOW));
-        verify(service, never()).join(anyLong(), anyLong(), anyLong(), anyLong(), Mockito.any(), Mockito.anyBoolean(), Mockito.any());
+        verify(events, never()).join(anyLong(), anyLong(), anyLong(), any(UUID.class), any());
         verify(cohosts).deletePendingJoin(EVENT, USER);
     }
 
@@ -115,5 +130,13 @@ class CohostPanelsTest {
         Event on = new Event(EVENT, HOST, "bingo", "Joint Bingo", "", Status.RUNNING, Scope.ALLIANCE, ScoringMode.INDIVIDUAL, null, null, 0, "{\"cohostAnnounceStart\":true}", 1, NOW, null, false);
         assertTrue(CohostPanels.announceStart(on));
         verify(cohosts, never()).savePendingJoin(eq(EVENT), anyLong(), anyLong(), Mockito.any());
+    }
+
+    @Test
+    void anEventTheHubDeletedLosesItsPanelsAndPendingJoins() {
+        when(cohosts.panels(EVENT)).thenReturn(List.of(new EventCohostRepository.Panel(EVENT, ALLY, 555L, null)));
+        panels.gone(EVENT);
+        verify(cohosts).setPanelMessage(EVENT, ALLY, null);
+        verify(cohosts).deletePendingJoins(EVENT, null);
     }
 }

@@ -1,6 +1,7 @@
 package com.runeclans.bot.events;
 
 import com.runeclans.bot.database.SchemaBootstrapper;
+import com.runeclans.bot.hubevents.HubEventMap;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
@@ -31,13 +32,14 @@ public class EventCohostRepository {
 
     private final ConnectionSupplier connectionSupplier;
 
-    public EventCohostRepository(ConnectionSupplier connectionSupplier) {
+    /** Events are the hub's (T-934): {@code event_id} is the event's local id from {@link HubEventMap}, whose table the host lookup joins (a dependency so it exists first). */
+    public EventCohostRepository(ConnectionSupplier connectionSupplier, HubEventMap map) {
         this.connectionSupplier = connectionSupplier;
         SchemaBootstrapper.run(connectionSupplier, log, "event co-hosts", List.of(
                 "CREATE SCHEMA IF NOT EXISTS younglings;",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_cohost (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     guild_id BIGINT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'INVITED',
                     invited_by BIGINT NULL,
@@ -55,7 +57,7 @@ public class EventCohostRepository {
                 "ALTER TABLE younglings.event_cohost ADD COLUMN IF NOT EXISTS panel_message_id BIGINT NULL;",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_pending_join (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     user_id BIGINT NOT NULL,
                     origin_guild_id BIGINT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -63,7 +65,10 @@ public class EventCohostRepository {
                     PRIMARY KEY (event_id, user_id)
                 );
                 """,
-                "CREATE INDEX IF NOT EXISTS event_pending_join_user ON younglings.event_pending_join (user_id);"));
+                "CREATE INDEX IF NOT EXISTS event_pending_join_user ON younglings.event_pending_join (user_id);",
+                // T-934: the rows name hub events by their local id, which the bot's old event table never held
+                "ALTER TABLE younglings.event_cohost DROP CONSTRAINT IF EXISTS event_cohost_event_id_fkey;",
+                "ALTER TABLE younglings.event_pending_join DROP CONSTRAINT IF EXISTS event_pending_join_event_id_fkey;"));
     }
 
     // ---------- the co-host's signup panel (T-221) ----------
@@ -152,7 +157,7 @@ public class EventCohostRepository {
         List<PendingJoin> list = new ArrayList<>();
         String sql = """
                 SELECT p.event_id, p.user_id, p.origin_guild_id, p.expires_at FROM younglings.event_pending_join p
-                JOIN younglings.event e ON e.id = p.event_id WHERE p.user_id = ? AND e.guild_id = ? AND p.expires_at > ? ORDER BY p.created_at
+                JOIN younglings.hub_event_map e ON e.local_id = p.event_id WHERE p.user_id = ? AND e.guild_id = ? AND p.expires_at > ? ORDER BY p.created_at
                 """;
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
             s.setLong(1, userId);

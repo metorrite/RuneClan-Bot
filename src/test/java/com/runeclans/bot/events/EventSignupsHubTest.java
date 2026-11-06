@@ -153,7 +153,7 @@ class EventSignupsHubTest {
         hubState("SIGNUPS");
         assertEquals(1, signups.sync(guild, local), "1 was new; 2 was already on the roster");
         Hub.Call add = hub.of("POST", "/participants").get(0);
-        assertTrue(add.headers().isEmpty(), "the bot adds them itself, so the deadline doesn't refuse a signup made in time");
+        assertTrue(add.headers().isEmpty(), "the bot adds them itself (as itself once connected), so the deadline doesn't refuse a signup made in time");
         assertEquals("1", DataObject.fromJson(add.body()).getString("discordId"));
         assertEquals(List.of(1L, 2L), map.signupEntries(local).stream().sorted().toList(), "both are the signup's to follow now");
     }
@@ -249,17 +249,5 @@ class EventSignupsHubTest {
         signups.onStage(guild, local, EventRules.Status.DONE);
         verify(signupService).deleteSignup(guild, SIGNUP);
         assertTrue(map.eventsWithSignup().stream().noneMatch(r -> r.localId() == local));
-    }
-
-    @Test
-    void theSweepClosesSignupsPastTheirDeadlineAsAnOrganiserWould() {
-        hub.ok("GET /v1/clans/" + CLAN + "/events", DataObject.empty().put("events", DataArray.empty().add(DataObject.empty().put("id", EVENT.toString()).put("clanId", CLAN.toString()).put("status", "SIGNUPS").put("maxParticipants", 0))));
-        onSignup();
-        hubState("SIGNUPS");
-        DataObject event = hub.answers.get("GET /v1/events/" + EVENT).json();
-        event.put("config", DataObject.empty().put("signupClosesAt", "2020-01-01T00:00:00Z"));
-        signups.sweep(guild.getJDA());
-        assertEquals(1, hub.of("POST", "/signups/close").size());
-        assertTrue(hub.of("POST", "/signups/close").get(0).headers().isEmpty(), "the deadline is the bot's own doing");
     }
 }

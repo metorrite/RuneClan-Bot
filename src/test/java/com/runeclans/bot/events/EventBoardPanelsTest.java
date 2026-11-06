@@ -6,11 +6,14 @@ import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import com.runeclans.bot.events.EventRules.Scope;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
+import com.runeclans.bot.events.EventScoring.Standing;
+import com.runeclans.bot.hubevents.HubEventMap;
+import com.runeclans.bot.hubevents.HubEvents;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
-import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel;
 import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,11 +22,14 @@ import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -31,29 +37,33 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/** The live board in Discord, drawn by the hub (T-934): when it is posted, where, and what is said when it can't be. */
 class EventBoardPanelsTest {
     private static final long GUILD = 5L;
     private static final long EVENT = 11L;
     private static final long CHANNEL = 777L;
+    private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G'};
 
-    private EventRepository repository;
-    private EventService service;
+    private HubEvents events;
+    private HubEventMap map;
     private EventBoardPanels panels;
     private EventSpaceRepository space;
     private Guild guild;
     private GuildMessageChannel channel;
     private final List<String> calls = new ArrayList<>();
+    private final List<String> sent = new ArrayList<>();
 
     @BeforeEach
     void setUp() throws Exception {
-        repository = mock(EventRepository.class);
-        service = mock(EventService.class);
-        BingoTiles tiles = mock(BingoTiles.class);
+        events = mock(HubEvents.class);
+        map = mock(HubEventMap.class);
+        when(events.map()).thenReturn(map);
         space = mock(EventSpaceRepository.class);
-        panels = new EventBoardPanels(repository, service, space, new EventChanges(), tiles);
+        panels = new EventBoardPanels(events, space, new EventChanges());
 
         JDA jda = mock(JDA.class);
         guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
         when(jda.getGuildById(GUILD)).thenReturn(guild);
         Field field = EventBoardPanels.class.getDeclaredField("jda");
         field.setAccessible(true);
@@ -67,41 +77,6 @@ class EventBoardPanelsTest {
         when(self.hasPermission(any(GuildChannel.class), any(Permission[].class))).thenReturn(true);
         when(guild.getSelfMember()).thenReturn(self);
 
-        MessageCreateAction action = mock(MessageCreateAction.class, invocation -> {
-            calls.add(invocation.getMethod().getName());
-            return invocation.getMethod().getReturnType().isInstance(invocation.getMock()) ? invocation.getMock() : null;
-        });
-        when(channel.sendMessage(any(CharSequence.class))).thenReturn(action);
-
-        when(service.objectives(EVENT)).thenReturn(List.of(new ObjectiveSpec("t1", "Nex: Torva boots", "", 5, Evidence.EITHER, 1, 1, List.of()),
-                new ObjectiveSpec("t2", "Araxxor: Noxious blade", "", 5, Evidence.EITHER, 1, 1, List.of())));
-        when(service.standings(GUILD, EVENT)).thenReturn(List.of());
-        when(repository.participants(EVENT)).thenReturn(List.of());
-        when(repository.panel(EVENT)).thenReturn(Optional.empty());
-    }
-
-    private void event(String template, Status status, String config) {
-        when(repository.event(GUILD, EVENT)).thenReturn(Optional.of(new Event(EVENT, GUILD, template, "Bingo night", "", status, Scope.PRIVATE, ScoringMode.INDIVIDUAL, null, null, 50, config,
-                1L, Instant.now(), null, false)));
-    }
-
-    private static final String BOARD = "\"board\":{\"keys\":[\"t1\",\"t2\",\"t3\",\"t4\",\"t5\",\"t6\",\"t7\",\"t8\",\"t9\"],\"size\":3}";
-
-    @Test
-    void aRunningBingoWithABoardChannelPostsItsBoardAsAPicture() {
-        event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD + "}");
-
-        String result = panels.refresh(GUILD, EVENT);
-
-        assertEquals("Posted the board in #bingo.", result);
-        verify(channel).sendMessage(any(CharSequence.class));
-        assertTrue(calls.contains("addFiles"), "the board picture is attached: " + calls);
-    }
-
-    @Test
-    void aServerThatCannotDrawTextOnAPictureStillGetsItsBoardAsText() {
-        event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD + "}");
-        List<String> sent = new ArrayList<>();
         when(channel.sendMessage(any(CharSequence.class))).thenAnswer(invocation -> {
             sent.add(invocation.getArgument(0).toString());
             return mock(MessageCreateAction.class, inner -> {
@@ -110,18 +85,55 @@ class EventBoardPanelsTest {
             });
         });
 
-        try (var drawing = org.mockito.Mockito.mockStatic(BingoBoardImage.class)) {
-            drawing.when(() -> BingoBoardImage.render(any(net.dv8tion.jda.api.utils.data.DataObject.class), any(), any(), any(), any()))
-                    .thenThrow(new RuntimeException("Fontconfig head is null, check your fonts or fonts configuration"));
+        when(events.objectives(EVENT)).thenReturn(List.of(new ObjectiveSpec("t1", "Nex: Torva boots", "", 5, Evidence.EITHER, 1, 1, List.of()),
+                new ObjectiveSpec("t2", "Araxxor: Noxious blade", "", 5, Evidence.EITHER, 1, 1, List.of())));
+        when(events.standings(GUILD, EVENT)).thenReturn(List.of());
+        when(events.participants(EVENT)).thenReturn(List.of());
+        when(events.boardPng(anyLong(), anyLong(), anyLong(), anyBoolean())).thenReturn(PNG);
+        when(map.event(EVENT)).thenReturn(Optional.empty());
+        when(map.boardPanels(EVENT)).thenReturn(Map.of());
+    }
 
-            String result = panels.refresh(GUILD, EVENT);
+    private Event event(String template, Status status, String config) {
+        Event event = new Event(EVENT, GUILD, template, "Bingo night", "", status, Scope.PRIVATE, ScoringMode.INDIVIDUAL, null, null, 50, config, 1L, Instant.now(), null, false);
+        when(events.event(GUILD, EVENT)).thenReturn(event);
+        return event;
+    }
 
-            assertTrue(result.startsWith("Posted the board in #bingo."), result);
-            assertTrue(result.contains("as text"), result);
-        }
+    private static final String BOARD = "\"board\":{\"keys\":[\"t1\",\"t2\",\"t3\",\"t4\",\"t5\",\"t6\",\"t7\",\"t8\",\"t9\"],\"size\":3}";
+
+    @Test
+    void aRunningBingoWithABoardChannelPostsTheHubsPicture() {
+        event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD + "}");
+
+        String result = panels.refresh(GUILD, EVENT);
+
+        assertEquals("Posted the board in #bingo.", result);
+        verify(channel).sendMessage(any(CharSequence.class));
+        verify(events).boardPng(GUILD, EVENT, 0, false);
+        assertTrue(calls.contains("addFiles"), "the board picture is attached: " + calls);
+    }
+
+    @Test
+    void theBoardChannelTheBotMadeIsUsedWhenTheSettingsNameNone() {
+        event(BingoTemplate.KEY, Status.RUNNING, "{" + BOARD + "}");
+        when(space.channels(EVENT)).thenReturn(List.of(new EventSpaceRepository.ChannelRow(EVENT, "board", CHANNEL, "bingo", true, "category")));
+        assertEquals("Posted the board in #bingo.", panels.refresh(GUILD, EVENT));
+    }
+
+    @Test
+    void whenTheHubCannotDrawThePictureTheBoardIsPostedAsText() {
+        event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD + "}");
+        when(events.boardPng(anyLong(), anyLong(), anyLong(), anyBoolean())).thenThrow(new EventProblem(503, "The board picture couldn't be drawn right now."));
+        when(events.standings(GUILD, EVENT)).thenReturn(List.of(new Standing("u:501", 5, 1, Map.of("t1", 1), null)));
+
+        String result = panels.refresh(GUILD, EVENT);
+
+        assertTrue(result.startsWith("Posted the board in #bingo."), result);
+        assertTrue(result.contains("as text"), result);
         assertEquals(1, sent.size());
         assertTrue(sent.get(0).contains("Bingo night"), "the event's name is there");
-        assertTrue(sent.get(0).contains("⬜ **1.**"), "the tiles are listed: " + sent.get(0));
+        assertTrue(sent.get(0).contains("⬜ **1.** Nex: Torva boots · 1/1"), "the tiles are listed with how many have them: " + sent.get(0));
         assertTrue(!calls.contains("addFiles"), "no picture is attached: " + calls);
     }
 
@@ -139,8 +151,11 @@ class EventBoardPanelsTest {
         event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"999\"," + BOARD + "}");
         assertTrue(panels.refresh(GUILD, EVENT).startsWith("The board channel isn't a channel the bot can post in"));
 
+        when(events.event(GUILD, EVENT)).thenThrow(new EventProblem(404, "That event doesn't exist (any more)."));
+        assertEquals("That event or server wasn't found.", panels.refresh(GUILD, EVENT));
+
         verify(channel, never()).sendMessage(any(CharSequence.class));
-        verify(repository, never()).setPanel(anyLong(), anyLong(), eq(0L));
+        verify(map, never()).setPanel(anyLong(), anyLong(), eq(0L));
     }
 
     @Test
@@ -161,21 +176,23 @@ class EventBoardPanelsTest {
     }
 
     @Test
-    void withOwnBoardsEachPlayerGetsTheirBoardInTheirOwnChannelAndWhoHasNoPlaceIsSaid() {
+    void withOwnBoardsEachPlayerGetsTheirOwnPictureInTheirOwnChannelAndWhoHasNoPlaceIsSaid() {
         event(BingoTemplate.KEY, Status.RUNNING, "{" + BOARD.replace("\"size\":3}", "\"size\":3,\"display\":\"OWN\"}") + "}");
-        when(repository.participants(EVENT)).thenReturn(List.of(player(501), player(502)));
+        when(events.participants(EVENT)).thenReturn(List.of(player(501), player(502)));
         when(space.channels(EVENT)).thenReturn(List.of(new EventSpaceRepository.ChannelRow(EVENT, "player:501", CHANNEL, "bingo-501", true, "category")));
 
         String result = panels.refresh(GUILD, EVENT);
 
         assertEquals("Own boards: 1 posted, 0 updated, 0 unchanged, 1 with nowhere to post (set up the event's channels, or choose a live board channel).", result);
         verify(channel).sendMessage(any(CharSequence.class));
+        verify(events).boardPng(GUILD, EVENT, 501L, true);
+        assertTrue(sent.get(0).contains("0 of 9 tiles done"), sent.get(0));
     }
 
     @Test
     void ownBoardsNeedNoLiveBoardChannelAndAPlayerWithoutAChannelUsesItWhenThereIsOne() {
         event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD.replace("\"size\":3}", "\"size\":3,\"display\":\"OWN\"}") + "}");
-        when(repository.participants(EVENT)).thenReturn(List.of(player(501), player(502)));
+        when(events.participants(EVENT)).thenReturn(List.of(player(501), player(502)));
 
         String result = panels.refresh(GUILD, EVENT);
 
@@ -184,9 +201,22 @@ class EventBoardPanelsTest {
     }
 
     @Test
+    void anUnchangedOwnBoardIsNotFetchedOrSentAgain() {
+        event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD.replace("\"size\":3}", "\"size\":3,\"display\":\"OWN\"}") + "}");
+        when(events.participants(EVENT)).thenReturn(List.of(player(501)));
+        List<String> keys = BingoBoardView.boardKeys(net.dv8tion.jda.api.utils.data.DataObject.fromJson("{" + BOARD + "}"));
+        String same = EventBoardPanels.hashOf(keys, null);
+        when(map.boardPanels(EVENT)).thenReturn(Map.of("u:501", new HubEventMap.BoardPanel(CHANNEL, 900L, same)));
+
+        assertEquals("Own boards: 0 posted, 0 updated, 1 unchanged.", panels.refresh(GUILD, EVENT));
+        verify(events, never()).boardPng(anyLong(), anyLong(), anyLong(), anyBoolean());
+        assertNotEquals(same, EventBoardPanels.hashOf(keys, new Standing("u:501", 5, 1, Map.of("t1", 1), null)), "a tile done changes the fingerprint");
+    }
+
+    @Test
     void anOwnBoardsEventPostsNoSharedBoardAndABothEventPostsBoth() {
         event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD.replace("\"size\":3}", "\"size\":3,\"display\":\"OWN\"}") + "}");
-        when(repository.participants(EVENT)).thenReturn(List.of(player(501)));
+        when(events.participants(EVENT)).thenReturn(List.of(player(501)));
         assertEquals("Own boards: 1 posted, 0 updated, 0 unchanged.", panels.refresh(GUILD, EVENT), "no 'Posted the board' sentence: only their own");
 
         event(BingoTemplate.KEY, Status.RUNNING, "{\"boardChannelId\":\"" + CHANNEL + "\"," + BOARD.replace("\"size\":3}", "\"size\":3,\"display\":\"BOTH\"}") + "}");

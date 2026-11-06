@@ -43,7 +43,7 @@ class EventSpaceOpsJobTest {
     private final EventSpaceOps two = ops();
 
     private EventSpaceOps ops() {
-        return new EventSpaceOps(mock(EventRepository.class), mock(EventService.class), mock(EventSpaceRepository.class), mock(EventSpaces.class), new EventChanges(), null, jobs);
+        return new EventSpaceOps(mock(com.runeclans.bot.hubevents.HubEvents.class), mock(EventSpaceRepository.class), mock(EventSpaces.class), new EventChanges(), null, jobs);
     }
 
     @Test
@@ -144,7 +144,7 @@ class EventSpaceOpsJobTest {
     void whenTheDatabaseCannotSayTheProgressPollAnswersTryAgain() {
         JobRepository down = mock(JobRepository.class);
         org.mockito.Mockito.when(down.latest(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong())).thenThrow(new IllegalStateException("down"));
-        EventSpaceOps ops = new EventSpaceOps(mock(EventRepository.class), mock(EventService.class), mock(EventSpaceRepository.class), mock(EventSpaces.class), new EventChanges(), null, down);
+        EventSpaceOps ops = new EventSpaceOps(mock(com.runeclans.bot.hubevents.HubEvents.class), mock(EventSpaceRepository.class), mock(EventSpaces.class), new EventChanges(), null, down);
         EventProblem problem = assertThrows(EventProblem.class, () -> ops.job(EVENT));
         assertEquals(503, problem.status());
     }
@@ -154,7 +154,7 @@ class EventSpaceOpsJobTest {
         JobRepository down = mock(JobRepository.class);
         org.mockito.Mockito.when(down.claim(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString()))
                 .thenThrow(new IllegalStateException("lock timeout"));
-        EventSpaceOps ops = new EventSpaceOps(mock(EventRepository.class), mock(EventService.class), mock(EventSpaceRepository.class), mock(EventSpaces.class), new EventChanges(), null, down);
+        EventSpaceOps ops = new EventSpaceOps(mock(com.runeclans.bot.hubevents.HubEvents.class), mock(EventSpaceRepository.class), mock(EventSpaces.class), new EventChanges(), null, down);
         EventProblem problem = assertThrows(EventProblem.class, () -> ops.start(EVENT, "setup", job -> job.finish("never")));
         assertEquals(503, problem.status());
     }

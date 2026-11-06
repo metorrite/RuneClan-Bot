@@ -27,6 +27,8 @@ import com.runeclans.bot.events.PrizeRules.BuyInStatus;
 import com.runeclans.bot.events.PrizeRules.PrizeKind;
 import com.runeclans.bot.events.TeamRules.Kind;
 import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import io.github.freya022.botcommands.api.core.annotations.BEventListener;
+import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
@@ -59,7 +61,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>Members are named by Discord id both ways: the hub's first-party answers carry {@code discordId} beside each person id, and a person in a
  *       request is {@code discord:<id>} (P1, T-933). A participant the hub has no Discord id for (a website player who never linked) comes
  *       back with user id 0: Discord code mentions or roles nobody for them.</li>
- *   <li>Reads for a panel or a sweep are the application itself ({@link Actor#APP}, an organiser of everything); a member's own command sends
+ *   <li>Reads for a panel or a sweep are the application itself ({@link Actor#APP}, which the hub lets read everything); what the bot writes on its own
+ *       it writes as itself, a staff member of the server ({@link #self}); a member's own command sends
  *       them as the actor, so the hub applies their rights and shows them their view.</li>
  * </ul>
  * The records are the ones the bot's Discord code already draws ({@link EventRepository.Event} and friends), filled from the hub's JSON.
@@ -77,10 +80,32 @@ public class HubEvents {
     private record KnownClan(UUID clanId, Instant until) {}
     private final Map<Long, KnownClan> clans = new ConcurrentHashMap<>();
 
+    /** The bot's own Discord user id, once connected: the actor of what the bot does on its own (a signup mirrored, a space set up). */
+    private volatile long selfId;
+
     public HubEvents(HubEventClient hub, HubEventMap map, EventChanges changes) {
         this.hub = hub;
         this.map = map;
         this.changes = changes;
+    }
+
+    @BEventListener
+    public void onJdaReady(InjectedJDAEvent event) {
+        this.selfId = event.getJda().getSelfUser().getIdLong();
+    }
+
+    /** For tests: the bot's own user id without a JDA start-up event. */
+    HubEvents useSelf(long selfId) {
+        this.selfId = selfId;
+        return this;
+    }
+
+    /**
+     * The bot acting on its own in a server (a signup entry mirrored, roles and channels set up, a claim the bot itself refused): itself as a staff
+     * member of that server, which the hub's organiser routes accept. A bare application key is only ever a reader there.
+     */
+    public Actor self(long guildId) {
+        return selfId == 0 ? Actor.APP : Actor.of(selfId, guildId, true);
     }
 
     /** For tests: the clock the clan cache ages by (a service class has exactly one constructor). */
@@ -319,14 +344,6 @@ public class HubEvents {
         changes.publish(EventChanges.Kind.ROSTER, guildId, id);
     }
 
-    /** Gives free places to the waitlist in the event's queue order. How many moved in. */
-    public int fillSeats(long guildId, long id) {
-        DataObject json = hub.send("POST", path(guildId, id) + "/fill-seats", DataObject.empty(), Actor.APP);
-        int moved = json.getInt("moved", 0);
-        if (moved > 0) changes.publish(EventChanges.Kind.ROSTER, guildId, id);
-        return moved;
-    }
-
     public void setVerification(long guildId, long id, long userId, EventRoster.Verification to, String note, Actor actor) {
         hub.send("PUT", path(guildId, id) + "/participants/" + person(userId) + "/verification", DataObject.empty().put("to", to.name()).put("note", note == null ? "" : note), actor);
         changes.publish(EventChanges.Kind.ROSTER, guildId, id);
@@ -544,6 +561,78 @@ public class HubEvents {
                 .put("sourceKey", sourceKey).put("note", note == null ? "" : note);
         hub.send("POST", path(guildId, id) + "/progress", body, actor);
         changes.publish(EventChanges.Kind.PROGRESS, guildId, id);
+    }
+
+    /** The event's progress log as the hub keeps it, as the bot's own rows (players by Discord id, teams by local id; a row of a person with no Discord id has user id 0). */
+    public List<EventRepository.Progress> progress(long eventId) {
+        HubEventMap.Row row = row(eventId);
+        DataArray list = hub.get("/v1/events/" + row.hubId() + "/progress", Actor.APP).optArray("progress").orElse(DataArray.empty());
+        List<EventRepository.Progress> out = new ArrayList<>();
+        for (int i = 0; i < list.length(); i++) {
+            DataObject p = list.getObject(i);
+            UUID team = uuid(p.getString("teamId", null));
+            long by = discordId(p.getString("recordedByDiscordId", null));
+            out.add(new EventRepository.Progress(i + 1, eventId, p.getString("objectiveKey", ""), discordId(p.getString("discordId", null)),
+                    team == null ? null : map.localId(HubEventMap.TEAM, team, eventId), p.getLong("amount", 1), enumOf(EventRules.Source.class, p.getString("source", null), EventRules.Source.MANUAL),
+                    p.getString("sourceKey", null), by == 0 ? null : by, p.getString("note", ""), instant(p.getString("at", null))));
+        }
+        return out;
+    }
+
+    /** The players the roles, channels and teams count: in a place (not waiting) and verified as far as the event asks at this moment. */
+    public List<Participant> countedPlayers(Event event) {
+        EventSettings settings = settingsOf(event);
+        EventRoster.Gate moment = event.status() == Status.RUNNING || event.status() == Status.SCORING || event.status() == Status.DONE ? EventRoster.Gate.START : EventRoster.Gate.TEAMS;
+        return participants(event.id()).stream().filter(p -> !p.waiting() && EventRoster.counts(p.verification(), settings.verification(), moment)).toList();
+    }
+
+    /** The bingo's line and blackout bonuses, read from the event's config. */
+    public List<com.runeclans.bot.events.EventBonuses.Bonus> bonusesOf(Event event) {
+        try {
+            return com.runeclans.bot.events.EventBonuses.parse(DataObject.fromJson(event.config()));
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Tells the hub the bot has set up (or part set up) the event's roles and channels (T-945, {@code POST .../space/applied}): the event can't be
+     * deleted while they exist, and the setup checklist says what is still missing. The ids of what was made stay in the bot's own tables.
+     */
+    public void markSpace(long guildId, long id, boolean complete, String note) {
+        hub.send("POST", path(guildId, id) + "/space/applied", DataObject.empty().put("applied", true).put("complete", complete).put("note", note == null ? "" : note), self(guildId));
+    }
+
+    /** Everything the bot made for the event is gone: the hub forgets the setup, so the event can be deleted again. */
+    public void clearSpace(long guildId, long id) {
+        hub.send("POST", path(guildId, id) + "/space/applied", DataObject.empty().put("applied", false), self(guildId));
+    }
+
+    /** A clan invited to co-host the event, and its answer ({@code INVITED}, {@code ACCEPTED}, {@code DECLINED}). */
+    public record Cohost(UUID clanId, String clanName, String status, Integer quota) {}
+
+    public List<Cohost> cohosts(long eventId) {
+        HubEventMap.Row row = row(eventId);
+        DataArray list = hub.get("/v1/events/" + row.hubId() + "/cohosts", Actor.APP).optArray("cohosts").orElse(DataArray.empty());
+        List<Cohost> out = new ArrayList<>();
+        for (int i = 0; i < list.length(); i++) {
+            DataObject h = list.getObject(i);
+            UUID clan = uuid(h.getString("clanId", null));
+            if (clan == null) continue;
+            out.add(new Cohost(clan, h.getString("clanName", ""), h.getString("status", ""), h.hasKey("quota") && !h.isNull("quota") ? h.getInt("quota") : null));
+        }
+        return out;
+    }
+
+    /** {@link #join(long, long, long, Long, boolean, Actor)} for a player who came through a co-host's server: the hub counts them against that clan's seats. */
+    public Joined join(long guildId, long id, long userId, UUID originClanId, Actor actor) {
+        DataObject body = DataObject.empty().put("discordId", Long.toString(userId));
+        if (originClanId != null) body.put("originClanId", originClanId.toString());
+        DataObject json = hub.send("POST", path(guildId, id) + "/participants", body, actor);
+        changes.publish(EventChanges.Kind.ROSTER, guildId, id);
+        changes.publish(new EventChanges.Change(EventChanges.Kind.PLAYER_JOINED, guildId, id, 0, userId, false, ""));
+        boolean waiting = json.getBoolean("waiting", false);
+        return new Joined(waiting, waiting ? json.getInt("position", 0) : 0);
     }
 
     // ---------- the JSON as the bot's records ----------

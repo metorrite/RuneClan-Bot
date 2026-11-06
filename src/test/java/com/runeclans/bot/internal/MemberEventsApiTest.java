@@ -71,9 +71,9 @@ class MemberEventsApiTest {
         Mockito.when(guildSettings.getEffective(G)).thenReturn(new com.runeclans.bot.configure.GuildSettings(G, null, null, null, null, null, null, null, null, false, null, null, null));
         profiles = Mockito.mock(ClanProfileRepository.class);
         Mockito.when(profiles.get(G)).thenReturn(Optional.empty());
-        api = new MemberEventsApi(service, repository, profiles, new com.runeclans.bot.events.EventSpaceRepository(supplier, repository),
+        api = new MemberEventsApi(service, repository, profiles, new com.runeclans.bot.events.EventSpaceRepository(supplier, new com.runeclans.bot.hubevents.HubEventMap(supplier)),
                 new com.runeclans.bot.clanprofile.JoinLinks(guildSettings, Mockito.mock(com.runeclans.bot.clanprofile.ClanRecruitingRepository.class, Mockito.RETURNS_DEEP_STUBS)),
-                new com.runeclans.bot.events.EventUpdateRepository(supplier, repository), new com.runeclans.bot.events.EventDrawRepository(supplier, repository), null);
+                new com.runeclans.bot.events.EventUpdateRepository(supplier), new com.runeclans.bot.events.EventDrawRepository(supplier, repository), null);
         guild = Mockito.mock(Guild.class);
         Mockito.when(guild.getIdLong()).thenReturn(G);
         Mockito.when(guild.getName()).thenReturn("Younglings");

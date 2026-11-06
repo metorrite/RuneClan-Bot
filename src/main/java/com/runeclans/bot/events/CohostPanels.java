@@ -11,6 +11,8 @@ import com.runeclans.bot.events.EventCohostRepository.Panel;
 import com.runeclans.bot.events.EventCohostRepository.PendingJoin;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.Status;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
@@ -39,6 +41,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -55,7 +58,8 @@ import java.util.concurrent.TimeUnit;
  * </ul>
  * Optional, off by default: when the event starts, a short announcement in each co-host's panel channel. Like the other automatic posts, nothing is
  * posted or changed on its own by a bot that isn't the live one ({@link AutoPostRouter}). The panel is its own small message rather than a generic signup,
- * because a generic signup's Join only records an entry and can't answer with the host's invite at the moment it is pressed.
+ * because a generic signup's Join only records an entry and can't answer with the host's invite at the moment it is pressed. The event, who co-hosts
+ * it and the roster are the hub's (T-934); which channel a co-host chose for its panel stays in the bot's own table.
  */
 @BService
 public class CohostPanels extends ListenerAdapter implements BotListener {
@@ -69,8 +73,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
     /** The panel and the announcement go into another server's channel, written from the host's event name: they never ping anyone there. */
     static final java.util.EnumSet<net.dv8tion.jda.api.entities.Message.MentionType> NO_PINGS = java.util.EnumSet.noneOf(net.dv8tion.jda.api.entities.Message.MentionType.class);
 
-    private final EventRepository events;
-    private final EventService service;
+    private final HubEvents events;
     private final EventCohostRepository cohosts;
     private final JoinLinks joinLinks;
     private final ClanProfileRepository profiles;
@@ -78,15 +81,14 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
     private final Map<Long, ScheduledFuture<?>> redraws = new ConcurrentHashMap<>();
     private volatile JDA jda;
 
-    public CohostPanels(EventRepository events, EventService service, EventCohostRepository cohosts, JoinLinks joinLinks, ClanProfileRepository profiles,
-                        EventChanges changes) {
+    public CohostPanels(HubEvents events, EventCohostRepository cohosts, JoinLinks joinLinks, ClanProfileRepository profiles, EventChanges changes) {
         this.events = events;
-        this.service = service;
         this.cohosts = cohosts;
         this.joinLinks = joinLinks;
         this.profiles = profiles;
         changes.subscribe(change -> {
-            if (change.kind() == EventChanges.Kind.STAGE) executor.execute(() -> onStage(change.eventId()));
+            if (change.kind() == EventChanges.Kind.STAGE && "deleted".equals(change.note())) executor.execute(() -> gone(change.eventId()));
+            else if (change.kind() == EventChanges.Kind.STAGE) executor.execute(() -> onStage(change.eventId()));
             else if (change.kind() == EventChanges.Kind.ROSTER) redrawSoon(change.eventId());
         });
     }
@@ -114,7 +116,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
 
     /** Whether a co-host's panel takes joins now: the event takes signups, they haven't been closed, and the deadline hasn't passed. */
     boolean open(Event event) {
-        return event.status() == Status.SIGNUPS && !events.setup(event.id()).signupsClosed() && service.settingsOf(event).selfSignupOpen(Instant.now());
+        return event.status() == Status.SIGNUPS && !events.setup(event.id()).signupsClosed() && events.settingsOf(event).selfSignupOpen(Instant.now());
     }
 
     // ---------- the panel ----------
@@ -211,6 +213,16 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         }
     }
 
+    /** The event is gone from the hub: its panels come down and nobody waits to join it any more. */
+    void gone(long eventId) {
+        try {
+            cohosts.panels(eventId).forEach(this::delete);
+            cohosts.deletePendingJoins(eventId, null);
+        } catch (RuntimeException e) {
+            log.warn("Couldn't take down the co-host panels of deleted event {}", eventId, e);
+        }
+    }
+
     /** The roster changed (someone joined, signups closed or opened again): redraw the panels a few seconds later, once. */
     void redrawSoon(long eventId) {
         ScheduledFuture<?> before = redraws.put(eventId, executor.schedule(() -> {
@@ -265,8 +277,8 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
             Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.this_event_doesn_t_exist_any"));
             return;
         }
-        boolean accepted = cohosts.get(eventId, origin).map(c -> c.status() == EventCohostRepository.Status.ACCEPTED).orElse(false);
-        if (!accepted) {
+        UUID originClan = acceptedCohost(eventId, origin);
+        if (originClan == null) {
             Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.this_server_doesn_t_co_host"));
             return;
         }
@@ -280,7 +292,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
             return;
         }
         interaction.deferReply(true).queue();
-        host.retrieveMemberById(userId).queue(member -> answer(interaction, joinNow(event, origin, userId)), error -> {
+        host.retrieveMemberById(userId).queue(member -> answer(interaction, joinNow(event, originClan, userId)), error -> {
             if (error instanceof ErrorResponseException r && (r.getErrorResponse() == ErrorResponse.UNKNOWN_MEMBER || r.getErrorResponse() == ErrorResponse.UNKNOWN_USER)) {
                 answer(interaction, joinLater(event, origin, userId, Instant.now()));
             } else {
@@ -293,10 +305,23 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         interaction.getHook().sendMessageComponents(List.of(Containers.toast(Containers.INFO, text))).useComponentsV2(true).setEphemeral(true).queue();
     }
 
-    /** They are in the host's Discord: join with the co-host as the server they came through. */
-    String joinNow(Event event, long origin, long userId) {
+    /** The hub clan of the co-host server {@code origin}, when it accepted the invitation to co-host the event; null otherwise. */
+    UUID acceptedCohost(long eventId, long origin) {
         try {
-            EventService.Joined joined = service.join(event.guildId(), event.id(), origin, userId, null, false, null);
+            UUID clan = events.clanOf(origin).orElse(null);
+            if (clan == null) return null;
+            return events.cohosts(eventId).stream().filter(c -> c.clanId().equals(clan) && c.status().equals(EventCohostRepository.Status.ACCEPTED.name()))
+                    .findFirst().map(HubEvents.Cohost::clanId).orElse(null);
+        } catch (RuntimeException e) {
+            log.info("Couldn't check whether server {} co-hosts event {}: {}", origin, eventId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** They are in the host's Discord: join with the co-host's clan as where they came through (the hub counts them against its seats). */
+    String joinNow(Event event, UUID originClan, long userId) {
+        try {
+            EventService.Joined joined = events.join(event.guildId(), event.id(), userId, originClan, events.self(event.guildId()));
             cohosts.deletePendingJoin(event.id(), userId);
             String where = "You play from **" + hostName(event.guildId()) + "**'s Discord.";
             return joined.waiting() ? "**" + event.name() + "** is full, so you're on the waitlist (number " + joined.position() + "). " + where
@@ -308,7 +333,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
 
     /** They aren't in the host's Discord yet: remember it, and give them the invite. They join when they get there, until signups close. */
     String joinLater(Event event, long origin, long userId, Instant now) {
-        cohosts.savePendingJoin(event.id(), userId, origin, pendingExpiry(service.settingsOf(event).signupClosesAt(), event.startsAt(), now));
+        cohosts.savePendingJoin(event.id(), userId, origin, pendingExpiry(events.settingsOf(event).signupClosesAt(), event.startsAt(), now));
         String host = hostName(event.guildId());
         String invite = inviteOf(event.guildId());
         return "To take part you need to be in **" + host + "**'s Discord, where the event happens. "
@@ -329,8 +354,9 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
             for (PendingJoin p : cohosts.pendingJoins(userId, hostGuildId, now)) {
                 try {
                     Event event = events.eventById(p.eventId()).orElse(null);
-                    if (event != null && open(event)) {
-                        service.join(event.guildId(), event.id(), p.originGuildId(), userId, null, false, null);
+                    UUID originClan = event == null ? null : acceptedCohost(event.id(), p.originGuildId());
+                    if (event != null && originClan != null && open(event)) {
+                        events.join(event.guildId(), event.id(), userId, originClan, events.self(event.guildId()));
                         joined++;
                         log.info("User {} joined event {} on arriving in its host's Discord (pending since pressing Join in server {})", userId, event.id(), p.originGuildId());
                     }

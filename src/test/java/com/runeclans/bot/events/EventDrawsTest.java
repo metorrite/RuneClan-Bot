@@ -81,7 +81,7 @@ class EventDrawsTest {
         service = new EventService(repository, new EventTemplates(List.of(new CustomTemplate())), kinds,
                 new PointsService(new PointsRepository(supplier), new RewardsRepository(supplier)), new EventChanges());
         drawRepository = new EventDrawRepository(supplier, repository);
-        EventUpdateRepository posts = new EventUpdateRepository(supplier, repository);
+        EventUpdateRepository posts = new EventUpdateRepository(supplier);
         EventBoardUpdates updates = Mockito.mock(EventBoardUpdates.class);
         Mockito.when(updates.channelFor(ArgumentMatchers.any(), ArgumentMatchers.any())).thenReturn(CHANNEL);
         DiscordOutbox outbox = Mockito.mock(DiscordOutbox.class);

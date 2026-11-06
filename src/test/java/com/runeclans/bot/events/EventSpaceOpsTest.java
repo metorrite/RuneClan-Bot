@@ -4,12 +4,13 @@ import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.Scope;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
-import com.runeclans.bot.events.EventService.EventInput;
+import com.runeclans.bot.events.EventRepository.Participant;
+import com.runeclans.bot.events.EventRepository.Setup;
+import com.runeclans.bot.events.EventRepository.Team;
+import com.runeclans.bot.hubevents.HubEventMap;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.permission.PermissionGroup;
 import com.runeclans.bot.permission.PermissionGroupService;
-import com.runeclans.bot.points.PointsRepository;
-import com.runeclans.bot.points.PointsService;
-import com.runeclans.bot.points.RewardsRepository;
 import com.runeclans.bot.testsupport.LocalDatabase;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
 import net.dv8tion.jda.api.Permission;
@@ -45,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -65,9 +67,17 @@ class EventSpaceOpsTest {
     private static final long EVERYONE = 1L;
     private static final long STAFF_ROLE = 501L;
 
+    private static final UUID CLAN = UUID.randomUUID();
+
     private static ConnectionSupplier supplier;
-    private EventRepository events;
-    private EventService service;
+    private static HubEventMap map;
+    /** The hub as the ops see it: a {@link HubEvents} answering from the state below (the hub's own rules are the hub's tests' business). */
+    private HubEvents events;
+    private final Map<Long, Event> hubEvents = new LinkedHashMap<>();
+    private final Map<Long, List<Participant>> roster = new HashMap<>();
+    private final Map<Long, List<Team>> teams = new HashMap<>();
+    private final Map<Long, Setup> setups = new HashMap<>();
+    private long nextTeam = 1;
     private EventSpaceRepository space;
     private EventSpaceOps ops;
     private EventSpaces spaces;
@@ -95,21 +105,37 @@ class EventSpaceOpsTest {
     @BeforeAll
     static void connect() throws Exception {
         supplier = LocalDatabase.supplier();
+        map = new HubEventMap(supplier);
     }
 
     @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
-        events = new EventRepository(supplier);
-        space = new EventSpaceRepository(supplier, events);
-        var templates = new EventTemplates(List.of(new CustomTemplate(), new CompetitionTemplate(), new BossNightTemplate()));
-        EventKinds kinds = new EventKinds(null, null) {
-            @Override
-            public TeamRules.Kind kindOf(long hostGuildId, long userGuildId, long userId) {
-                return TeamRules.Kind.HOME_CLAN;
-            }
-        };
-        service = new EventService(events, templates, kinds, new PointsService(new PointsRepository(supplier), new RewardsRepository(supplier)), new EventChanges());
+        space = new EventSpaceRepository(supplier, map);
+        events = Mockito.mock(HubEvents.class);
+        Mockito.when(events.event(ArgumentMatchers.eq(G), ArgumentMatchers.anyLong())).thenAnswer(inv -> {
+            Event e = hubEvents.get((Long) inv.getArgument(1));
+            if (e == null) throw new EventProblem(404, "That event doesn't exist (any more).");
+            return e;
+        });
+        Mockito.when(events.settings(ArgumentMatchers.any(Event.class))).thenAnswer(inv -> EventSettings.parse(DataObject.fromJson(((Event) inv.getArgument(0)).config())));
+        Mockito.when(events.participants(ArgumentMatchers.anyLong())).thenAnswer(inv -> List.copyOf(roster.getOrDefault((Long) inv.getArgument(0), List.of())));
+        Mockito.when(events.countedPlayers(ArgumentMatchers.any(Event.class))).thenAnswer(inv -> roster.getOrDefault(((Event) inv.getArgument(0)).id(), List.of()).stream().filter(p -> !p.waiting()).toList());
+        Mockito.when(events.teams(ArgumentMatchers.anyLong())).thenAnswer(inv -> List.copyOf(teams.getOrDefault((Long) inv.getArgument(0), List.of())));
+        Mockito.when(events.setup(ArgumentMatchers.anyLong())).thenAnswer(inv -> setups.getOrDefault((Long) inv.getArgument(0), Setup.NONE));
+        Mockito.doAnswer(inv -> {
+            long id = inv.getArgument(1);
+            Setup before = setups.getOrDefault(id, Setup.NONE);
+            setups.put(id, new Setup(before.signupsClosedAt(), null, before.rosterConfirmedAt(), null, before.teamsFinalisedAt(), null,
+                    before.spaceAppliedAt() == null ? java.time.Instant.now() : before.spaceAppliedAt(), null, inv.getArgument(2), inv.getArgument(3), null, null));
+            return null;
+        }).when(events).markSpace(ArgumentMatchers.eq(G), ArgumentMatchers.anyLong(), ArgumentMatchers.anyBoolean(), ArgumentMatchers.any());
+        Mockito.doAnswer(inv -> {
+            long id = inv.getArgument(1);
+            Setup before = setups.getOrDefault(id, Setup.NONE);
+            setups.put(id, new Setup(before.signupsClosedAt(), null, before.rosterConfirmedAt(), null, before.teamsFinalisedAt(), null, null, null, false, "", null, null));
+            return null;
+        }).when(events).clearSpace(ArgumentMatchers.eq(G), ArgumentMatchers.anyLong());
         server = new PretendServer();
         guild = Mockito.mock(Guild.class);
         PretendServer s = server;
@@ -193,13 +219,14 @@ class EventSpaceOpsTest {
         PermissionGroupService groups = Mockito.mock(PermissionGroupService.class);
         Mockito.when(groups.group(ArgumentMatchers.eq(G), ArgumentMatchers.eq(PermissionGroup.ADMIN)))
                 .thenReturn(Optional.of(new PermissionGroup(1, G, PermissionGroup.ADMIN, "Admin", true, false, List.of(STAFF_ROLE))));
-        spaces = new EventSpaces(events, service, space, groups);
-        ops = new EventSpaceOps(events, service, space, spaces, new EventChanges(), null, com.runeclans.bot.jobs.JobRepository.inMemory(java.time.Clock.systemUTC()));
+        spaces = new EventSpaces(events, space, groups);
+        ops = new EventSpaceOps(events, space, spaces, new EventChanges(), null, com.runeclans.bot.jobs.JobRepository.inMemory(java.time.Clock.systemUTC()));
     }
 
     @AfterEach
     void cleanUp() throws Exception {
-        try (Connection c = supplier.getConnection(); PreparedStatement s = c.prepareStatement("DELETE FROM younglings.event WHERE guild_id = ?")) {
+        for (long id : hubEvents.keySet()) space.clear(id);
+        try (Connection c = supplier.getConnection(); PreparedStatement s = c.prepareStatement("DELETE FROM younglings.hub_event_map WHERE guild_id = ?")) {
             s.setLong(1, G);
             s.executeUpdate();
         }
@@ -279,21 +306,64 @@ class EventSpaceOpsTest {
 
     // ---------- helpers ----------
 
+    // ---------- the pretend hub's state ----------
+
     private long event(String template, ScoringMode mode, String config) {
-        return service.createEvent(G, ACTOR, new EventInput("Boss Night", "", template, Scope.PRIVATE, mode, null, null, 0, DataObject.fromJson(config)));
+        long id = map.localId(UUID.randomUUID(), CLAN, G);
+        hubEvents.put(id, new Event(id, G, template, "Boss Night", "", Status.DRAFT, Scope.PRIVATE, mode, null, null, 0, config, ACTOR, java.time.Instant.now(), null, false));
+        return id;
     }
 
     private void open(long eventId) {
-        service.moveStage(G, eventId, Status.SIGNUPS);
+        Event e = hubEvents.get(eventId);
+        hubEvents.put(eventId, new Event(e.id(), e.guildId(), e.template(), e.name(), e.description(), Status.SIGNUPS, e.scope(), e.scoringMode(), e.startsAt(), e.endsAt(), e.maxParticipants(),
+                e.config(), e.createdBy(), e.createdAt(), e.signupId(), e.archived()));
     }
 
     private void join(long eventId, long userId, Long teamId) {
-        service.join(G, eventId, G, userId, teamId, true, null);
+        roster.computeIfAbsent(eventId, k -> new ArrayList<>()).add(new Participant(eventId, userId, G, teamId, TeamRules.Kind.HOME_CLAN, false, PrizeRules.BuyInStatus.NONE,
+                java.time.Instant.now(), EventRoster.Verification.NOT_REQUIRED, null, null, "", null, EventRepository.RosterSource.STAFF));
+    }
+
+    private void leave(long eventId, long userId) {
+        roster.getOrDefault(eventId, new ArrayList<>()).removeIf(p -> p.userId() == userId);
+    }
+
+    private void setTeam(long eventId, long userId, Long teamId) {
+        List<Participant> players = roster.get(eventId);
+        for (int i = 0; i < players.size(); i++) {
+            Participant p = players.get(i);
+            if (p.userId() == userId) players.set(i, new Participant(p.eventId(), p.userId(), p.guildId(), teamId, p.kind(), p.waiting(), p.buyIn(), p.joinedAt(), p.verification(), p.verifiedBy(),
+                    p.verifiedAt(), p.verificationNote(), p.rating(), p.source()));
+        }
+    }
+
+    private long addTeam(long eventId, String name) {
+        long id = nextTeam++;
+        teams.computeIfAbsent(eventId, k -> new ArrayList<>()).add(new Team(id, eventId, name, null));
+        return id;
+    }
+
+    private void organisers(long eventId, long... userIds) {
+        Event e = hubEvents.get(eventId);
+        DataObject config = DataObject.fromJson(e.config());
+        net.dv8tion.jda.api.utils.data.DataArray ids = net.dv8tion.jda.api.utils.data.DataArray.empty();
+        for (long id : userIds) ids.add(Long.toString(id));
+        config.put("organisers", ids);
+        hubEvents.put(eventId, new Event(e.id(), e.guildId(), e.template(), e.name(), e.description(), e.status(), e.scope(), e.scoringMode(), e.startsAt(), e.endsAt(), e.maxParticipants(),
+                config.toString(), e.createdBy(), e.createdAt(), e.signupId(), e.archived()));
     }
 
     private void closeAndConfirm(long eventId) {
-        service.closeSignups(G, eventId, ACTOR);
-        service.confirmRoster(G, eventId, ACTOR);
+        Setup before = setups.getOrDefault(eventId, Setup.NONE);
+        java.time.Instant now = java.time.Instant.now();
+        setups.put(eventId, new Setup(now, null, now, null, before.teamsFinalisedAt(), null, before.spaceAppliedAt(), null, before.spaceComplete(), before.spaceNote(), null, null));
+    }
+
+    private void finaliseTeams(long eventId) {
+        Setup before = setups.getOrDefault(eventId, Setup.NONE);
+        setups.put(eventId, new Setup(before.signupsClosedAt(), null, before.rosterConfirmedAt(), null, java.time.Instant.now(), null, before.spaceAppliedAt(), null, before.spaceComplete(),
+                before.spaceNote(), null, null));
     }
 
     private EventSpaceOps.Job finish(EventSpaceOps.Job job) throws InterruptedException {
@@ -304,7 +374,7 @@ class EventSpaceOpsTest {
     }
 
     private Event reload(long eventId) {
-        return service.event(G, eventId);
+        return hubEvents.get(eventId);
     }
 
     private static boolean allows(long[] overwrite, Permission p) {
@@ -330,7 +400,7 @@ class EventSpaceOpsTest {
         long id = event(CompetitionTemplate.KEY, ScoringMode.INDIVIDUAL, "{\"channels\": {\"enabled\": true}}");
         open(id);
         for (long user = 701; user <= 703; user++) join(id, user, null);
-        service.changeOrganisers(G, id, List.of(42L), List.of());
+        organisers(id, 42L);
         closeAndConfirm(id);
 
         EventSpaceOps.Job job = finish(ops.startSetup(guild, reload(id), ACTOR, false));
@@ -343,7 +413,7 @@ class EventSpaceOpsTest {
         assertEquals(4, space.channels(id).size());
         assertTrue(space.channels(id).stream().filter(c -> c.key().equals("general")).findFirst().orElseThrow().owned());
         assertEquals("category", space.channels(id).stream().filter(c -> c.key().equals("general")).findFirst().orElseThrow().parent());
-        EventRepository.Setup setup = events.setup(id);
+        Setup setup = events.setup(id);
         assertTrue(setup.spaceApplied());
         assertTrue(setup.spaceComplete(), setup.spaceNote());
 
@@ -399,7 +469,7 @@ class EventSpaceOpsTest {
         assertEquals("Discord is having a moment", job.message());
         assertEquals(List.of("boss-night-staff", "boss-night-announcements"), server.madeChannels, "what came before the failure was made");
         assertEquals(3, space.channels(id).size(), "and is recorded: the category and two channels");
-        EventRepository.Setup stopped = events.setup(id);
+        Setup stopped = events.setup(id);
         assertTrue(stopped.spaceApplied());
         assertFalse(stopped.spaceComplete());
         assertTrue(stopped.spaceNote().contains("boss-night-general"), stopped.spaceNote());
@@ -416,12 +486,12 @@ class EventSpaceOpsTest {
     void aTeamEventGetsARoleAndAPrivateChannelPerTeamAndOnlyTheTeamsRoleIsLetIn() throws Exception {
         long id = event(BossNightTemplate.KEY, ScoringMode.TEAM, "{\"boss\":\"Araxxor\",\"channels\": {\"enabled\": true, \"slots\": {\"staff\": {\"use\": \"none\"}, \"announcements\": {\"use\": \"none\"}, \"general\": {\"use\": \"none\"}, \"review\": {\"use\": \"none\"}}}}");
         open(id);
-        long red = service.addTeam(G, id, "Red", null);
-        long blue = service.addTeam(G, id, "Blue", null);
+        long red = addTeam(id, "Red");
+        long blue = addTeam(id, "Blue");
         join(id, 801, red);
         join(id, 802, blue);
         closeAndConfirm(id);
-        service.finaliseTeams(G, id, ACTOR);
+        finaliseTeams(id);
 
         assertEquals("done", finish(ops.startSetup(guild, reload(id), ACTOR, false)).state());
         assertEquals(List.of("Boss Night Participant", "Boss Night Organiser", "Boss Night Red", "Boss Night Blue"), server.madeRoles);
@@ -436,7 +506,7 @@ class EventSpaceOpsTest {
         assertEquals(Set.of(801L, 802L), space.members(id).get("participant"));
 
         // a team added later is the only thing the next setup makes
-        long green = service.addTeam(G, id, "Green", null);
+        long green = addTeam(id, "Green");
         server.madeRoles.clear();
         server.madeChannels.clear();
         assertEquals("done", finish(ops.startSetup(guild, reload(id), ACTOR, false)).state());
@@ -463,7 +533,7 @@ class EventSpaceOpsTest {
         EventSpaceRepository.ChannelRow row = space.channels(id).stream().filter(c -> c.key().equals("review")).findFirst().orElseThrow();
         assertFalse(row.owned());
         assertEquals(5555L, row.channelId());
-        assertEquals("5555", DataObject.fromJson(reload(id).config()).getString("reviewChannelId"), "the engine posts proof there");
+        assertEquals(5555L, EventSpaces.reviewChannelOf(reload(id), space), "the engine posts proof there (the hub keeps no channel ids: the bot's record says)");
     }
 
     // ---------- who holds the roles ----------
@@ -480,7 +550,7 @@ class EventSpaceOpsTest {
         assertEquals(Set.of(701L, 702L, 703L), space.members(id).get("participant"), "the player who isn't in the server isn't given a role");
         assertTrue(job.message().startsWith("The roles and channels are set up."), job.message());
 
-        service.leave(G, id, 702);
+        leave(id, 702);
         assertEquals(0, ops.syncMembers(guild, reload(id)));
         assertEquals(List.of("702:Boss Night Participant"), server.taken);
         assertEquals(Set.of(701L, 703L), space.members(id).get("participant"));
@@ -518,15 +588,15 @@ class EventSpaceOpsTest {
     void aTeamMemberMovedToAnotherTeamSwapsTeamRoles() throws Exception {
         long id = event(BossNightTemplate.KEY, ScoringMode.TEAM, "{\"boss\":\"Araxxor\",\"channels\": {\"enabled\": true}}");
         open(id);
-        long red = service.addTeam(G, id, "Red", null);
-        long blue = service.addTeam(G, id, "Blue", null);
+        long red = addTeam(id, "Red");
+        long blue = addTeam(id, "Blue");
         join(id, 801, red);
         join(id, 802, blue);
         closeAndConfirm(id);
-        service.finaliseTeams(G, id, ACTOR);
+        finaliseTeams(id);
         assertEquals("done", finish(ops.startSetup(guild, reload(id), ACTOR, false)).state());
 
-        service.setTeam(G, id, 801, blue);
+        setTeam(id, 801, blue);
         assertEquals(0, ops.syncMembers(guild, reload(id)));
         assertTrue(server.taken.contains("801:Boss Night Red"), server.taken.toString());
         assertTrue(server.given.contains("801:Boss Night Blue"), server.given.toString());
@@ -536,7 +606,7 @@ class EventSpaceOpsTest {
     // ---------- taking it down ----------
 
     @Test
-    void removingDeletesOnlyWhatWasMadeAndLetsTheEventBeDeleted() throws Exception {
+    void removingDeletesOnlyWhatWasMadeAndTellsTheHub() throws Exception {
         GuildChannel proof = Mockito.mock(TextChannel.class);
         Mockito.when(proof.getIdLong()).thenReturn(5555L);
         Mockito.when(proof.getName()).thenReturn("our-proof");
@@ -548,9 +618,7 @@ class EventSpaceOpsTest {
         closeAndConfirm(id);
         assertEquals("done", finish(ops.startSetup(guild, reload(id), ACTOR, false)).state());
 
-        EventProblem blocked = assertThrows(EventProblem.class, () -> service.deleteEvent(G, id));
-        assertEquals(409, blocked.status());
-        assertTrue(blocked.getMessage().contains("Remove them on its Channels tab first"), blocked.getMessage());
+        assertTrue(events.setup(id).spaceApplied(), "the hub was told, so it refuses to delete the event meanwhile");
 
         EventSpaceOps.Job job = finish(ops.startRemoval(guild, reload(id)));
         assertEquals("done", job.state(), job.message());
@@ -558,11 +626,8 @@ class EventSpaceOpsTest {
         assertEquals(Set.of(5555L), server.channels.keySet(), "the category and the channels made are gone, the chosen one is left");
         assertEquals(6, server.deleted.size(), "the category, three channels and two roles");
         assertTrue(space.roles(id).isEmpty() && space.channels(id).isEmpty() && space.members(id).isEmpty());
-        assertFalse(events.setup(id).spaceApplied());
-
-        service.moveStage(G, id, Status.CANCELLED);
-        service.deleteEvent(G, id);
-        assertTrue(events.event(G, id).isEmpty());
+        assertFalse(events.setup(id).spaceApplied(), "and told again once everything is gone");
+        Mockito.verify(events).clearSpace(G, id);
         assertNotNull(job.finishedAt());
     }
 

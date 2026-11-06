@@ -63,8 +63,7 @@ class EventBoardUpdateRulesTest {
             + "\"bonuses\":[{\"name\":\"Row 1\",\"keys\":[\"a\",\"b\"],\"points\":50},{\"name\":\"Row 2\",\"keys\":[\"c\",\"d\"],\"points\":50},"
             + "{\"name\":\"Blackout\",\"keys\":[\"a\",\"b\",\"c\",\"d\"],\"points\":250}]";
 
-    private EventRepository repository;
-    private EventService service;
+    private com.runeclans.bot.hubevents.HubEvents events;
     private EventSpaceRepository space;
     private EventBoardPanels panels;
     private EventBoardUpdates updates;
@@ -81,8 +80,10 @@ class EventBoardUpdateRulesTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        repository = mock(EventRepository.class);
-        service = mock(EventService.class);
+        events = mock(com.runeclans.bot.hubevents.HubEvents.class);
+        com.runeclans.bot.hubevents.HubEventMap map = mock(com.runeclans.bot.hubevents.HubEventMap.class);
+        when(events.map()).thenReturn(map);
+        when(map.boardPanels(anyLong())).thenReturn(java.util.Map.of());
         space = mock(EventSpaceRepository.class);
         EventUpdateRepository posts = mock(EventUpdateRepository.class);
         when(posts.claim(anyLong(), anyString(), anyString(), anyString())).thenAnswer(inv -> claimed.add(inv.getArgument(0) + "/" + inv.getArgument(1)));
@@ -94,8 +95,8 @@ class EventBoardUpdateRulesTest {
             return job;
         });
         EventChanges changes = new EventChanges();
-        panels = new EventBoardPanels(repository, service, space, changes, mock(BingoTiles.class));
-        updates = new EventBoardUpdates(repository, service, space, posts, outbox, changes);
+        panels = new EventBoardPanels(events, space, changes);
+        updates = new EventBoardUpdates(events, space, posts, outbox, changes);
 
         jda = mock(JDA.class);
         guild = mock(Guild.class);
@@ -114,12 +115,12 @@ class EventBoardUpdateRulesTest {
         when(zaros.getEffectiveName()).thenReturn("Zaros");
         when(guild.getMemberById(501L)).thenReturn(zaros);
 
-        when(service.objectives(EVENT)).thenReturn(List.of(tile("a", "Nex: Torva boots"), tile("b", "Araxxor: Noxious blade"), tile("c", "Zamorak: Codex"), tile("d", "Kerapac: Staff")));
-        when(service.standings(GUILD, EVENT)).thenReturn(List.of(new Standing("u:501", 60, 2, Map.of(), null)));
-        when(service.bonusesOf(any(Event.class))).thenAnswer(inv -> EventBonuses.parse(DataObject.fromJson(((Event) inv.getArgument(0)).config())));
-        when(repository.participants(EVENT)).thenReturn(List.of());
-        when(repository.panel(EVENT)).thenReturn(Optional.empty());
-        when(repository.progress(EVENT)).thenReturn(progress);
+        when(events.boardPng(anyLong(), anyLong(), anyLong(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(new byte[] {1, 2, 3});
+        when(events.objectives(EVENT)).thenReturn(List.of(tile("a", "Nex: Torva boots"), tile("b", "Araxxor: Noxious blade"), tile("c", "Zamorak: Codex"), tile("d", "Kerapac: Staff")));
+        when(events.standings(GUILD, EVENT)).thenReturn(List.of(new Standing("u:501", 60, 2, Map.of(), null)));
+        when(events.bonusesOf(any(Event.class))).thenAnswer(inv -> EventBonuses.parse(DataObject.fromJson(((Event) inv.getArgument(0)).config())));
+        when(events.participants(EVENT)).thenReturn(List.of());
+        when(events.progress(EVENT)).thenReturn(progress);
         when(space.channels(EVENT)).thenReturn(List.of());
     }
 
@@ -159,8 +160,8 @@ class EventBoardUpdateRulesTest {
     private void event(Status status, String updatesJson, String visibility) {
         String config = "{" + BOARD + (updatesJson == null ? "" : ",\"updates\":" + updatesJson)
                 + (visibility == null ? "" : ",\"standings\":{\"visibility\":\"" + visibility + "\"}") + "}";
-        when(repository.event(GUILD, EVENT)).thenReturn(Optional.of(eventOf(status, config)));
-        when(repository.eventsInStatus(Status.RUNNING)).thenReturn(status == Status.RUNNING ? List.of(eventOf(status, config)) : List.of());
+        when(events.event(GUILD, EVENT)).thenReturn(eventOf(status, config));
+        when(events.eventsInStatus(Status.RUNNING)).thenReturn(status == Status.RUNNING ? List.of(eventOf(status, config)) : List.of());
     }
 
     private static Event eventOf(Status status, String config) {

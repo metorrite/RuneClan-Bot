@@ -1,12 +1,15 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.alerts.AutoPostRouter;
+import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.events.EventRepository.Event;
-import com.runeclans.bot.events.EventRepository.Panel;
+import com.runeclans.bot.events.EventRepository.Participant;
+import com.runeclans.bot.events.EventRepository.Team;
 import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
+import com.runeclans.bot.hubevents.HubEventMap;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
@@ -21,11 +24,12 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -33,18 +37,18 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Keeps a bingo's live board in Discord: one message in the event's board channel with the board as a picture and a short leaderboard, edited
- * whenever progress changes (after a short pause, so a burst of approvals makes one update). Also tells a player when their proof is approved or
- * denied. Nothing here changes an event; it only reads it and posts.
+ * whenever progress changes (after a short pause, so a burst of approvals makes one update). The picture is the hub's ({@code board.png}, T-934):
+ * the bot posts what the website shows, and draws nothing itself. Also tells a player when their proof is approved or denied. Nothing here changes
+ * an event; it only reads it and posts.
  */
 @BService
 public class EventBoardPanels {
     private static final Logger log = LoggerFactory.getLogger(EventBoardPanels.class);
     private static final long DELAY_SECONDS = 4;
 
-    private final EventRepository repository;
-    private final EventService service;
+    private final HubEvents events;
+    private final HubEventMap map;
     private final EventSpaceRepository space;
-    private final BingoTiles tiles;
     private final ScheduledExecutorService executor = BotScheduler.lane("event-board-panels");
     private final Map<Long, ScheduledFuture<?>> pending = new ConcurrentHashMap<>();
     /** Boards held back by their event's update rules (T-650): since when, per event. Lost on a restart; the next approval holds it again. */
@@ -55,11 +59,10 @@ public class EventBoardPanels {
     private record Held(long guildId, Instant since) {}
     private volatile JDA jda;
 
-    public EventBoardPanels(EventRepository repository, EventService service, EventSpaceRepository space, EventChanges changes, BingoTiles tiles) {
-        this.repository = repository;
-        this.service = service;
+    public EventBoardPanels(HubEvents events, EventSpaceRepository space, EventChanges changes) {
+        this.events = events;
+        this.map = events.map();
         this.space = space;
-        this.tiles = tiles;
         changes.subscribe(this::onChange);
     }
 
@@ -73,6 +76,11 @@ public class EventBoardPanels {
     private void onChange(EventChanges.Change change) {
         if (change.kind() == EventChanges.Kind.CLAIM_DECIDED) {
             executor.execute(() -> tellPlayer(change));
+        }
+        if (change.kind() == EventChanges.Kind.STAGE && "deleted".equals(change.note())) {
+            // the event is gone from the hub (the map forgets it right after this): its board comes down now, while the message is still known
+            map.event(change.eventId()).ifPresent(row -> removeMessage(row.panelChannelId(), row.panelMessageId()));
+            return;
         }
         // only progress (approvals, tracked progress) may be held back by the event's update rules (T-650); a start, a finish or a settings change
         // always redraws the board straight away
@@ -142,7 +150,7 @@ public class EventBoardPanels {
 
     private BoardUpdates.Settings rulesOf(long guildId, long eventId) {
         try {
-            return repository.event(guildId, eventId).map(e -> BoardUpdates.of(DataObject.fromJson(e.config()))).orElse(BoardUpdates.DEFAULTS);
+            return BoardUpdates.of(DataObject.fromJson(events.event(guildId, eventId).config()));
         } catch (RuntimeException e) {
             return BoardUpdates.DEFAULTS;
         }
@@ -160,66 +168,73 @@ public class EventBoardPanels {
         JDA client = jda;
         if (client == null) return "The bot isn't connected to Discord yet.";
         Guild guild = Shards.guild(client, guildId);
-        Event event = repository.event(guildId, eventId).orElse(null);
+        Event event;
+        try {
+            event = guild == null ? null : events.event(guildId, eventId);
+        } catch (EventProblem e) {
+            event = null;
+        }
         if (guild == null || event == null) return "That event or server wasn't found.";
         if (!ClanVsClan.plays(event, BingoTemplate.KEY)) return "Only bingo events have a board.";
         if (!shown(event.status())) return "The board is posted once the event starts.";
         EventBoards.Display display = EventBoards.displayOf(DataObject.fromJson(event.config()));
-        List<String> parts = new java.util.ArrayList<>();
-        if (display.shared()) parts.add(refreshShared(guildId, eventId));
+        List<String> parts = new ArrayList<>();
+        if (display.shared()) parts.add(refreshShared(guild, event));
         if (display.own()) parts.add(refreshOwn(guild, event));
         return String.join(" ", parts);
     }
 
     /**
-     * Each team's (or player's) own board, in their own channel when the event made one, else in the live board channel. A board is drawn and sent only
+     * Each team's (or player's) own board, in their own channel when the event made one, else in the live board channel. A board is fetched and sent only
      * when its tiles changed since it was last posted, so a busy event doesn't redraw every card for every approval.
      */
     private String refreshOwn(Guild guild, Event event) {
         long eventId = event.id();
         try {
-            DataObject config = DataObject.fromJson(event.config());
-            List<ObjectiveSpec> objectives = service.objectives(eventId);
-            List<Standing> standings = service.standings(guild.getIdLong(), eventId);
-            List<String> keys = BingoBoardView.boardKeys(config);
+            List<String> keys = BingoBoardView.boardKeys(DataObject.fromJson(event.config()));
+            List<ObjectiveSpec> objectives = events.objectives(eventId);
+            List<Standing> standings = events.standings(guild.getIdLong(), eventId);
             boolean byTeam = event.scoringMode() == EventRules.ScoringMode.TEAM;
-            var teams = repository.teams(eventId);
-            var players = repository.participants(eventId).stream().filter(p -> !p.waiting()).toList();
-            Map<String, Long> ownChannel = new java.util.HashMap<>();
+            List<Team> teams = events.teams(eventId);
+            List<Participant> players = events.participants(eventId).stream().filter(p -> !p.waiting()).toList();
+            Map<String, Long> ownChannel = new HashMap<>();
             for (EventSpaceRepository.ChannelRow row : space.channels(eventId)) ownChannel.put(row.key(), row.channelId());
 
-            List<EventBoards.Subject> subjects = new java.util.ArrayList<>();
+            // whose board each subject's picture is asked for: the hub draws a member's own board (their team's, in a team event)
+            Map<String, Long> viewerOf = new HashMap<>();
+            List<EventBoards.Subject> subjects = new ArrayList<>();
             if (byTeam) {
-                for (EventRepository.Team team : teams) {
-                    if (players.stream().noneMatch(p -> p.teamId() != null && p.teamId() == team.id())) continue;
+                for (Team team : teams) {
+                    Participant member = players.stream().filter(p -> p.teamId() != null && p.teamId() == team.id() && p.userId() != 0).findFirst().orElse(null);
+                    if (member == null) continue;
                     subjects.add(new EventBoards.Subject("t:" + team.id(), team.name(), ownChannel.get(EventSpace.teamKey(team.id()))));
+                    viewerOf.put("t:" + team.id(), member.userId());
                 }
             } else {
-                for (var player : players) {
+                for (Participant player : players) {
+                    if (player.userId() == 0) continue;
                     Member member = guild.getMemberById(player.userId());
                     subjects.add(new EventBoards.Subject("u:" + player.userId(), member == null ? "Player" : member.getEffectiveName(), ownChannel.get(EventSpace.playerKey(player.userId()))));
+                    viewerOf.put("u:" + player.userId(), player.userId());
                 }
             }
             if (subjects.isEmpty()) return "No own boards yet: nobody is " + (byTeam ? "on a team." : "in the event.");
 
-            Map<String, List<BingoBoardImage.TileView>> tilesOf = new java.util.HashMap<>();
-            Map<String, String> hashes = new java.util.HashMap<>();
-            for (EventBoards.Subject s : subjects) {
-                Standing mine = standings.stream().filter(st -> st.subject().equals(s.key())).findFirst().orElse(null);
-                var views = BingoBoardView.personal(keys, objectives, mine, tiles::iconKeyFor);
-                tilesOf.put(s.key(), views);
-                hashes.put(s.key(), EventBoards.hashOf(views));
-            }
-            Long fallback = settingsOf(event).boardChannelId();
-            var steps = EventBoards.plan(subjects, fallback, repository.boardPanels(eventId), hashes);
-            int posted = 0, edited = 0, same = 0, nowhere = 0;
+            Map<String, Standing> standingOf = new HashMap<>();
+            for (Standing s : standings) standingOf.put(s.subject(), s);
+            Map<String, String> hashes = new HashMap<>();
+            for (EventBoards.Subject s : subjects) hashes.put(s.key(), hashOf(keys, standingOf.get(s.key())));
+            Map<String, EventBoards.Posted> posted = new HashMap<>();
+            map.boardPanels(eventId).forEach((subject, panel) -> posted.put(subject, new EventBoards.Posted(panel.channelId(), panel.messageId(), panel.hash())));
+            List<EventBoards.Step> steps = EventBoards.plan(subjects, EventSpaces.boardChannelOf(event, space), posted, hashes);
+            int sent = 0, edited = 0, same = 0, nowhere = 0;
             for (EventBoards.Step step : steps) {
                 switch (step.what()) {
                     case UNCHANGED -> same++;
                     case NO_PLACE -> nowhere++;
                     case POST, EDIT -> {
-                        if (sendOwn(guild, event, config, step, tilesOf.get(step.subject().key()))) {
-                            if (step.what() == EventBoards.What.POST) posted++;
+                        if (sendOwn(guild, event, keys, objectives, step, standingOf.get(step.subject().key()), viewerOf.get(step.subject().key()))) {
+                            if (step.what() == EventBoards.What.POST) sent++;
                             else edited++;
                         } else {
                             nowhere++;
@@ -227,40 +242,41 @@ public class EventBoardPanels {
                     }
                 }
             }
-            return "Own boards: " + posted + " posted, " + edited + " updated, " + same + " unchanged" + (nowhere > 0 ? ", " + nowhere + " with nowhere to post (set up the event's channels, or choose a live board channel)." : ".");
+            return "Own boards: " + sent + " posted, " + edited + " updated, " + same + " unchanged" + (nowhere > 0 ? ", " + nowhere + " with nowhere to post (set up the event's channels, or choose a live board channel)." : ".");
         } catch (RuntimeException e) {
             log.warn("Could not refresh the own boards of event {}", eventId, e);
             return "The own boards couldn't be built: " + e.getMessage();
         }
     }
 
-    /** Draws one subject's board and posts it (or edits the message already there). False when the channel can't be used. */
-    private boolean sendOwn(Guild guild, Event event, DataObject config, EventBoards.Step step, List<BingoBoardImage.TileView> tileViews) {
+    /** A fingerprint of which tiles a subject has done, so an unchanged board isn't fetched and sent again. */
+    static String hashOf(List<String> keys, Standing standing) {
+        StringBuilder text = new StringBuilder();
+        for (String key : keys) text.append(key).append('=').append(standing == null ? 0 : standing.completions().getOrDefault(key, 0)).append(';');
+        return Integer.toHexString(text.toString().hashCode());
+    }
+
+    /** Fetches one subject's board from the hub and posts it (or edits the message already there). False when the channel can't be used. */
+    private boolean sendOwn(Guild guild, Event event, List<String> keys, List<ObjectiveSpec> objectives, EventBoards.Step step, Standing standing, long viewer) {
         GuildMessageChannel channel = guild.getChannelById(GuildMessageChannel.class, step.channelId());
         if (channel == null || !guild.getSelfMember().hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_SEND, Permission.MESSAGE_ATTACH_FILES)) return false;
         String subject = step.subject().key();
-        int done = (int) tileViews.stream().filter(BingoBoardImage.TileView::done).count();
-        String text = "### " + event.name() + " · " + step.subject().name() + "\n" + done + " of " + tileViews.size() + " tiles done · " + stageText(event.status());
-        byte[] png;
-        try {
-            png = BingoBoardImage.render(config, event.name(), step.subject().name() + " · " + stageText(event.status()), done + " of " + tileViews.size() + " tiles done · send proof with /submit event in your channel", tileViews);
-        } catch (IOException | RuntimeException | LinkageError e) {
-            log.warn("Could not draw the board of {} in event {}; posting it as text", subject, event.id(), e);
-            png = null;
-            text = withTiles(text, tileViews);
-        }
-        FileUpload file = png == null ? null : FileUpload.fromData(png, "bingo-board.png");
-        String message = text;
-        byte[] picture = png;
+        long done = keys.stream().filter(k -> !BingoBoardOptions.FREE_KEY.equals(k) && standing != null && standing.completions().getOrDefault(k, 0) > 0).count();
+        long of = keys.stream().filter(k -> !BingoBoardOptions.FREE_KEY.equals(k)).count();
+        String text = "### " + event.name() + " · " + step.subject().name() + "\n" + done + " of " + of + " tiles done · " + stageText(event.status());
+        byte[] png = picture(guild.getIdLong(), event.id(), viewer, true);
+        if (png == null) text = withTiles(text, keys, objectives, k -> standing != null && standing.completions().getOrDefault(k, 0) > 0, k -> null);
         long eventId = event.id();
         long channelId = channel.getIdLong();
         String hash = step.hash();
+        String message = text;
+        byte[] picture = png;
         if (step.what() == EventBoards.What.EDIT) {
-            var existing = repository.boardPanels(eventId).get(subject);
+            HubEventMap.BoardPanel existing = map.boardPanels(eventId).get(subject);
             if (existing != null && existing.channelId() == channelId) {
                 var edit = channel.editMessageById(existing.messageId(), message);
-                edit = file == null ? edit.setAttachments(java.util.Collections.emptyList()) : edit.setAttachments(file);
-                edit.queue(ok -> repository.setBoardPanel(eventId, subject, channelId, existing.messageId(), hash), error -> {
+                edit = picture == null ? edit.setAttachments(java.util.Collections.emptyList()) : edit.setAttachments(FileUpload.fromData(picture, "bingo-board.png"));
+                edit.queue(ok -> map.setBoardPanel(eventId, subject, channelId, existing.messageId(), hash), error -> {
                     log.info("The board message of {} in event {} couldn't be edited ({}); posting a new one", subject, eventId, error.getMessage());
                     postOwn(channel, eventId, subject, message, picture, hash);
                 });
@@ -274,72 +290,63 @@ public class EventBoardPanels {
     private void postOwn(GuildMessageChannel channel, long eventId, String subject, String text, byte[] picture, String hash) {
         var send = channel.sendMessage(text).setAllowedMentions(List.of());
         if (picture != null) send = send.addFiles(FileUpload.fromData(picture, "bingo-board.png"));
-        send.queue(message -> repository.setBoardPanel(eventId, subject, channel.getIdLong(), message.getIdLong(), hash),
+        send.queue(message -> map.setBoardPanel(eventId, subject, channel.getIdLong(), message.getIdLong(), hash),
                 error -> log.warn("Could not post the board of {} in event {}", subject, eventId, error));
     }
 
+    /** The board picture from the hub, or null when it can't give one right now (it is down, or its fonts failed): the board is then posted as text. */
+    private byte[] picture(long guildId, long eventId, long viewer, boolean mine) {
+        try {
+            byte[] png = events.boardPng(guildId, eventId, viewer, mine);
+            return png == null || png.length == 0 ? null : png;
+        } catch (RuntimeException e) {
+            log.warn("The hub couldn't give the board picture of event {}: {}", eventId, e.getMessage());
+            return null;
+        }
+    }
+
     /** The one live board everybody shares: how many teams or players have each tile. */
-    private String refreshShared(long guildId, long eventId) {
-        JDA client = jda;
-        if (client == null) return "The bot isn't connected to Discord yet.";
-        Guild guild = Shards.guild(client, guildId);
-        Event event = repository.event(guildId, eventId).orElse(null);
-        if (guild == null || event == null) return "That event or server wasn't found.";
-        EventSettings settings = settingsOf(event);
-        if (settings.boardChannelId() == null) return "Shared board: there is no live board channel yet. Choose or make one on the Channels tab.";
-        if (!shown(event.status())) return "The board is posted once the event starts.";
-        GuildMessageChannel channel = guild.getChannelById(GuildMessageChannel.class, settings.boardChannelId());
+    private String refreshShared(Guild guild, Event event) {
+        long guildId = guild.getIdLong();
+        long eventId = event.id();
+        Long boardChannelId = EventSpaces.boardChannelOf(event, space);
+        if (boardChannelId == null) return "Shared board: there is no live board channel yet. Choose or make one on the Channels tab.";
+        GuildMessageChannel channel = guild.getChannelById(GuildMessageChannel.class, boardChannelId);
         if (channel == null) return "The board channel isn't a channel the bot can post in (it may have been deleted, or it is a forum or category).";
         if (!guild.getSelfMember().hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_SEND, Permission.MESSAGE_ATTACH_FILES)) {
             return "The bot needs to see, send messages and attach files in #" + channel.getName() + ".";
         }
 
-        byte[] png = null;
         String text;
-        List<BingoBoardImage.TileView> tileViews;
-        DataObject config;
+        List<String> keys;
+        List<ObjectiveSpec> objectives;
         List<Standing> standings;
+        int subjects;
         try {
-            config = DataObject.fromJson(event.config());
-            List<ObjectiveSpec> objectives = service.objectives(eventId);
-            standings = service.standings(guildId, eventId);
-            int subjects = subjectCount(event, standings);
-            Map<String, String> firstBy = new java.util.HashMap<>();
-            if (BingoTemplate.layoutOf(config).isPresent()) {
-                // who got each tile first, for the line under a finished tile on the picture shapes
-                boolean byTeam = event.scoringMode() == EventRules.ScoringMode.TEAM;
-                List<EventScoring.Entry> entries = new java.util.ArrayList<>();
-                for (EventRepository.Progress p : repository.progress(eventId)) {
-                    if (byTeam && p.teamId() == null) continue;
-                    entries.add(new EventScoring.Entry(byTeam ? "t:" + p.teamId() : "u:" + p.userId(), p.objectiveKey(), p.amount(), p.createdAt()));
-                }
-                var teams = repository.teams(eventId);
-                BingoBoardView.firstCompleters(objectives, entries).forEach((key, subject) -> firstBy.put(key, nameOf(guild, subject, teams)));
-            }
-            tileViews = BingoBoardView.shared(BingoBoardView.boardKeys(config), objectives, standings, subjects, tiles::iconKeyFor, firstBy);
+            keys = BingoBoardView.boardKeys(DataObject.fromJson(event.config()));
+            objectives = events.objectives(eventId);
+            standings = events.standings(guildId, eventId);
+            subjects = subjectCount(event, standings);
             text = panelText(guild, event, standings) + xpTilesNote(event, objectives);
         } catch (RuntimeException e) {
             log.warn("Could not build the board of event {}", eventId, e);
             return "The board couldn't be built: " + e.getMessage();
         }
-        try {
-            png = BingoBoardImage.render(config, event.name(),
-                    stageText(event.status()) + " · tiles show how many " + (event.scoringMode() == EventRules.ScoringMode.TEAM ? "teams" : "players") + " have them",
-                    "Submit proof with /events submit event:" + eventId + " and the tile's number", tileViews);
-        } catch (IOException | RuntimeException | LinkageError e) {
-            // a server with no usable fonts can't draw text onto a picture (LinkageError: the font system failed to start once and stays unusable);
-            // the board is then posted as text so it still works
-            log.warn("Could not draw the board picture of event {}; posting it as text", eventId, e);
-            text = withTiles(text, tileViews);
+        byte[] png = picture(guildId, eventId, 0, false);
+        if (png == null) {
+            // the hub draws the picture; while it can't, the board is posted as text so it still works
+            List<Standing> all = standings;
+            int of = subjects;
+            text = withTiles(text, keys, objectives, k -> false, k -> (int) all.stream().filter(s -> s.completions().getOrDefault(k, 0) > 0).count() + "/" + of);
         }
 
         FileUpload file = png == null ? null : FileUpload.fromData(png, "bingo-board.png");
         String message = text;
         byte[] picture = png;
-        String how = png == null ? " (as text: the picture couldn't be drawn on this server)" : "";
-        Optional<Panel> existing = repository.panel(eventId);
-        if (existing.isPresent() && existing.get().channelId() == channel.getIdLong()) {
-            var edit = channel.editMessageById(existing.get().messageId(), message);
+        String how = png == null ? " (as text: the picture couldn't be drawn right now)" : "";
+        HubEventMap.Row row = map.event(eventId).orElse(null);
+        if (row != null && row.panelChannelId() != null && row.panelMessageId() != null && row.panelChannelId() == channel.getIdLong()) {
+            var edit = channel.editMessageById(row.panelMessageId(), message);
             edit = file == null ? edit.setAttachments(java.util.Collections.emptyList()) : edit.setAttachments(file);
             edit.queue(
                     ok -> { },
@@ -359,11 +366,21 @@ public class EventBoardPanels {
         return "\n-# XP tiles count RuneSync XP only: players without RuneSync (RuneMetrics only) make no progress on them.";
     }
 
-    /** The panel text with the tiles listed under it, for when the picture can't be drawn. Kept inside Discord's message length. */
-    static String withTiles(String text, List<BingoBoardImage.TileView> tileViews) {
+    /**
+     * The panel text with the tiles listed under it, for when the picture can't be had: each tile's number and label, ticked when {@code done} says so,
+     * with {@code count}'s "n/of" after it when it gives one. Kept inside Discord's message length.
+     */
+    static String withTiles(String text, List<String> keys, List<ObjectiveSpec> objectives, java.util.function.Predicate<String> done, java.util.function.Function<String, String> count) {
+        Map<String, ObjectiveSpec> byKey = new LinkedHashMap<>();
+        objectives.forEach(o -> byKey.put(o.key(), o));
         StringBuilder out = new StringBuilder(text).append("\n");
-        for (BingoBoardImage.TileView tile : tileViews) {
-            String line = "\n" + (tile.done() ? "✅" : "⬜") + " **" + tile.number() + ".** " + tile.label() + " · " + tile.count() + "/" + tile.of();
+        for (int i = 0; i < keys.size(); i++) {
+            String key = keys.get(i);
+            boolean free = BingoBoardOptions.FREE_KEY.equals(key);
+            ObjectiveSpec o = byKey.get(key);
+            String label = free ? "FREE" : o == null ? key : o.label();
+            String tally = count.apply(key);
+            String line = "\n" + (free || done.test(key) ? "✅" : "⬜") + " **" + (i + 1) + ".** " + label + (tally == null ? "" : " · " + tally);
             if (out.length() + line.length() > 1900) {
                 out.append("\n…");
                 break;
@@ -377,7 +394,7 @@ public class EventBoardPanels {
         var send = channel.sendMessage(text).setAllowedMentions(List.of());
         if (file != null) send = send.addFiles(file);
         send.queue(
-                message -> repository.setPanel(eventId, channel.getIdLong(), message.getIdLong()),
+                message -> map.setPanel(eventId, channel.getIdLong(), message.getIdLong()),
                 error -> log.warn("Could not post the board of event {}", eventId, error));
     }
 
@@ -390,9 +407,9 @@ public class EventBoardPanels {
     }
 
     private int subjectCount(Event event, List<Standing> standings) {
-        var participants = repository.participants(event.id()).stream().filter(p -> !p.waiting()).toList();
+        List<Participant> participants = events.participants(event.id()).stream().filter(p -> !p.waiting()).toList();
         if (event.scoringMode() == EventRules.ScoringMode.TEAM) {
-            return (int) Math.max(standings.size(), participants.stream().filter(p -> p.teamId() != null).map(EventRepository.Participant::teamId).distinct().count());
+            return (int) Math.max(standings.size(), participants.stream().filter(p -> p.teamId() != null).map(Participant::teamId).distinct().count());
         }
         return Math.max(standings.size(), participants.size());
     }
@@ -414,7 +431,7 @@ public class EventBoardPanels {
         } else if (standings.isEmpty()) {
             text.append("\nNo points yet.");
         } else {
-            var teams = repository.teams(event.id());
+            List<Team> teams = events.teams(event.id());
             int rank = 1;
             for (Standing s : standings) {
                 if (rank > 5) break;
@@ -426,9 +443,14 @@ public class EventBoardPanels {
     }
 
     /** A subject of the standings ("u:id" for a player, "t:id" for a team) as a name: the member's server name, or the team's name. */
-    static String nameOf(Guild guild, String subject, List<EventRepository.Team> teams) {
-        long id = Long.parseLong(subject.substring(2));
-        if (subject.startsWith("t:")) return teams.stream().filter(t -> t.id() == id).map(EventRepository.Team::name).findFirst().orElse("A team");
+    static String nameOf(Guild guild, String subject, List<Team> teams) {
+        long id;
+        try {
+            id = Long.parseLong(subject.substring(2));
+        } catch (RuntimeException e) {
+            return subject.startsWith("t:") ? "A team" : "Player";
+        }
+        if (subject.startsWith("t:")) return teams.stream().filter(t -> t.id() == id).map(Team::name).findFirst().orElse("A team");
         Member member = guild.getMemberById(id);
         return member == null ? "Player" : member.getEffectiveName();
     }
@@ -436,13 +458,13 @@ public class EventBoardPanels {
     /** DMs a player whose proof was decided. A closed DM is fine: nothing else depends on it. */
     private void tellPlayer(EventChanges.Change change) {
         JDA client = jda;
-        if (client == null) return;
+        if (client == null || change.userId() == 0) return;
         try {
-            var claim = repository.claim(change.eventId(), change.claimId()).orElse(null);
-            Event event = repository.event(change.guildId(), change.eventId()).orElse(null);
+            EventRepository.Claim claim = events.claim(change.eventId(), change.claimId()).orElse(null);
+            Event event = events.eventById(change.eventId()).orElse(null);
             if (claim == null || event == null) return;
             String tile = claim.kind() == EventRepository.ClaimKind.VERIFICATION ? "verification"
-                    : "**" + service.objectives(change.eventId()).stream().filter(o -> o.key().equals(claim.objectiveKey())).map(ObjectiveSpec::label).findFirst().orElse(claim.objectiveKey()) + "**";
+                    : "**" + events.objectives(change.eventId()).stream().filter(o -> o.key().equals(claim.objectiveKey())).map(ObjectiveSpec::label).findFirst().orElse(claim.objectiveKey()) + "**";
             String message = change.approved()
                     ? "Your proof for " + tile + " in **" + event.name() + "** was approved."
                     : "Your proof for " + tile + " in **" + event.name() + "** wasn't accepted" + (change.note().isBlank() ? "." : ": " + change.note())
@@ -456,22 +478,17 @@ public class EventBoardPanels {
 
     /** Takes a deleted event's live board out of Discord, if it had one and the message is still there. */
     public void removeMessage(EventRepository.Panel panel) {
+        if (panel != null) removeMessage(panel.channelId(), panel.messageId());
+    }
+
+    private void removeMessage(Long channelId, Long messageId) {
         JDA client = jda;
-        if (client == null || panel == null) return;
+        if (client == null || channelId == null || messageId == null) return;
         try {
-            GuildMessageChannel channel = Shards.channel(client, GuildMessageChannel.class, panel.channelId());
-            if (channel != null) channel.deleteMessageById(panel.messageId()).queue(ok -> { }, error -> log.debug("Could not remove an event's board message: {}", error.getMessage()));
+            GuildMessageChannel channel = Shards.channel(client, GuildMessageChannel.class, channelId);
+            if (channel != null) channel.deleteMessageById(messageId).queue(ok -> { }, error -> log.debug("Could not remove an event's board message: {}", error.getMessage()));
         } catch (RuntimeException e) {
             log.debug("Could not remove an event's board message", e);
         }
-    }
-
-    /** The tiles to draw for one player or team, for {@code /events board}. */
-    public List<BingoBoardImage.TileView> personalTiles(Event event, long userId) {
-        DataObject config = DataObject.fromJson(event.config());
-        var player = repository.participant(event.id(), userId).orElse(null);
-        String subject = player == null ? null : event.scoringMode() == EventRules.ScoringMode.TEAM ? (player.teamId() == null ? null : "t:" + player.teamId()) : "u:" + userId;
-        Standing mine = subject == null ? null : service.standings(event.guildId(), event.id()).stream().filter(s -> s.subject().equals(subject)).findFirst().orElse(null);
-        return BingoBoardView.personal(BingoBoardView.boardKeys(config), service.objectives(event.id()), mine, tiles::iconKeyFor);
     }
 }

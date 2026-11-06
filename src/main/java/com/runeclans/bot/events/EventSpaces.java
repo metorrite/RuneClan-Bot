@@ -14,6 +14,7 @@ import com.runeclans.bot.events.EventSpace.Readiness;
 import com.runeclans.bot.events.EventSpace.Room;
 import com.runeclans.bot.events.EventSpace.TeamRef;
 import com.runeclans.bot.events.EventSpace.Use;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.permission.PermissionGroup;
 import com.runeclans.bot.permission.PermissionGroupService;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -45,22 +46,50 @@ import java.util.concurrent.TimeUnit;
 /**
  * Reads everything an event's roles and channels depend on (the roster, teams and organisers; what JonnyBot made before and what is still there; which roles
  * are staff; how much room and which permissions the server has) and hands it to {@link EventSpace} to work out what to do. This class only reads: it shows
- * what setting up the space would do and changes nothing on Discord.
+ * what setting up the space would do and changes nothing on Discord. The event, its roster and teams are the hub's (T-934); what the bot made is its own.
  */
 @BService
 public class EventSpaces {
     private static final Logger log = LoggerFactory.getLogger(EventSpaces.class);
 
-    private final EventRepository events;
-    private final EventService service;
+    private final HubEvents events;
     private final EventSpaceRepository space;
     private final PermissionGroupService groups;
 
-    public EventSpaces(EventRepository events, EventService service, EventSpaceRepository space, PermissionGroupService groups) {
+    public EventSpaces(HubEvents events, EventSpaceRepository space, PermissionGroupService groups) {
         this.events = events;
-        this.service = service;
         this.space = space;
         this.groups = groups;
+    }
+
+    /**
+     * The channel a bingo's live board goes in: the one the event's settings name, else the live board channel the bot made for the event. The ids of what
+     * the bot made live in its own tables, not on the hub (T-945), so a channel made by a setup is found here rather than in the event's config.
+     */
+    public static Long boardChannelOf(Event event, EventSpaceRepository space) {
+        Long chosen = settingsOf(event).boardChannelId();
+        return chosen != null ? chosen : madeChannel(event, space, Kind.BOARD);
+    }
+
+    /** The channel players' proof lands in for staff to review: the settings' choice, else the review channel the bot made for the event. */
+    public static Long reviewChannelOf(Event event, EventSpaceRepository space) {
+        Long chosen = settingsOf(event).reviewChannelId();
+        return chosen != null ? chosen : madeChannel(event, space, Kind.REVIEW);
+    }
+
+    private static Long madeChannel(Event event, EventSpaceRepository space, Kind kind) {
+        for (EventSpaceRepository.ChannelRow row : space.channels(event.id())) {
+            if (row.key().equals(kind.key())) return row.channelId();
+        }
+        return null;
+    }
+
+    private static EventSettings settingsOf(Event event) {
+        try {
+            return EventSettings.parse(DataObject.fromJson(event.config()));
+        } catch (RuntimeException e) {
+            return EventSettings.defaults();
+        }
     }
 
     /** What the plan was made from, kept so the page can say which roles count as staff and what settings were used. */
@@ -90,8 +119,8 @@ public class EventSpaces {
     }
 
     private Gathered gather(Guild guild, Event event, EventSpace.Setting instead) {
-        EventSettings settings = instead == null ? service.settings(event) : service.settings(event).withChannels(instead);
-        List<Participant> counted = service.countedPlayers(event);
+        EventSettings settings = instead == null ? events.settings(event) : events.settings(event).withChannels(instead);
+        List<Participant> counted = events.countedPlayers(event);
         int excluded = events.participants(event.id()).size() - counted.size();
         List<EventRepository.Team> teams = events.teams(event.id());
         Set<Long> teamIds = new HashSet<>();

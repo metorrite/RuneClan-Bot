@@ -61,6 +61,7 @@ public final class LaneOwners {
             Map.entry("event-board-panels", Owner.GATEWAY),
             Map.entry("cohost-panels", Owner.GATEWAY),
             Map.entry("event-signups", Owner.GATEWAY),
+            Map.entry("hub-event-reminders", Owner.GATEWAY), // posts the hub's event reminders in the event's channel or DMs its players (T-934)
             Map.entry("event-announcer-sweep", Owner.GATEWAY),
             Map.entry("reminders", Owner.GATEWAY),
             Map.entry("server-reminders", Owner.GATEWAY),
