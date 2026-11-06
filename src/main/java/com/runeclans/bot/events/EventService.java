@@ -995,12 +995,15 @@ public class EventService {
 
     // ---------- progress ----------
 
+    /** The progress key prefix of an XP tile counted from the hub's XP ledger (T-543). */
+    static final String XP_TILE_KEY_PREFIX = "xpt:";
+
     /**
-     * XP tile progress from {@link PluginXpTracker}'s final pass while the event is being scored (T-706): XP gained up to the planned end (or the move to
+     * XP tile progress from the XP tracker's final pass while the event is being scored (T-706): XP gained up to the planned end (or the move to
      * scoring, if sooner) still counts, so the last minute or two before an organiser finishes isn't lost. Nothing else is taken once the event stops running.
      */
     static boolean finalXpTile(Event event, Source source, String sourceKey) {
-        return event.status() == Status.SCORING && source == Source.AUTO && sourceKey != null && sourceKey.startsWith(PluginXpTracker.TILE_KEY_PREFIX);
+        return event.status() == Status.SCORING && source == Source.AUTO && sourceKey != null && sourceKey.startsWith(XP_TILE_KEY_PREFIX);
     }
 
     /**

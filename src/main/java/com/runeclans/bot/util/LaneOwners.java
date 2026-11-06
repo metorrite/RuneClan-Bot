@@ -32,22 +32,15 @@ public final class LaneOwners {
             Map.entry("clan-site-race", Owner.API), // the leaderboard race's hub reads (T-710), for the website's overview
             Map.entry("address-change-scheduler", Owner.API),
             Map.entry("quick-groups", Owner.API),
-            Map.entry("event-export-expiry", Owner.API), // deletes expired wrap-up exports (T-698)
-            // RuneMetrics polling, its budget and the event trackers that feed it: one budget, kept in the one gateway process (M1, M2).
-            // Gateway, not api, because the poll targets are the servers the bot is in (RosterPollScheduler reads the server list).
-            Map.entry("event-tracker", Owner.GATEWAY),
-            Map.entry("plugin-xp-tracker", Owner.GATEWAY),
             Map.entry("hub-tracked", Owner.GATEWAY), // the names the hub should poll, from the servers the bot is in (T-851)
             // work that reads the gateway's servers, channels or members (M9, M11)
             Map.entry("clan-sync-scheduler", Owner.GATEWAY),
             Map.entry("clan-points-scheduler", Owner.GATEWAY),
             Map.entry("runeclans-feed", Owner.GATEWAY),
-            Map.entry("skill-of-the-week", Owner.GATEWAY),
             Map.entry("plugin-xp-points", Owner.GATEWAY),
             Map.entry("clan-seasons", Owner.GATEWAY),
             // the rank-up advisor's weekly update reads Discord names and channels from the cache
             Map.entry("rank-weekly", Owner.GATEWAY),
-            Map.entry("event-draws", Owner.GATEWAY),
             Map.entry("event-board-updates", Owner.GATEWAY),
             Map.entry("guild-retention", Owner.GATEWAY),
             Map.entry("discord-jobs", Owner.GATEWAY),

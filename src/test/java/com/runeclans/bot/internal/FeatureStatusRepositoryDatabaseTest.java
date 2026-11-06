@@ -47,7 +47,7 @@ class FeatureStatusRepositoryDatabaseTest {
             com.runeclans.bot.anniversary.AnniversaryRepository.class, com.runeclans.bot.alliance.AllianceRepository.class,
             com.runeclans.bot.plugin.RuneSyncRepository.class, com.runeclans.bot.devtools.DevSnapshotRepository.class,
             com.runeclans.bot.lookup.LookupReminderRepository.class, com.runeclans.bot.tracking.TrackingDatabaseInitializer.class,
-            com.runeclans.bot.coffer.CofferDatabaseInitializer.class, com.runeclans.bot.events.SkillWeekRepository.class);
+            com.runeclans.bot.coffer.CofferDatabaseInitializer.class);
     private static final List<String> TOUCHED = List.of("goodbye_config", "self_role", "clan_profile", "lookup_reminder", "role_toolkit_allow",
             "tracking_group_config", "tracking_destination");
     private static ConnectionSupplier supplier;

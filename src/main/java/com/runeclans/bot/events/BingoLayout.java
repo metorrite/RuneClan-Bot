@@ -3,8 +3,6 @@ package com.runeclans.bot.events;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -150,37 +148,6 @@ public final class BingoLayout {
             if (rows.get(i).size() > 1) groups.add(new Group(rowNames.get(i), rows.get(i)));
         }
         return groups;
-    }
-
-    // ---------- the picture ----------
-
-    private static final Object LOCK = new Object();
-    private static final Map<String, BufferedImage> IMAGES = new LinkedHashMap<>();
-
-    /** The empty board picture in the classic look (read once and kept). Callers must not draw on it: copy it first. */
-    public BufferedImage image() {
-        return image(LOOK_CLASSIC);
-    }
-
-    /** The empty board picture in a look (read once and kept). The classic one has its "ITEM ICON" and "PLAYER NAME" placeholders printed in; the others are clean. */
-    public BufferedImage image(String look) {
-        if (built != null) return BingoBackdrops.grid(look, built.width(), built.height());
-        String file = LOOK_RUNESCAPE.equals(look) ? "runescape/" + id + ".jpg" : image;
-        synchronized (LOCK) {
-            return IMAGES.computeIfAbsent(file, k -> {
-                try (InputStream in = BingoLayout.class.getResourceAsStream("/bingo/" + file)) {
-                    if (in == null) throw new IllegalStateException("The picture for the " + name + " board is missing.");
-                    return ImageIO.read(in);
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            });
-        }
-    }
-
-    /** Whether a look's picture has the printed placeholders that must be covered before drawing (only the classic template does). */
-    public static boolean hasPlaceholders(String look) {
-        return !LOOK_RUNESCAPE.equals(look);
     }
 
     // ---------- the shapes ----------

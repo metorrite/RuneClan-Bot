@@ -7,11 +7,11 @@ import com.runeclans.bot.clanprofile.ClanProfile;
 import com.runeclans.bot.clanprofile.ClanProfileRepository;
 import com.runeclans.bot.clanprofile.JoinLinks;
 import com.runeclans.bot.discord.Containers;
-import com.runeclans.bot.events.EventCohostRepository.Panel;
 import com.runeclans.bot.events.EventCohostRepository.PendingJoin;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEventMap;
 import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.util.BotScheduler;
@@ -54,12 +54,13 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>in the host's Discord already: joined at once, with the co-host as the server they came through (their origin);</li>
  *   <li>not in it: an answer only they see with the host's invite, and a pending join that completes when they join the host's Discord (until signups
- *       close). JonnyBot never adds or messages anyone outside the host's server (D10).</li>
+ *       close). the bot never adds or messages anyone outside the host's server (D10).</li>
  * </ul>
  * Optional, off by default: when the event starts, a short announcement in each co-host's panel channel. Like the other automatic posts, nothing is
  * posted or changed on its own by a bot that isn't the live one ({@link AutoPostRouter}). The panel is its own small message rather than a generic signup,
  * because a generic signup's Join only records an entry and can't answer with the host's invite at the moment it is pressed. The event, who co-hosts
- * it and the roster are the hub's (T-934); which channel a co-host chose for its panel stays in the bot's own table.
+ * it, the roster and the channel each co-host chose for its panel are the hub's (T-934, T-941); only the id of the panel message the bot posted is
+ * the bot's own ({@code hub_event_cohost_panel}).
  */
 @BService
 public class CohostPanels extends ListenerAdapter implements BotListener {
@@ -72,6 +73,9 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
     private static final long REDRAW_DELAY_SECONDS = 5;
     /** The panel and the announcement go into another server's channel, written from the host's event name: they never ping anyone there. */
     static final java.util.EnumSet<net.dv8tion.jda.api.entities.Message.MentionType> NO_PINGS = java.util.EnumSet.noneOf(net.dv8tion.jda.api.entities.Message.MentionType.class);
+
+    /** Where a co-host's signup panel is: its channel (the hub's co-host row) and the message the bot posted (null when none is up). */
+    public record Panel(long eventId, long guildId, Long channelId, Long messageId) {}
 
     private final HubEvents events;
     private final EventCohostRepository cohosts;
@@ -146,24 +150,57 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         return Containers.card(open ? Containers.PRIMARY : Color.GRAY, TextDisplay.of(text.toString()), ActionRow.of(join));
     }
 
+    /** The panels of the event's accepted co-hosts that chose a channel: a co-host clan whose server the bot isn't in has none. */
+    public List<Panel> panels(long eventId) {
+        JDA client = jda;
+        List<Long> candidates = client == null ? List.of() : Shards.guilds(client).stream().map(Guild::getIdLong).toList();
+        List<Panel> out = new java.util.ArrayList<>();
+        for (HubEvents.Cohost c : events.cohosts(eventId)) {
+            if (!c.status().equals(EventCohostRepository.Status.ACCEPTED.name()) || c.panelChannelId() == null) continue;
+            events.guildOf(c.clanId(), candidates).ifPresent(guildId -> out.add(new Panel(eventId, guildId, c.panelChannelId(), events.map().cohostPanel(eventId, guildId).map(HubEventMap.CohostPanel::messageId).orElse(null))));
+        }
+        return out;
+    }
+
+    /** One co-host server's panel, whatever its status (its channel null until chosen), or empty when the server's clan doesn't co-host the event. */
+    public java.util.Optional<Panel> panel(long eventId, long guildId) {
+        UUID clan = events.clanOf(guildId).orElse(null);
+        if (clan == null) return java.util.Optional.empty();
+        return events.cohosts(eventId).stream().filter(c -> c.clanId().equals(clan)).findFirst()
+                .map(c -> new Panel(eventId, guildId, c.panelChannelId(), events.map().cohostPanel(eventId, guildId).map(HubEventMap.CohostPanel::messageId).orElse(null)));
+    }
+
+    /** A co-host server's staff chose (or cleared) its panel channel: it goes on the hub's co-host row, the old panel comes down and a new one goes up. */
+    public void setChannel(Event event, long cohostGuildId, Long channelId, Actor actor) {
+        UUID clan = events.clanOf(cohostGuildId).orElseThrow(() -> new EventProblem(409, HubEvents.NO_CLAN_TEXT));
+        remove(event, cohostGuildId);
+        events.setCohostChannel(event.id(), clan, channelId, actor);
+        if (channelId != null) post(event, cohostGuildId);
+    }
+
+    private void setMessage(Panel p, Long messageId) {
+        if (messageId == null || p.channelId() == null) events.map().clearCohostPanel(p.eventId(), p.guildId());
+        else events.map().setCohostPanel(p.eventId(), p.guildId(), p.channelId(), messageId);
+    }
+
     private TextChannel channelOf(Panel p) {
         Guild guild = jda == null ? null : Shards.guild(jda, p.guildId());
         return guild == null || p.channelId() == null ? null : guild.getTextChannelById(p.channelId());
     }
 
-    /** Whether JonnyBot can post the panel in {@code channel}. */
+    /** Whether the bot can post the panel in {@code channel}. */
     public static boolean canPost(TextChannel channel) {
         return channel != null && channel.getGuild().getSelfMember().hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_SEND);
     }
 
     /** Posts (or redraws) one co-host's panel now; a staff action, so it isn't held back on a bot that isn't live. Nothing while signups aren't open yet. */
     public void post(Event event, long cohostGuildId) {
-        cohosts.panel(event.id(), cohostGuildId).ifPresent(p -> show(event, p, true));
+        panel(event.id(), cohostGuildId).ifPresent(p -> show(event, p, true));
     }
 
     /** Takes one co-host's panel down (it was removed, or its channel changed). */
     public void remove(Event event, long cohostGuildId) {
-        cohosts.panel(event.id(), cohostGuildId).ifPresent(this::delete);
+        panel(event.id(), cohostGuildId).ifPresent(this::delete);
     }
 
     private void show(Event event, Panel p, boolean postIfMissing) {
@@ -172,18 +209,18 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         if (p.messageId() == null) {
             if (!postIfMissing || event.status() != Status.SIGNUPS || !canPost(channel)) return;
             channel.sendMessageComponents(List.of(panel(event))).useComponentsV2(true).setAllowedMentions(NO_PINGS).queue(
-                    m -> cohosts.setPanelMessage(event.id(), p.guildId(), m.getIdLong()),
+                    m -> setMessage(p, m.getIdLong()),
                     e -> log.info("Couldn't post the co-host panel of event {} in server {}: {}", event.id(), p.guildId(), e.getMessage()));
             return;
         }
         channel.editMessageComponentsById(p.messageId(), List.of(panel(event))).useComponentsV2(true).setAllowedMentions(NO_PINGS).queue(ok -> { }, e -> {
-            if (e instanceof ErrorResponseException r && r.getErrorResponse() == ErrorResponse.UNKNOWN_MESSAGE) cohosts.setPanelMessage(event.id(), p.guildId(), null);
+            if (e instanceof ErrorResponseException r && r.getErrorResponse() == ErrorResponse.UNKNOWN_MESSAGE) setMessage(p, null);
             else log.debug("Couldn't redraw the co-host panel of event {} in server {}: {}", event.id(), p.guildId(), e.getMessage());
         });
     }
 
     private void delete(Panel p) {
-        cohosts.setPanelMessage(p.eventId(), p.guildId(), null);
+        setMessage(p, null);
         TextChannel channel = channelOf(p);
         if (channel == null || p.messageId() == null) return;
         channel.deleteMessageById(p.messageId()).queue(ok -> { }, e -> log.debug("Couldn't delete the co-host panel of event {}: {}", p.eventId(), e.getMessage()));
@@ -195,7 +232,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         try {
             Event event = events.eventById(eventId).orElse(null);
             if (event == null) return;
-            List<Panel> panels = cohosts.panels(eventId);
+            List<Panel> panels = panels(eventId);
             switch (event.status()) {
                 case SIGNUPS -> panels.forEach(p -> show(event, p, true));
                 case RUNNING, SCORING -> {
@@ -216,7 +253,8 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
     /** The event is gone from the hub: its panels come down and nobody waits to join it any more. */
     void gone(long eventId) {
         try {
-            cohosts.panels(eventId).forEach(this::delete);
+            // the hub no longer lists its co-hosts: the panels the bot remembers posting come down
+            for (HubEventMap.CohostPanel p : events.map().cohostPanels(eventId)) delete(new Panel(eventId, p.guildId(), p.channelId(), p.messageId()));
             cohosts.deletePendingJoins(eventId, null);
         } catch (RuntimeException e) {
             log.warn("Couldn't take down the co-host panels of deleted event {}", eventId, e);
@@ -232,7 +270,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
                 Event event = events.eventById(eventId).orElse(null);
                 if (event == null) return;
                 if (event.status() == Status.SIGNUPS && events.setup(eventId).signupsClosed()) cohosts.deletePendingJoins(eventId, null);
-                for (Panel p : cohosts.panels(eventId)) if (p.messageId() != null) show(event, p, false);
+                for (Panel p : panels(eventId)) if (p.messageId() != null) show(event, p, false);
             } catch (RuntimeException e) {
                 log.warn("Couldn't redraw the co-host panels of event {}", eventId, e);
             }

@@ -66,6 +66,21 @@ class HubEventMapDatabaseTest {
     }
 
     @Test
+    void theCoHostPanelMessagesOfAnEventAreKeptByServer() {
+        long local = map.localId(UUID.randomUUID(), UUID.randomUUID(), G);
+        assertTrue(map.cohostPanels(local).isEmpty(), "none posted yet");
+        map.setCohostPanel(local, 5L, 555L, 777L);
+        map.setCohostPanel(local, 6L, 666L, 888L);
+        assertEquals(2, map.cohostPanels(local).size());
+        assertEquals(777L, map.cohostPanel(local, 5L).orElseThrow().messageId());
+        map.setCohostPanel(local, 5L, 555L, 778L);
+        assertEquals(778L, map.cohostPanel(local, 5L).orElseThrow().messageId(), "posted again: the newer message");
+        map.clearCohostPanel(local, 5L);
+        assertTrue(map.cohostPanel(local, 5L).isEmpty());
+        assertEquals(1, map.cohostPanels(local).size());
+    }
+
+    @Test
     void aRevisionIsSeenOnce() {
         long local = map.localId(UUID.randomUUID(), UUID.randomUUID(), G);
         assertTrue(map.seen(local, 3));

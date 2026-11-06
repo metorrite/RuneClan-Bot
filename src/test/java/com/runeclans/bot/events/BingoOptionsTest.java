@@ -1,7 +1,7 @@
 package com.runeclans.bot.events;
 
 import com.runeclans.bot.events.BingoBoard.Board;
-import com.runeclans.bot.events.BingoBoardImage.TileView;
+import com.runeclans.bot.events.BingoBoardView.TileView;
 import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
@@ -53,23 +53,6 @@ class BingoOptionsTest {
         assertNull(fogged.get(0).iconKey());
         assertEquals(tiles.get(1), fogged.get(1));
         assertEquals(tiles.get(2), fogged.get(2), "a finished tile is never hidden");
-    }
-
-    @Test
-    void theOptionsDrawWithoutErrorsOnGridsAndShapes() throws Exception {
-        List<TileView> tiles = new ArrayList<>();
-        for (int i = 0; i < 25; i++) tiles.add(new TileView(i + 1, POOL.get(i).label(), POOL.get(i).points(), i % 4 == 0, i % 4 == 0 ? 2 : 0, 5, null, i % 4 == 0 ? "Ana" : null, i % 7 == 3));
-        DataObject config = DataObject.fromJson("{\"board\":{\"size\":5,\"title\":\"Winter Bingo\",\"subtitle\":\"Hand-picked\",\"names\":true,\"numbers\":false,\"accent\":\"emerald\",\"fog\":true,\"look\":\"classic\"}}");
-        var image = ImageIO.read(new ByteArrayInputStream(BingoBoardImage.render(config, "Event", "x", "footer", tiles)));
-        assertTrue(image.getWidth() > 100);
-        DataObject plain = DataObject.fromJson("{\"board\":{\"size\":5,\"names\":true,\"numbers\":false,\"accent\":\"crimson\"}}");
-        assertTrue(ImageIO.read(new ByteArrayInputStream(BingoBoardImage.render(plain, "Event", "x", "footer", tiles))).getWidth() > 100);
-        // a shape with fog on
-        BingoLayout shape = BingoLayout.all().get(0);
-        List<TileView> shapeTiles = new ArrayList<>();
-        for (int i = 0; i < shape.tiles(); i++) shapeTiles.add(new TileView(i + 1, POOL.get(i).label(), POOL.get(i).points(), false, 0, 0, null, null, i % 2 == 0));
-        DataObject shaped = DataObject.fromJson("{\"board\":{\"layout\":\"" + shape.id() + "\",\"fog\":true}}");
-        assertNotNull(ImageIO.read(new ByteArrayInputStream(BingoBoardImage.render(shaped, "Event", "x", "footer", shapeTiles))));
     }
 
     @Test

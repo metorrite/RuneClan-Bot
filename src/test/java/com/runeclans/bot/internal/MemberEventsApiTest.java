@@ -73,7 +73,7 @@ class MemberEventsApiTest {
         Mockito.when(profiles.get(G)).thenReturn(Optional.empty());
         api = new MemberEventsApi(service, repository, profiles, new com.runeclans.bot.events.EventSpaceRepository(supplier, new com.runeclans.bot.hubevents.HubEventMap(supplier)),
                 new com.runeclans.bot.clanprofile.JoinLinks(guildSettings, Mockito.mock(com.runeclans.bot.clanprofile.ClanRecruitingRepository.class, Mockito.RETURNS_DEEP_STUBS)),
-                new com.runeclans.bot.events.EventUpdateRepository(supplier), new com.runeclans.bot.events.EventDrawRepository(supplier, repository), null);
+                new com.runeclans.bot.events.EventUpdateRepository(supplier));
         guild = Mockito.mock(Guild.class);
         Mockito.when(guild.getIdLong()).thenReturn(G);
         Mockito.when(guild.getName()).thenReturn("Younglings");
@@ -245,42 +245,4 @@ class MemberEventsApiTest {
         assertFalse(page.getObject("me").hasKey("xpNotCounted"));
     }
 
-    // ---------- the prize draw on the event page (T-649) ----------
-
-    /** A running prize-draw event with INSIDE and 777 in it and one draw made from their entries; {@code standings} is the standings config or null. */
-    private long drawnEvent(String standings) {
-        String config = "{\"win\":{\"mode\":\"DRAW\",\"autoDraw\":false}" + (standings == null ? "" : ",\"standings\":" + standings) + "}";
-        long id = signupsOpen("Draw", config);
-        service.join(G, id, G, INSIDE, null, true, null);
-        service.join(G, id, G, 777, null, true, null);
-        service.moveStage(G, id, EventRules.Status.RUNNING);
-        var entrants = List.of(new com.runeclans.bot.events.WinModes.Entrant("u:" + INSIDE, 3, 3), new com.runeclans.bot.events.WinModes.Entrant("u:777", 1, 1));
-        assertTrue(new com.runeclans.bot.events.EventDrawRepository(supplier, repository).add(id,
-                new com.runeclans.bot.events.WinModes.Round(0, 42L, entrants, List.of("u:777"), null, null, java.time.Instant.now(), 9L)));
-        return id;
-    }
-
-    @Test
-    void aDrawShowsItsEntriesToPlayersWhenTheStandingsAreShown() {
-        DataObject draw = api.detail(guild, INSIDE, drawnEvent(null)).getObject("win").getObject("draw");
-        DataObject round = draw.getArray("rounds").getObject(0);
-        assertFalse(round.getBoolean("entriesHidden"));
-        assertEquals(2, round.getArray("entries").length());
-        assertEquals(3, round.getArray("entries").getObject(0).getInt("tiles"));
-        assertEquals(4, round.getInt("tickets"));
-        assertFalse(round.hasKey("by"), "who pressed the button is for staff");
-    }
-
-    @Test
-    void aDrawNeverRevealsTilesPerPlayerWhileTheStandingsAreHidden() {
-        for (String visibility : List.of("STAFF", "HIDDEN_UNTIL_END")) {
-            DataObject draw = api.detail(guild, INSIDE, drawnEvent("{\"visibility\":\"" + visibility + "\"}")).getObject("win").getObject("draw");
-            DataObject round = draw.getArray("rounds").getObject(0);
-            assertTrue(round.getBoolean("entriesHidden"), visibility);
-            assertEquals(0, round.getArray("entries").length(), visibility + ": no entry list, as it carries each player's finished tiles");
-            assertEquals(0, round.getInt("tickets"), visibility + ": no entry total either");
-            assertEquals("42", round.getString("seed"), "the seed is still shown");
-            assertEquals(1, draw.getArray("winners").length(), "and so are the winners");
-        }
-    }
 }

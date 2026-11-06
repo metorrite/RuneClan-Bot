@@ -14,14 +14,14 @@ import java.util.Map;
 
 /**
  * Competition: who gains the most XP in one skill (or overall) while the event runs. The bot reads each player's linked account from the
- * normal polling and adds their gain to the event as it grows ({@link EventTracker}); an organiser can still adjust anyone by hand.
+ * normal polling and adds their gain to the event as it grows (the hub's tracking jobs, T-885); an organiser can still adjust anyone by hand.
  * Settings: {@code skillId} (a skill from {@link RuneScapeSkillCatalog}, or {@code -1} for total XP, the default) and {@code xpPerPoint}
  * (how much XP earns one point, 10,000 by default). Points are the XP gained divided by that, so a larger number keeps points small.
  * <p>
  * {@code xpSource} says where the gains come from: {@value #SOURCE_RUNEMETRICS} (the default, the polling above), {@value #SOURCE_PLUGIN}, the
- * RuneClans hub's XP ledger fed by RuneSync ({@link PluginXpTracker}, T-537), or {@value #SOURCE_AUTO} (T-557): RuneSync for each player the hub
+ * RuneClans hub's XP ledger fed by RuneSync (T-537), or {@value #SOURCE_AUTO} (T-557): RuneSync for each player the hub
  * can count, RuneMetrics for the rest, and RuneMetrics checks the RuneSync players' numbers. A player stays with whichever counted them first
- * ({@link CompetitionTracking#owners}). The plugin and auto choices are offered only while the bot is connected to the hub.
+ * The plugin and auto choices are offered only while the bot is connected to the hub.
  * <p>
  * {@code wholeSpan} (set by skill of the week, T-541, never offered on the form): a RuneSync competition counts everyone's gains from the planned
  * start to the planned end, whenever they joined, so its standings are exactly the ledger's gains for that span.
@@ -36,10 +36,10 @@ public class CompetitionTemplate implements EventTemplate {
     public static final String SOURCE_PLUGIN = "plugin";
     public static final String SOURCE_AUTO = "auto";
 
-    /** Whether the plugin source can be offered: set once at startup by {@link PluginXpTracker} when the bot talks to the hub. */
+    /** Whether the plugin source can be offered: set once at startup by {@code HubEvents} when the bot talks to the hub (the hub counts the XP, T-885). */
     private static volatile boolean pluginSourceOffered;
 
-    static void offerPluginSource(boolean offered) {
+    public static void offerPluginSource(boolean offered) {
         pluginSourceOffered = offered;
     }
 
@@ -87,7 +87,7 @@ public class CompetitionTemplate implements EventTemplate {
                     List.of(new EventOptions.Choice(SOURCE_RUNEMETRICS, "RuneMetrics (public profiles)"), new EventOptions.Choice(SOURCE_PLUGIN, "RuneSync plugin"),
                             new EventOptions.Choice(SOURCE_AUTO, "Auto (RuneSync where players run it, else RuneMetrics)"))));
             // PARKED (T-815, Drake 2026-10-30): RuneLink links are taken on trust, so none is ever confirmed and this option would leave
-            // everyone out. Events that already have it keep it (PluginXpTracker still honours it).
+            // everyone out. Events that already have it keep it.
             if (CONFIRMED_LINKS_OFFERED) list.add(EventOptions.Option.of("config.confirmedLinksOnly", "Count confirmed links only", "Only players whose RuneLink the RuneClans hub has confirmed from "
                             + "public data score. The others are listed as not confirmed yet. It can't be changed once the event exists.", EventOptions.Step.RULES,
                     EventOptions.Type.BOOL, false).showWhen(EventOptions.When.is("config.xpSource", SOURCE_PLUGIN)));
@@ -187,7 +187,7 @@ public class CompetitionTemplate implements EventTemplate {
         return SOURCE_AUTO.equals(xpSourceOf(config));
     }
 
-    /** Whether {@link PluginXpTracker} reads this competition from the hub (RuneSync only, or auto). */
+    /** Whether this competition is counted from the hub's XP ledger (RuneSync only, or auto). */
     public static boolean readsPlugin(DataObject config) {
         return !SOURCE_RUNEMETRICS.equals(xpSourceOf(config));
     }

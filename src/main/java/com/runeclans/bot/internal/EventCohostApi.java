@@ -15,6 +15,7 @@ import com.runeclans.bot.events.EventRules;
 import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventSettings;
 import com.runeclans.bot.events.QueueRules;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.internal.TicketAdminApi.ApiError;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -257,10 +258,7 @@ public class EventCohostApi implements AdminRouteExtension {
             if (to == Status.ACCEPTED && !allied(event.guildId(), me)) throw new ApiError(403, "Your server is no longer in an alliance with the host.");
             Long panelChannel = to == Status.ACCEPTED ? panelChannel(guild, body.get()) : null;
             if (!cohosts.decide(eventId, me, Status.INVITED, to, actor.getIdLong())) throw new ApiError(409, "That invitation isn't open any more.");
-            if (panelChannel != null) {
-                cohosts.setPanelChannel(eventId, me, panelChannel);
-                panels.post(event, me); // the signup panel goes up straight away while signups are open (T-221)
-            }
+            if (panelChannel != null) panels.setChannel(event, me, panelChannel, Actor.of(actor.getIdLong(), me, true)); // the panel goes up straight away while signups are open (T-221)
             log.info("Dashboard: {} {} co-hosting event {} for server {}", actor.getId(), to == Status.ACCEPTED ? "accepted" : "declined", eventId, me);
             service.syncTemplateTeams(event, false); // a clan-vs-clan event gives the accepting clan its team (T-222)
             return cohostView(guild);
@@ -269,9 +267,7 @@ public class EventCohostApi implements AdminRouteExtension {
             AdminRouteExtension.requireMethod(method, "PUT");
             if (mine.status() != Status.ACCEPTED) throw new ApiError(403, "Your server doesn't co-host that event.");
             Long channel = panelChannel(guild, body.get());
-            panels.remove(event, me);
-            cohosts.setPanelChannel(eventId, me, channel);
-            if (channel != null) panels.post(event, me);
+            panels.setChannel(event, me, channel, Actor.of(actor.getIdLong(), me, true));
             log.info("Dashboard: {} set the signup panel channel of server {} for event {} to {}", actor.getId(), me, eventId, channel);
             return cohostView(guild);
         }
@@ -310,7 +306,7 @@ public class EventCohostApi implements AdminRouteExtension {
                 yours.add(DataObject.empty().put("userId", Long.toString(p.userId())).put("name", m == null ? "A member who left" : m.getEffectiveName()).put("waiting", p.waiting()));
             }
             boolean canRemove = e.status() == EventRules.Status.SIGNUPS && !events.setup(e.id()).rosterConfirmed();
-            var panel = cohosts.panel(e.id(), me).orElse(null);
+            var panel = panels.panel(e.id(), me).orElse(null);
             hosting.add(base.put("players", players.stream().filter(p -> !p.waiting()).count()).put("yours", yours).put("canRemove", canRemove)
                     .put("quota", events.cohostQuotas(e.id()).get(me))
                     .put("panelChannelId", panel == null || panel.channelId() == null ? null : Long.toString(panel.channelId()))

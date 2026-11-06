@@ -81,19 +81,4 @@ class EventBoardsTest {
         assertEquals(What.POST, steps.get(0).what(), "their channel was made after the board was posted in the live board channel");
         assertEquals(300L, steps.get(0).channelId());
     }
-
-    // ---------- the fingerprint ----------
-
-    private static List<BingoBoardImage.TileView> tiles(boolean firstDone, int count) {
-        return List.of(new BingoBoardImage.TileView(1, "Dragon pickaxe", 25, firstDone, count, 5), new BingoBoardImage.TileView(2, "Abyssal whip", 25, false, 0, 5));
-    }
-
-    @Test
-    void theFingerprintChangesWhenATileIsDoneOrAnotherTeamGetsItAndNotOtherwise() {
-        String base = EventBoards.hashOf(tiles(false, 1));
-        assertEquals(base, EventBoards.hashOf(tiles(false, 1)));
-        assertNotEquals(base, EventBoards.hashOf(tiles(true, 1)));
-        assertNotEquals(base, EventBoards.hashOf(tiles(false, 2)));
-        assertEquals(24, base.length());
-    }
 }

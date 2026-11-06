@@ -75,19 +75,4 @@ class PendingJoinDatabaseTest {
         assertTrue(cohosts.pendingJoins(7, HOST, now).isEmpty());
         assertEquals(1, cohosts.purgeExpiredPendingJoins(now.plusSeconds(4_000)), "the other host's one has expired by then");
     }
-
-    @Test
-    void aCoHostsPanelChannelAndMessageAreKeptWithIt() {
-        long id = event(HOST);
-        cohosts.invite(id, ALLY, 9L);
-        cohosts.decide(id, ALLY, EventCohostRepository.Status.INVITED, EventCohostRepository.Status.ACCEPTED, 8L);
-        assertTrue(cohosts.panels(id).isEmpty(), "no channel chosen yet");
-        cohosts.setPanelChannel(id, ALLY, 555L);
-        cohosts.setPanelMessage(id, ALLY, 777L);
-        var panel = cohosts.panels(id).get(0);
-        assertEquals(555L, panel.channelId());
-        assertEquals(777L, panel.messageId());
-        cohosts.setPanelMessage(id, ALLY, null);
-        assertEquals(null, cohosts.panel(id, ALLY).orElseThrow().messageId());
-    }
 }

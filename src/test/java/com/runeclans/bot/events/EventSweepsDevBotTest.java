@@ -25,8 +25,7 @@ class EventSweepsDevBotTest {
     private final EventSpaceRepository space = mock(EventSpaceRepository.class);
     private final EventSpaces spaces = mock(EventSpaces.class);
     private final EventSpaceOps ops = new EventSpaceOps(mock(com.runeclans.bot.hubevents.HubEvents.class), space, spaces, mock(EventChanges.class), null, com.runeclans.bot.jobs.JobRepository.inMemory(java.time.Clock.systemUTC()));
-    private final EventWrapupOps wrapup = new EventWrapupOps(mock(EventRepository.class), mock(EventService.class), space, ops, spaces,
-            mock(EventWrapupRepository.class), mock(EventChanges.class), EventExportRepository.inMemory());
+    private final EventWrapupOps wrapup = new EventWrapupOps(mock(com.runeclans.bot.hubevents.HubEvents.class), space, ops, spaces, mock(EventChanges.class));
 
     @AfterEach
     void reset() {

@@ -94,6 +94,7 @@ public class EventSubmissions {
         return shot.getProxy().download().thenApplyAsync(stream -> readAll(stream), worker).thenCompose(bytes ->
                 review.sendMessage(queueText).setAllowedMentions(List.of()).addFiles(FileUpload.fromData(bytes, shot.getFileName()))
                         .setComponents(EventClaimListener.buttons(review.getGuild().getIdLong(), event.id(), claimId)).submit().thenApply(message -> {
+                            attachProof(guild.getIdLong(), event.id(), claimId, message);
                             sendReceipt(guild, event, claimId, player, head, bytes, shot.getFileName(), review.getIdLong());
                             return verification ? "Sent to staff as verification #" + claimId + ". You'll get a DM when they decide."
                                     : "Sent to staff as submission #" + claimId + " for **" + title + "**. You'll get a DM when they decide.";
@@ -107,6 +108,16 @@ public class EventSubmissions {
                 }
             }
         });
+    }
+
+    /** The screenshot now lives in the review channel: the hub keeps its link on the claim, so the website shows the same picture staff see (T-941). */
+    private void attachProof(long guildId, long eventId, long claimId, Message message) {
+        if (message.getAttachments().isEmpty()) return;
+        try {
+            service.setClaimProof(guildId, eventId, claimId, message.getAttachments().get(0).getUrl());
+        } catch (RuntimeException e) {
+            log.info("Couldn't attach the proof of claim {} of event {} on the hub: {}", claimId, eventId, e.getMessage());
+        }
     }
 
     private static byte[] readAll(InputStream stream) {

@@ -1,6 +1,5 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.runescape.SkillValue;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
 
@@ -41,23 +40,6 @@ class CompetitionTest {
         assertFalse(template.configProblems(DataObject.fromJson("{\"xpPerPoint\":2000000}")).isEmpty());
         assertFalse(template.configProblems(DataObject.fromJson("{\"skillId\":\"slayer\"}")).isEmpty());
         assertTrue(template.configProblems(DataObject.fromJson("{\"skillId\":28}")).isEmpty());
-    }
-
-    @Test
-    void xpIsReadFromTheRightPlace() {
-        var skills = List.of(new SkillValue(18, 90, 5_000_000, 100), new SkillValue(0, 99, 13_000_000, 5));
-        assertEquals(5_000_000, CompetitionTracking.xpOf(18, 1, skills).getAsLong());
-        assertEquals(777, CompetitionTracking.xpOf(CompetitionTemplate.OVERALL, 777, skills).getAsLong());
-        assertTrue(CompetitionTracking.xpOf(3, 777, skills).isEmpty(), "a skill missing from the snapshot gives nothing");
-    }
-
-    @Test
-    void onlyNewGainIsAddedAndNeverANegativeAmount() {
-        assertEquals(0, CompetitionTracking.toRecord(1_000, 1_000, 0));
-        assertEquals(250, CompetitionTracking.toRecord(1_000, 1_250, 0));
-        assertEquals(100, CompetitionTracking.toRecord(1_000, 1_250, 150), "what is already counted isn't added twice");
-        assertEquals(0, CompetitionTracking.toRecord(1_000, 900, 0), "a lower reading adds nothing");
-        assertEquals(0, CompetitionTracking.toRecord(1_000, 1_100, 500), "never negative, even if more was counted by hand");
     }
 
     @Test

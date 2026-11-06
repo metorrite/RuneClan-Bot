@@ -63,7 +63,7 @@ class CohostPanelsTest {
         when(events.settingsOf(event)).thenReturn(EventSettings.defaults());
         when(events.self(HOST)).thenReturn(BOT);
         when(events.clanOf(ALLY)).thenReturn(Optional.of(ALLY_CLAN));
-        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "ACCEPTED", null)));
+        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "ACCEPTED", null, null)));
     }
 
     @Test
@@ -78,7 +78,7 @@ class CohostPanelsTest {
     @Test
     void whetherAServerCoHostsIsTheHubsWord() {
         assertEquals(ALLY_CLAN, panels.acceptedCohost(EVENT, ALLY));
-        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "INVITED", null)));
+        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "INVITED", null, null)));
         assertNull(panels.acceptedCohost(EVENT, ALLY), "invited but not accepted");
         when(events.clanOf(ALLY)).thenReturn(Optional.empty());
         assertNull(panels.acceptedCohost(EVENT, ALLY), "a server with no clan on the hub co-hosts nothing");
@@ -134,9 +134,28 @@ class CohostPanelsTest {
 
     @Test
     void anEventTheHubDeletedLosesItsPanelsAndPendingJoins() {
-        when(cohosts.panels(EVENT)).thenReturn(List.of(new EventCohostRepository.Panel(EVENT, ALLY, 555L, null)));
+        com.runeclans.bot.hubevents.HubEventMap map = mock(com.runeclans.bot.hubevents.HubEventMap.class);
+        when(events.map()).thenReturn(map);
+        when(map.cohostPanels(EVENT)).thenReturn(List.of(new com.runeclans.bot.hubevents.HubEventMap.CohostPanel(ALLY, 555L, 777L)));
         panels.gone(EVENT);
-        verify(cohosts).setPanelMessage(EVENT, ALLY, null);
+        verify(map).clearCohostPanel(EVENT, ALLY);
         verify(cohosts).deletePendingJoins(EVENT, null);
+    }
+
+    @Test
+    void aCoHostsPanelChannelIsTheHubsCoHostRow() {
+        com.runeclans.bot.hubevents.HubEventMap map = mock(com.runeclans.bot.hubevents.HubEventMap.class);
+        when(events.map()).thenReturn(map);
+        when(map.cohostPanel(EVENT, ALLY)).thenReturn(Optional.of(new com.runeclans.bot.hubevents.HubEventMap.CohostPanel(ALLY, 555L, 777L)));
+        when(events.cohosts(EVENT)).thenReturn(List.of(new HubEvents.Cohost(ALLY_CLAN, "Allies", "ACCEPTED", null, 555L)));
+        when(events.guildOf(eq(ALLY_CLAN), any())).thenReturn(Optional.of(ALLY));
+        CohostPanels.Panel panel = panels.panel(EVENT, ALLY).orElseThrow();
+        assertEquals(555L, panel.channelId());
+        assertEquals(777L, panel.messageId());
+        assertEquals(1, panels.panels(EVENT).size());
+        assertTrue(panels.panel(EVENT, HOST).isEmpty(), "the host's server has no clan on the hub here");
+
+        panels.setChannel(event, ALLY, 556L, BOT);
+        verify(events).setCohostChannel(EVENT, ALLY_CLAN, 556L, BOT);
     }
 }

@@ -100,18 +100,4 @@ public final class EventBoards {
         return steps;
     }
 
-    /** A short fingerprint of what a board shows (which tiles are done or locked and how far each is), so an unchanged board isn't drawn and sent again. */
-    public static String hashOf(List<BingoBoardImage.TileView> tiles) {
-        StringBuilder text = new StringBuilder();
-        for (BingoBoardImage.TileView t : tiles) {
-            text.append(t.number()).append('|').append(t.label()).append('|').append(t.points()).append('|').append(t.done()).append('|').append(t.count()).append('/').append(t.of())
-                    .append('|').append(t.locked()).append('|').append(t.by()).append(';');
-        }
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.toString().getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest, 0, 12);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

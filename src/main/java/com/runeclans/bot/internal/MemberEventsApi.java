@@ -17,7 +17,6 @@ import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventRoster;
 import com.runeclans.bot.events.EventSettings;
 import com.runeclans.bot.events.PluginObjectiveMatcher;
-import com.runeclans.bot.events.PluginXpTracker;
 import com.runeclans.bot.i18n.Text;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
@@ -48,15 +47,11 @@ public class MemberEventsApi {
     private final EventSpaceRepository space;
     private final JoinLinks joinLinks;
     private final com.runeclans.bot.events.EventUpdateRepository updatePosts;
-    private final com.runeclans.bot.events.EventDrawRepository draws;
-    private final PluginXpTracker pluginXp;
 
     public MemberEventsApi(EventService service, EventRepository repository, ClanProfileRepository profiles, EventSpaceRepository space, JoinLinks joinLinks,
-                           com.runeclans.bot.events.EventUpdateRepository updatePosts, com.runeclans.bot.events.EventDrawRepository draws, PluginXpTracker pluginXp) {
-        this.draws = draws;
+                           com.runeclans.bot.events.EventUpdateRepository updatePosts) {
         this.joinLinks = joinLinks;
         this.updatePosts = updatePosts;
-        this.pluginXp = pluginXp;
         this.service = service;
         this.repository = repository;
         this.profiles = profiles;
@@ -179,7 +174,6 @@ public class MemberEventsApi {
                 .put("verification", DataObject.empty().put("required", settings.verification().required()).put("state", verification.name())
                         .put("note", me.verification() == EventRoster.Verification.REJECTED ? me.verificationNote() : "")
                         .put("waitingProof", repository.pendingVerificationClaimsFor(eventId, userId) > 0)));
-        if (xpTiles != null) out.getObject("me").put("xpNotCounted", notCounted(pluginXp, eventId, userId));
 
         DataArray teammates = DataArray.empty();
         if (teamEvent && me.teamId() != null) {
@@ -263,24 +257,16 @@ public class MemberEventsApi {
         return labels.isEmpty() ? null : DataArray.fromCollection(labels);
     }
 
-    /** Whether the last XP pass listed this player as not counted (no RuneSync), so their XP tiles make no progress. */
-    static boolean notCounted(PluginXpTracker pluginXp, long eventId, long userId) {
-        return pluginXp != null && pluginXp.notCounted(eventId).map(n -> n.userIds().contains(userId)).orElse(false);
-    }
-
     /**
-     * How the event is won (T-649), when it isn't the usual "most points": the rules in words, and the prize draw (winners, seed and entries, so anyone
-     * can check it) once it has happened. Null for an event won on points, so the page looks as before. While the standings are hidden from players
-     * ({@code standingsShown} false) the entry list is left out too, as each entry carries a finished-tile count.
+     * How the event is won (T-649), when it isn't the usual "most points": the rules in words. Null for an event won on points, so the page looks as
+     * before. The draw itself is the hub's since T-941 (the event's page on RuneClans shows it with its seed and entries).
      */
     private DataObject win(Guild guild, long eventId, DataObject config, List<EventRepository.Team> teams, boolean standingsShown) {
         var rules = com.runeclans.bot.events.WinModes.of(config);
         if (rules.isDefault()) return null;
         DataArray lines = DataArray.empty();
         com.runeclans.bot.events.WinModes.describe(rules).forEach(lines::add);
-        var rounds = draws.rounds(eventId);
-        return DataObject.empty().put("mode", rules.mode().name()).put("rules", lines)
-                .put("draw", rounds.isEmpty() ? null : EventWinApi.drawJson(guild, teams, rounds, false, standingsShown));
+        return DataObject.empty().put("mode", rules.mode().name()).put("rules", lines).put("draw", (DataObject) null);
     }
 
     private DataArray prizes(Event event) {

@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  *       <li>{@code ACHIEVEMENT}: "Achievement: name".</li>
  *     </ul>
  *   Each counts 1.</li>
- *   <li>XP tiles ("Gain 1M Fletching XP", "500k XP in Mining", T-543) don't take plugin reports: {@link PluginXpTracker} reads them from the
+ *   <li>XP tiles ("Gain 1M Fletching XP", "500k XP in Mining", T-543) don't take plugin reports: the hub's tracking jobs read them from
  *       RuneClans hub's XP ledger ({@link #xpGoal}, {@link #xpProgress}), and only while {@code EVENT_XP_TILES_ENABLED} is on.</li>
  *   <li>{@code XP} and {@code PRESENCE} are not matched. Objectives that don't take automatic progress ({@code PROOF} or {@code ORGANISER}
  *       evidence) never match.</li>
@@ -83,7 +83,7 @@ public final class PluginObjectiveMatcher {
     private static final Pattern REMARK = Pattern.compile("\\([^)]*\\)");
     private static final Pattern TRAILING_PUNCTUATION = Pattern.compile("[\\p{Punct}\\s]+$");
 
-    /** Whether XP tiles are counted: set once at startup by {@link PluginXpTracker} ({@code EVENT_XP_TILES_ENABLED} and the hub client on). */
+    /** Whether XP tiles are counted: the hub counts them from RuneSync's XP (T-885), so this is on whenever the bot talks to the hub (set at startup by {@code HubEvents}). */
     private static volatile boolean xpTilesOffered;
 
     private PluginObjectiveMatcher() {}

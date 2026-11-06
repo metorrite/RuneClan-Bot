@@ -83,13 +83,11 @@ public class EventsAdminApi implements AdminRouteExtension {
     private final EventSetupApi setupApi;
     private final EventTeams eventTeams;
     private final com.runeclans.bot.events.BingoPools pools;
-    private final com.runeclans.bot.events.PluginXpTracker pluginXp;
 
     public EventsAdminApi(EventService service, EventRepository repository, EventTemplates templates, EventSignups signups, BingoTemplate bingo, EventBoardPanels panels,
                           com.runeclans.bot.runescape.PlayerLinkRepository links, BingoTiles tiles, EventSetupApi setupApi, EventTeams eventTeams,
-                          com.runeclans.bot.events.BingoPools pools, com.runeclans.bot.events.PluginXpTracker pluginXp) {
+                          com.runeclans.bot.events.BingoPools pools) {
         this.pools = pools;
-        this.pluginXp = pluginXp;
         this.eventTeams = eventTeams;
         this.setupApi = setupApi;
         this.links = links;
@@ -718,34 +716,7 @@ public class EventsAdminApi implements AdminRouteExtension {
         }
         DataObject answer = DataObject.empty().put("scoringMode", event.scoringMode().name()).put("standings", array);
         if (ClanVsClan.is(event.template())) answer.put("clanVsClan", clanVsClanJson(guild, event));
-        // bingo and scavenger XP tiles (T-543) list the same "not counted (no RuneSync)" players, marked so the page words it for tiles
-        if (pluginXp != null) pluginXp.notCounted(id).ifPresent(n -> answer.put("pluginXp", pluginXpJson(guild, n).put("xpTiles", !com.runeclans.bot.events.ClanVsClan.plays(event, com.runeclans.bot.events.CompetitionTemplate.KEY))));
-        if (pluginXp != null && com.runeclans.bot.events.CompetitionTemplate.countsAuto(DataObject.fromJson(event.config()))) answer.put("autoXp", autoXpJson(guild, id));
         return answer;
-    }
-
-    /** A competition counted from RuneSync (T-537): who scored nothing on the last pass because the hub can't count them, for "not counted (no RuneSync)". */
-    private DataObject pluginXpJson(Guild guild, com.runeclans.bot.events.PluginXpTracker.NotCounted n) {
-        DataArray list = DataArray.empty();
-        n.userIds().stream().sorted().forEach(u -> list.add(DataObject.empty().put("userId", Long.toString(u)).put("name", name(guild, u))));
-        // "count confirmed links only" (T-552): counted by the hub, but their RuneLink isn't confirmed yet
-        DataArray unconfirmed = DataArray.empty();
-        n.unconfirmed().stream().sorted().forEach(u -> unconfirmed.add(DataObject.empty().put("userId", Long.toString(u)).put("name", name(guild, u))));
-        return DataObject.empty().put("notCounted", list).put("unconfirmed", unconfirmed).put("checkedAt", n.checkedAt().toString());
-    }
-
-    /**
-     * An auto competition (T-557): who is counted from RuneSync (everyone else is from RuneMetrics), and the RuneSync players whose RuneMetrics
-     * gain disagrees, for the organiser to look at. Nothing is corrected on its own.
-     */
-    private DataObject autoXpJson(Guild guild, long id) {
-        DataArray runeSync = DataArray.empty();
-        pluginXp.runeSyncPlayers(id).stream().sorted().forEach(u -> runeSync.add(DataObject.empty().put("userId", Long.toString(u)).put("name", name(guild, u))));
-        DataArray disagree = DataArray.empty();
-        pluginXp.disagreements(id).stream().sorted(java.util.Comparator.comparingLong(com.runeclans.bot.events.PluginXpTracker.Disagreement::userId))
-                .forEach(d -> disagree.add(DataObject.empty().put("userId", Long.toString(d.userId())).put("name", name(guild, d.userId()))
-                        .put("runeSyncXp", d.runeSyncXp()).put("runeMetricsXp", d.runeMetricsXp()).put("checkedAt", d.checkedAt().toString())));
-        return DataObject.empty().put("runeSync", runeSync).put("disagreements", disagree);
     }
 
     /** A clan-vs-clan event's scoring, and what each player earned for their clan (T-222), best first within each clan. */
