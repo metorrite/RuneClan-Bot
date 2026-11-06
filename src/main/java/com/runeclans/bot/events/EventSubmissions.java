@@ -5,6 +5,8 @@ import com.runeclans.bot.events.EventRepository.Claim;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventSpaceRepository.ChannelRow;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -30,7 +32,7 @@ import java.util.concurrent.ThreadFactory;
 /**
  * The Discord side of {@code /submit}: sends a player's screenshot to the event's review channel with the Approve and Deny buttons, posts a receipt in the
  * player's own (or team's) channel when the event has one, and edits that receipt when staff decide. The rules about who may send from where are the
- * pure {@link EventSubmit}; the claim itself is {@link EventService}'s.
+ * pure {@link EventSubmit}; the claim itself is the hub's ({@link HubEvents}), and the receipt's whereabouts are the bot's ({@code hub_event_claim_receipt}).
  */
 @BService
 public class EventSubmissions {
@@ -38,8 +40,7 @@ public class EventSubmissions {
     private static final String STATUS_PREFIX = "-# ";
     static final int MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
-    private final EventService service;
-    private final EventRepository repository;
+    private final HubEvents service;
     private final EventSpaceRepository space;
     private final Executor worker = Executors.newFixedThreadPool(2, (ThreadFactory) runnable -> {
         Thread thread = new Thread(runnable, "event-submissions");
@@ -48,9 +49,8 @@ public class EventSubmissions {
     });
     private volatile JDA jda;
 
-    public EventSubmissions(EventService service, EventRepository repository, EventSpaceRepository space, EventChanges changes) {
+    public EventSubmissions(HubEvents service, EventSpaceRepository space, EventChanges changes) {
         this.service = service;
-        this.repository = repository;
         this.space = space;
         changes.subscribe(change -> {
             if (change.kind() == EventChanges.Kind.CLAIM_DECIDED) worker.execute(() -> updateReceipt(change));
@@ -94,14 +94,17 @@ public class EventSubmissions {
         return shot.getProxy().download().thenApplyAsync(stream -> readAll(stream), worker).thenCompose(bytes ->
                 review.sendMessage(queueText).setAllowedMentions(List.of()).addFiles(FileUpload.fromData(bytes, shot.getFileName()))
                         .setComponents(EventClaimListener.buttons(review.getGuild().getIdLong(), event.id(), claimId)).submit().thenApply(message -> {
-                            repository.setClaimProof(event.id(), claimId, message.getJumpUrl());
                             sendReceipt(guild, event, claimId, player, head, bytes, shot.getFileName(), review.getIdLong());
                             return verification ? "Sent to staff as verification #" + claimId + ". You'll get a DM when they decide."
                                     : "Sent to staff as submission #" + claimId + " for **" + title + "**. You'll get a DM when they decide.";
                         })).whenComplete((text, error) -> {
             if (error != null) {
                 log.warn("Could not deliver claim {} of event {}", claimId, event.id(), error);
-                repository.decideClaim(event.id(), claimId, EventRepository.ClaimStatus.DENIED, guild.getJDA().getSelfUser().getIdLong(), "Couldn't be sent to the review channel");
+                try {
+                    service.decideClaim(guild.getIdLong(), event.id(), claimId, false, "Couldn't be sent to the review channel", Actor.APP);
+                } catch (RuntimeException problem) {
+                    log.warn("Claim {} of event {} couldn't be denied after its delivery failed: {}", claimId, event.id(), problem.getMessage());
+                }
             }
         });
     }
@@ -126,7 +129,7 @@ public class EventSubmissions {
             TextChannel channel = row == null ? null : guild.getTextChannelById(row.channelId());
             if (channel == null || channel.getIdLong() == reviewChannelId) return;
             channel.sendMessage(head + "\n" + STATUS_PREFIX + "Waiting for staff").setAllowedMentions(List.of()).addFiles(FileUpload.fromData(bytes, fileName)).queue(
-                    message -> repository.setClaimReceipt(event.id(), claimId, channel.getIdLong(), message.getIdLong()),
+                    message -> service.map().setReceipt(event.id(), claimId, channel.getIdLong(), message.getIdLong()),
                     error -> log.debug("Could not post the receipt of claim {}: {}", claimId, error.getMessage()));
         } catch (RuntimeException e) {
             log.warn("Could not post the receipt of claim {}", claimId, e);
@@ -138,7 +141,7 @@ public class EventSubmissions {
         JDA client = jda;
         if (client == null) return;
         try {
-            Claim claim = repository.claim(change.eventId(), change.claimId()).orElse(null);
+            Claim claim = change.claimId() == 0 ? null : service.claim(change.eventId(), change.claimId()).orElse(null);
             if (claim == null || claim.receiptChannelId() == null || claim.receiptMessageId() == null) return;
             TextChannel channel = Shards.textChannel(client, claim.receiptChannelId());
             if (channel == null) return;

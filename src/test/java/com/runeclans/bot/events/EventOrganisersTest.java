@@ -1,6 +1,7 @@
 package com.runeclans.bot.events;
 
 import com.runeclans.bot.events.EventRepository.Event;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.permission.AdminRoleFilter;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -64,7 +66,7 @@ class EventOrganisersTest {
 
     // ---------- the buttons ----------
 
-    private EventService service;
+    private HubEvents service;
     private AdminRoleFilter adminFilter;
     private EventClaimListener listener;
     private Guild guild;
@@ -72,7 +74,7 @@ class EventOrganisersTest {
 
     @BeforeEach
     void setUp() {
-        service = mock(EventService.class);
+        service = mock(HubEvents.class);
         adminFilter = mock(AdminRoleFilter.class);
         listener = new EventClaimListener(service, adminFilter);
         listener.useExecutor(Runnable::run);
@@ -133,7 +135,7 @@ class EventOrganisersTest {
     void aStrangerCannotDecideProof() {
         ButtonInteractionEvent click = click(APPROVE, member(STRANGER, false));
         listener.onButtonInteraction(click);
-        verify(service, never()).decideClaim(anyLong(), anyLong(), anyLong(), anyBoolean(), anyString(), anyLong());
+        verify(service, never()).decideClaim(anyLong(), anyLong(), anyLong(), anyBoolean(), anyString(), any());
         verify(click, never()).deferEdit();
     }
 
@@ -141,7 +143,7 @@ class EventOrganisersTest {
     void anOrganiserApprovesAndTheButtonsGoAway() {
         ButtonInteractionEvent click = click(APPROVE, member(ORGANISER, false));
         listener.onButtonInteraction(click);
-        verify(service).decideClaim(GUILD, EVENT, CLAIM, true, "", ORGANISER);
+        verify(service).decideClaim(eq(GUILD), eq(EVENT), eq(CLAIM), eq(true), eq(""), argThat(a -> a.discordId() == ORGANISER && a.guildId() == GUILD && !a.staff()));
         ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
         verify(click.getHook()).editOriginal(text.capture());
         assertTrue(text.getValue().contains("Approved by <@111>"), text.getValue());
@@ -151,12 +153,12 @@ class EventOrganisersTest {
     @Test
     void staffMayDecideAnyEvent() {
         listener.onButtonInteraction(click(APPROVE, member(STRANGER, true)));
-        verify(service).decideClaim(GUILD, EVENT, CLAIM, true, "", STRANGER);
+        verify(service).decideClaim(eq(GUILD), eq(EVENT), eq(CLAIM), eq(true), eq(""), argThat(a -> a.discordId() == STRANGER && a.staff()));
     }
 
     @Test
     void someoneElseGettingThereFirstIsSaidNotRepeated() {
-        when(service.decideClaim(GUILD, EVENT, CLAIM, true, "", ORGANISER)).thenThrow(new EventProblem(409, "Someone has already decided that claim."));
+        when(service.decideClaim(eq(GUILD), eq(EVENT), eq(CLAIM), eq(true), eq(""), any())).thenThrow(new EventProblem(409, "Someone has already decided that claim."));
         ButtonInteractionEvent click = click(APPROVE, member(ORGANISER, false));
         listener.onButtonInteraction(click);
         ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
@@ -171,7 +173,7 @@ class EventOrganisersTest {
         ArgumentCaptor<Modal> modal = ArgumentCaptor.forClass(Modal.class);
         verify(click).replyModal(modal.capture());
         assertEquals(EventClaimListener.DENY_MODAL + EVENT + ":" + CLAIM, modal.getValue().getId());
-        verify(service, never()).decideClaim(anyLong(), anyLong(), anyLong(), anyBoolean(), anyString(), anyLong());
+        verify(service, never()).decideClaim(anyLong(), anyLong(), anyLong(), anyBoolean(), anyString(), any());
     }
 
     @Test
@@ -185,7 +187,7 @@ class EventOrganisersTest {
     void theReasonIsSentWithTheDenial() {
         ModalInteractionEvent submitted = modal("  Wrong tile  ", member(ORGANISER, false));
         listener.onModalInteraction(submitted);
-        verify(service).decideClaim(GUILD, EVENT, CLAIM, false, "Wrong tile", ORGANISER);
+        verify(service).decideClaim(eq(GUILD), eq(EVENT), eq(CLAIM), eq(false), eq("Wrong tile"), argThat(a -> a.discordId() == ORGANISER));
         ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
         verify(submitted.getHook()).editOriginal(text.capture());
         assertTrue(text.getValue().contains("Denied by <@111>: Wrong tile"), text.getValue());
@@ -195,7 +197,7 @@ class EventOrganisersTest {
     void aDenialWithoutAReasonOrFromAStrangerDoesNothing() {
         listener.onModalInteraction(modal("   ", member(ORGANISER, false)));
         listener.onModalInteraction(modal("Nope", member(STRANGER, false)));
-        verify(service, never()).decideClaim(anyLong(), anyLong(), anyLong(), anyBoolean(), anyString(), anyLong());
+        verify(service, never()).decideClaim(anyLong(), anyLong(), anyLong(), anyBoolean(), anyString(), any());
     }
 
     @Test

@@ -4,16 +4,15 @@ import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.events.BingoBoardView;
 import com.runeclans.bot.events.BingoTemplate;
 import com.runeclans.bot.events.EventProblem;
-import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventRules;
 import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventSettings;
 import com.runeclans.bot.events.EventSubmissions;
 import com.runeclans.bot.events.EventSubmit;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.permission.AdminRoleFilter;
 import io.github.freya022.botcommands.api.commands.annotations.Command;
@@ -46,14 +45,12 @@ import java.util.List;
 public class SubmitCommand {
     static final String TILES = "event-submit-tiles";
 
-    private final EventService service;
-    private final EventRepository repository;
+    private final HubEvents service;
     private final EventSubmissions submissions;
     private final AdminRoleFilter adminRoleFilter;
 
-    public SubmitCommand(EventService service, EventRepository repository, EventSubmissions submissions, AdminRoleFilter adminRoleFilter) {
+    public SubmitCommand(HubEvents service, EventSubmissions submissions, AdminRoleFilter adminRoleFilter) {
         this.service = service;
-        this.repository = repository;
         this.submissions = submissions;
         this.adminRoleFilter = adminRoleFilter;
     }
@@ -113,7 +110,14 @@ public class SubmitCommand {
         EventSubmit.Channel channel = submissions.channelOf(guild.getIdLong(), event.getChannel().getIdLong());
         Participant memberInEvent = null;
         Long eventId = explicitEvent != null ? explicitEvent : channel == null ? null : channel.eventId();
-        if (eventId != null) memberInEvent = repository.participant(eventId, userId).orElse(null);
+        if (eventId != null) {
+            try {
+                memberInEvent = service.participant(eventId, userId).orElse(null);
+            } catch (EventProblem problem) {
+                Containers.replyEphemeral(event, Containers.WARNING, problem.getMessage());
+                return null;
+            }
+        }
         EventSubmit.Route route = EventSubmit.route(channel, explicitEvent, userId, memberInEvent == null ? null : memberInEvent.teamId());
         if (!route.ok()) {
             Containers.replyEphemeral(event, Containers.INFO, route.refusal());
@@ -187,8 +191,8 @@ public class SubmitCommand {
             EventSubmit.Channel channel = submissions.channelOf(guild.getIdLong(), event.getChannel().getIdLong());
             Long eventId = typedEvent != null ? typedEvent.getAsLong() : channel == null ? null : channel.eventId();
             if (eventId == null) return List.of();
-            Event target = repository.event(guild.getIdLong(), eventId).orElse(null);
-            Participant player = target == null ? null : repository.participant(eventId, userId).orElse(null);
+            Event target = service.map().event(eventId).filter(r -> r.guildId() == guild.getIdLong()).isEmpty() ? null : service.event(guild.getIdLong(), eventId);
+            Participant player = target == null ? null : service.participant(eventId, userId).orElse(null);
             if (player == null || !EventRules.acceptsProgress(target.status())) return List.of();
             String subject = target.scoringMode() == EventRules.ScoringMode.TEAM ? (player.teamId() == null ? null : "t:" + player.teamId()) : "u:" + userId;
             Standing mine = subject == null ? null : service.standings(guild.getIdLong(), eventId).stream().filter(s -> s.subject().equals(subject)).findFirst().orElse(null);
