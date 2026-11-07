@@ -8,6 +8,11 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -101,6 +106,35 @@ class OverallAdminsTest {
         admins.isOverallAdmin(jda, ADDED);
         queued.remove(0).run();
         assertFalse(admins.isOverallAdmin(jda, ADDED));
+    }
+
+    @Test
+    void manyFirstQuestionsAtOnceReadTheHubOnce() throws Exception {
+        AtomicInteger reads = new AtomicInteger();
+        CountDownLatch inRead = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        OverallAdmins admins = OverallAdmins.of(() -> {
+            reads.incrementAndGet();
+            inRead.countDown();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return new OverallAdmins.HubList(Set.of(), Set.of(ADDED));
+        }, owners());
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        try {
+            List<Future<Boolean>> answers = new ArrayList<>();
+            for (int i = 0; i < 4; i++) answers.add(pool.submit(() -> admins.isOverallAdmin(jda, ADDED)));
+            assertTrue(inRead.await(5, TimeUnit.SECONDS));
+            Thread.sleep(50);
+            release.countDown();
+            for (Future<Boolean> answer : answers) assertTrue(answer.get(5, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+        assertEquals(1, reads.get());
     }
 
     @Test

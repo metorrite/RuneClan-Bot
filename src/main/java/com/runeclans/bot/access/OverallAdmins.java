@@ -53,6 +53,7 @@ public class OverallAdmins {
     private volatile boolean loaded;
     private volatile long freshUntil;
     private final AtomicBoolean refreshing = new AtomicBoolean();
+    private final Object firstLoad = new Object();
 
     public OverallAdmins(RuneClansHubClient hub, BotOwners owners) {
         this.owners = owners;
@@ -85,7 +86,10 @@ public class OverallAdmins {
 
     private HubList list() {
         if (!loaded) {
-            refresh();
+            // One thread reads the hub the first time; the others wait for its answer instead of all calling.
+            synchronized (firstLoad) {
+                if (!loaded) refresh();
+            }
             return known;
         }
         if (clock.getAsLong() >= freshUntil && refreshing.compareAndSet(false, true)) {
