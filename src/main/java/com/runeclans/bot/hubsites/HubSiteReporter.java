@@ -64,6 +64,27 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
         // the Switches panel can move clan sites to the hub while the bot runs (T-817): declare then, not only on start
         this.declarer = new Declarer(sites::readsHub, () -> jda != null, this::declareAll);
         lane.scheduleWithFixedDelay(declarer::tick, 30, 30, TimeUnit.SECONDS);
+        // the hub counts a role report for a day, and while a clan's chosen roles go unreported it falls back to the RuneScape rank (T-963):
+        // report every mapped role again well inside that day, so the fallback only comes when the bot is really gone
+        lane.scheduleWithFixedDelay(this::refreshRoles, REFRESH_HOURS, REFRESH_HOURS, TimeUnit.HOURS);
+    }
+
+    /** How often every mapped role is reported again; well inside the hub's one-day report life. */
+    static final long REFRESH_HOURS = 6;
+
+    /** Reports every mapped role in every server again (on the lane), while the bot reads sites from the hub. */
+    private void refreshRoles() {
+        JDA ready = jda;
+        if (ready == null || !sites.readsHub()) return;
+        int roles = 0;
+        for (Guild guild : Shards.guilds(ready)) {
+            try {
+                roles += reports.all(guild.getIdLong());
+            } catch (RuntimeException e) {
+                log.warn("Hub role refresh for a server failed: {}", e.getClass().getSimpleName());
+            }
+        }
+        log.info("RuneClans hub: reported {} mapped role(s) again", roles);
     }
 
     @Override
