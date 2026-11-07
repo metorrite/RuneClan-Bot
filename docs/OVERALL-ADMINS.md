@@ -6,13 +6,17 @@ choose who else may open their own site's admin panel. This is the bot's side; t
 
 ## 1. Who is an overall admin
 
-- **Built in:** the bot's owners, exactly as `BotOwners` decides: the Discord application's owner (or its team) plus `OWNER_IDS`. No Discord id is
-  written in the code. Drake is the application's owner, so he is the built-in admin with nothing to set up. A built-in admin can't be added or
-  removed through the panel; to change who is built in, change the Discord application's owner or `OWNER_IDS`.
-- **Added:** people a built-in admin added by Discord user id (`younglings.overall_admin`: `user_id`, `note`, `added_by`, `added_at`). Only a
-  built-in admin may add or remove them.
-- `OverallAdmins.isOverallAdmin(jda, userId)` is the one check. The added list is cached 30 seconds and dropped at once by every change made
-  through the API; a failed read keeps the last known list (it never adds anyone).
+The list lives on the RuneClans hub since T-981 (RuneClan-API `admin/RuneClanAdminsModule`); the website shows and changes it there
+(RuneClan Admin > Admins), and the bot only reads it (`GET /v1/admins` with its first-party key). The old `younglings.overall_admin` table is
+no longer read or written; it stays until the move's purge step.
+
+- **Built in:** the hub's `HUB_OWNER_DISCORD_IDS`, plus the bot's owners as `BotOwners` decides (the Discord application's owner or team, plus
+  `OWNER_IDS`). No Discord id is written in the code. A built-in admin can't be added or removed through the panel.
+- **Added:** people a built-in admin added by Discord user id on the website (the hub's `runeclan_admin`). Only a built-in admin may add or
+  remove them.
+- `OverallAdmins.isOverallAdmin(jda, userId)` is the one check. The hub's list is cached 30 seconds, then the last known list answers while a
+  fresh one is read in the background; a failed read keeps the last known list (it never adds anyone). With the hub client off, only the bot's
+  owners are admins.
 
 ## 2. What an overall admin may do
 
@@ -21,7 +25,7 @@ choose who else may open their own site's admin panel. This is the bot's side; t
 - Be the **owner of every clan site** (`SiteRoles.resolve`: `Facts.overallAdmin` gives `OWNER`), in the site's server or not, bot or no bot: open
   its editor and its site admin, change its settings and its permissions, including who may open its site admin.
 
-The bot checks its own table on every request; the website sends nothing new for this. The website's `X-Actor-Id` (from its verified session)
+The bot checks the hub's list (cached) on every request; the website sends nothing new for this. The website's `X-Actor-Id` (from its verified session)
 names the person, as for every admin route.
 
 ## 3. The panel's routes (`/internal/admin/overall/...`)
@@ -32,9 +36,6 @@ the bot's home server. Every route but `whoami` needs an overall admin; writes a
 | Route | Who | Answer |
 |---|---|---|
 | `GET overall/whoami` | anyone | `{overallAdmin, builtIn}` (always 200) |
-| `GET overall/admins` | overall admin | `{builtIn: [{userId}], admins: [{userId, note, addedBy, addedAt}], canManage}` |
-| `PUT overall/admins/{userId}` `{note?}` | built-in | the list; 400 for a built-in admin |
-| `DELETE overall/admins/{userId}` | built-in | the list; 400 for a built-in admin, 404 when not listed |
 | `GET overall/premium` | overall admin | `{grants: [{id, kind, targetId, startsAt, endsAt, note, grantedBy, grantedAt, active}], enforced: false}` |
 | `POST overall/premium` `{kind: "site"\|"user", targetId, startsAt?, endsAt?, note?}` | overall admin | the list (dates `YYYY-MM-DD`, UTC) |
 | `DELETE overall/premium/{id}` | overall admin | the list |
@@ -72,7 +73,7 @@ owner was).
 
 **The public viewer** (`/internal/directory/sites/{slug}/viewer`) answers `owner` for an overall admin and `admin` for the site's admin access,
 so the website opens the site admin for them; it reads the staff-server facts from the same call. The cached answer follows a change within a
-minute (the admin list change clears every cached answer at once).
+minute (an admin list change reaches the bot within about 30 seconds more).
 
 ## 5. Signed staff-server facts (the contract change)
 
