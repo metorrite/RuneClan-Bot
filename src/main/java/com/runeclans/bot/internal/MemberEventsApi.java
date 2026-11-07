@@ -5,6 +5,7 @@ import com.runeclans.bot.clanprofile.JoinLinks;
 import com.runeclans.bot.discord.DiscordLookups;
 import com.runeclans.bot.events.BingoBoardView;
 import com.runeclans.bot.events.BingoTemplate;
+import com.runeclans.bot.events.EventListing;
 import com.runeclans.bot.events.EventProblem;
 import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventSpaceRepository;
@@ -124,6 +125,7 @@ public class MemberEventsApi {
         int detailed = 0;
         for (HubEvents.Mine m : joined) {
             if (m.me() == null) continue; // the hub listed it without the member's place
+            if (!shownToMember(m.event(), m.takenDown())) continue;
             try {
                 boolean full = detailed < DETAILED && Instant.now().isBefore(until);
                 Event event = m.event();
@@ -140,6 +142,7 @@ public class MemberEventsApi {
         int openDetailed = 0;
         for (Event listed : taking) {
             if (joined.stream().anyMatch(j -> j.event().id() == listed.id())) continue;
+            if (!shownToMember(listed, false)) continue;
             try {
                 Event event = listed;
                 Boolean closed = null;
@@ -152,6 +155,7 @@ public class MemberEventsApi {
                         closed = full.get().setup().signupsClosed();
                     }
                 }
+                if (takenDownIn(event)) continue; // the full read's settings say whether staff took it down
                 EventSettings settings = settingsOf(event);
                 open.add(DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description())
                         .put("template", event.template()).put("scoringMode", event.scoringMode().name())
@@ -164,6 +168,26 @@ public class MemberEventsApi {
             }
         }
         return DataObject.empty().put("events", mine).put("open", open);
+    }
+
+    /**
+     * Whether a member's events page lists an event: announced ones only (signups, running, scoring, done), never a draft, a cancelled or archived
+     * one, or one RuneClans staff took down; the same as the website's {@code shownOnSite}.
+     */
+    private static boolean takenDownIn(Event event) {
+        try {
+            return event.config() != null && !event.config().isBlank() && EventListing.takenDown(DataObject.fromJson(event.config()));
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    static boolean shownToMember(Event event, boolean takenDown) {
+        if (takenDown || event.archived()) return false;
+        return switch (event.status()) {
+            case SIGNUPS, RUNNING, SCORING, DONE -> true;
+            case DRAFT, CANCELLED -> false;
+        };
     }
 
     /** How many rows of the standings a member is shown (the top of the table, plus their own row). */
@@ -367,7 +391,8 @@ public class MemberEventsApi {
     }
 
     /** The event's id on the hub (a uuid), beside the bot's local {@code id}: what the website matches its own hub reads on, so an event isn't listed twice. */
-    private String hubIdOf(Event event) {
+    /** The hub's id for an event the bot names by local id, or null when it isn't a hub event. Also the directory cards' ({@link HubEventsApi}). */
+    String hubIdOf(Event event) {
         try {
             return events.map().event(event.id()).map(r -> r.hubId().toString()).orElse(null);
         } catch (RuntimeException e) {

@@ -58,6 +58,7 @@ class HubEventsRuneClansTest {
     private EventService service;
     private HubEventsApi api;
     private DashboardAccess access;
+    private MemberEventsApi memberEvents;
     private JDA jda;
     private EventCohostRepository cohosts;
     private Guild host;
@@ -87,7 +88,7 @@ class HubEventsRuneClansTest {
         access = Mockito.mock(DashboardAccess.class);
         Mockito.when(access.tierOf(Mockito.any(), Mockito.any())).thenReturn(DashboardAccess.Tier.NONE);
         api = new HubEventsApi(repository, service, new EventTemplates(List.of(new CustomTemplate())), Mockito.mock(JoinLinks.class), profiles,
-                Mockito.mock(AllianceRepository.class), Mockito.mock(PlayerLinkService.class), moderation, cohosts, access, Mockito.mock(MemberEventsApi.class));
+                Mockito.mock(AllianceRepository.class), Mockito.mock(PlayerLinkService.class), moderation, cohosts, access, memberEvents = Mockito.mock(MemberEventsApi.class));
 
         jda = Mockito.mock(JDA.class);
         host = Mockito.mock(Guild.class);
@@ -144,6 +145,23 @@ class HubEventsRuneClansTest {
         assertEquals("MINE", seen.getString("access"));
         assertNull(api.one(jda, Long.toString(own), Long.toString(STRANGER)), "a stranger is told it doesn't exist");
         assertFalse(seen.toString().contains(Long.toString(HOST)), "no server id for someone who can't manage it");
+    }
+
+    @Test
+    void aCardNamesTheHubEventItIsSoTheWebsiteListsItOnce() {
+        long onHub = event(HOST, "On the hub", EventRules.Scope.PUBLIC, EventRules.Status.SIGNUPS);
+        long local = event(HOST, "Bot only", EventRules.Scope.PUBLIC, EventRules.Status.SIGNUPS);
+        String hubId = java.util.UUID.randomUUID().toString();
+        Mockito.when(memberEvents.hubIdOf(Mockito.argThat(e -> e != null && e.id() == onHub))).thenReturn(hubId);
+        DataArray cards = api.list(jda, null).getArray("events");
+        int checked = 0;
+        for (int i = 0; i < cards.length(); i++) {
+            DataObject card = cards.getObject(i);
+            if (card.getString("id").equals(Long.toString(onHub)) && ++checked > 0) assertEquals(hubId, card.getString("hubId"));
+            if (card.getString("id").equals(Long.toString(local)) && ++checked > 0) assertFalse(card.hasKey("hubId"), "an event only the bot has carries no hub id");
+        }
+        assertEquals(2, checked, "both are listed");
+        assertEquals(hubId, api.one(jda, Long.toString(onHub), null).getString("hubId"));
     }
 
     @Test

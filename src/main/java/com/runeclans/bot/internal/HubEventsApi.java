@@ -435,7 +435,11 @@ public class HubEventsApi {
         EventTemplate template = templates.byKey(e.template()).orElse(null);
         int players = (int) events.participants(e.id()).stream().filter(p -> !p.waiting()).count();
         boolean signupsOpen = e.status() == Status.SIGNUPS && !events.setup(e.id()).signupsClosed();
-        return DataObject.empty().put("id", Long.toString(e.id())).put("name", e.name()).put("template", e.template())
+        DataObject card = DataObject.empty().put("id", Long.toString(e.id()));
+        // a hub event also carries the hub's id, so the website (which reads the hub directly too) lists it once
+        String hubId = memberEvents == null ? null : memberEvents.hubIdOf(e);
+        if (hubId != null) card.put("hubId", hubId);
+        return card.put("name", e.name()).put("template", e.template())
                 .put("templateLabel", template == null ? e.template() : template.label()).put("status", e.status().name()).put("scope", e.scope().name())
                 .put("scoringMode", e.scoringMode().name())
                 .put("startsAt", e.startsAt() == null ? null : e.startsAt().toString()).put("endsAt", e.endsAt() == null ? null : e.endsAt().toString())
