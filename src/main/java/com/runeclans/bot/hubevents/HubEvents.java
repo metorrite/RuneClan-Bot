@@ -203,12 +203,37 @@ public class HubEvents {
         return out;
     }
 
-    /** Every mapped event in {@code status}, across the bot's servers (the sweeps). A server whose hub clan is gone contributes nothing. */
+    /**
+     * As {@link #events}, each read in full: the hub's list is compact and carries no settings ({@code config}), so anything that reads an event's
+     * settings (recaps, the clan-vs-clan game and teams, the board) uses this. One extra hub call per event; one the hub no longer has is left out.
+     */
+    public List<Event> eventsInFull(long guildId, List<Status> statuses, int limit) {
+        List<Event> out = new ArrayList<>();
+        for (Event compact : events(guildId, statuses, limit)) full(compact).ifPresent(out::add);
+        return out;
+    }
+
+    /** An event read in full together with its setup (one hub call: the full answer carries both). */
+    public record Full(Event event, Setup setup) {}
+
+    /** {@link #full} with the event's setup from the same answer; empty when the hub no longer has it. */
+    public Optional<Full> fullWithSetup(Event compact) {
+        Optional<HubEventMap.Row> row = map.event(compact.id());
+        if (row.isEmpty()) return Optional.empty();
+        return hub.find("/v1/events/" + row.get().hubId(), Actor.APP).map(json -> new Full(toEvent(json, row.get()), setup(json)));
+    }
+
+    /** The event behind a compact one (a list entry), read in full; empty when the hub no longer has it. */
+    public Optional<Event> full(Event compact) {
+        return eventById(compact.id());
+    }
+
+    /** Every mapped event in {@code status}, across the bot's servers (the sweeps), each read in full. A server whose hub clan is gone contributes nothing. */
     public List<Event> eventsInStatus(Status status) {
         List<Event> out = new ArrayList<>();
         for (long guildId : map.guilds().keySet()) {
             try {
-                out.addAll(events(guildId, List.of(status), Integer.MAX_VALUE));
+                out.addAll(eventsInFull(guildId, List.of(status), Integer.MAX_VALUE));
             } catch (EventProblem e) {
                 log.debug("Events of server {} couldn't be listed: {}", guildId, e.getMessage());
             }
@@ -238,14 +263,60 @@ public class HubEvents {
      */
     public long createEvent(long guildId, long actorId, EventInput in) {
         UUID clan = requireClan(guildId);
-        DataObject answers = DataObject.empty().put("template", in.template()).put("name", in.name()).put("description", in.description() == null ? "" : in.description())
-                .put("scope", in.scope().name()).put("scoringMode", in.scoringMode().name()).put("maxParticipants", in.maxParticipants())
-                .put("startsAt", in.startsAt() == null ? null : in.startsAt().toString()).put("endsAt", in.endsAt() == null ? null : in.endsAt().toString());
-        if (in.config() != null) answers.put("config", DataObject.fromJson(in.config().toString()));
+        DataObject answers = createBody(in, clock.instant());
         DataObject json = hub.send("POST", "/v1/clans/" + clan + "/events", answers, Actor.of(actorId, guildId, true));
         UUID hubId = uuid(json.getString("id", null));
         if (hubId == null) throw new EventProblem(502, "RuneClans made the event but didn't say which.");
         return map.localId(hubId, clan, guildId);
+    }
+
+    /**
+     * The create body for {@code in}. For a kind {@code /events create} makes, it is the hub's standard setup ({@code standard: true}, which lays the clan's
+     * own defaults over the kind's standard answers) with only what differs from the plain standard laid over it as option paths; sending the whole
+     * settings object would have replaced the clan's defaults with the built-in ones. Any other template sends every answer as before.
+     */
+    static DataObject createBody(EventInput in, Instant now) {
+        DataObject answers = DataObject.empty().put("template", in.template()).put("name", in.name()).put("description", in.description() == null ? "" : in.description());
+        Optional<EventInput> standard = com.runeclans.bot.events.EventQuickCreate.standardInput(in.template(), now);
+        if (standard.isEmpty() || in.startsAt() != null) answers.put("startsAt", in.startsAt() == null ? null : in.startsAt().toString());
+        if (standard.isEmpty() || in.endsAt() != null) answers.put("endsAt", in.endsAt() == null ? null : in.endsAt().toString());
+        if (standard.isEmpty()) {
+            answers.put("scope", in.scope().name()).put("scoringMode", in.scoringMode().name()).put("maxParticipants", in.maxParticipants());
+            if (in.config() != null) answers.put("config", DataObject.fromJson(in.config().toString()));
+            return answers;
+        }
+        EventInput std = standard.get();
+        answers.put("standard", true);
+        if (in.scope() != std.scope()) answers.put("scope", in.scope().name());
+        if (in.scoringMode() != std.scoringMode()) answers.put("scoringMode", in.scoringMode().name());
+        if (in.maxParticipants() != std.maxParticipants()) answers.put("maxParticipants", in.maxParticipants());
+        if (in.config() != null) overrides(answers, "config", in.config(), std.config());
+        return answers;
+    }
+
+    private static final java.util.regex.Pattern OPTION_KEY = java.util.regex.Pattern.compile("[A-Za-z]+");
+
+    /** Puts each leaf of {@code mine} that differs from {@code standard} into {@code out} as a dotted option path (the hub's standard-setup form). */
+    private static void overrides(DataObject out, String path, DataObject mine, DataObject standard) {
+        for (String key : mine.keys()) {
+            Object value = mine.isNull(key) ? null : mine.get(key);
+            Object was = standard == null || !standard.hasKey(key) || standard.isNull(key) ? null : standard.get(key);
+            if (!OPTION_KEY.matcher(key).matches()) {
+                // the hub only takes letter-only path parts: lay the whole object over the standard one instead
+                out.put(path, DataObject.fromJson(mine.toString()));
+                return;
+            }
+            if (value instanceof Map<?, ?> && (was == null || was instanceof Map<?, ?>)) {
+                overrides(out, path + "." + key, mine.getObject(key), was == null ? null : standard.getObject(key));
+            } else if (!same(value, was)) {
+                out.put(path + "." + key, value instanceof List<?> ? mine.getArray(key) : value instanceof Map<?, ?> ? mine.getObject(key) : value);
+            }
+        }
+    }
+
+    private static boolean same(Object a, Object b) {
+        if (a == null || b == null) return a == b;
+        return DataObject.empty().put("v", a).toString().equals(DataObject.empty().put("v", b).toString());
     }
 
     /** Moves an event to {@code to} (start, finish, cancel...). The hub applies the bot's old safeguards (objectives, checklist, verification). */
@@ -564,6 +635,22 @@ public class HubEvents {
         return Optional.empty();
     }
 
+    /**
+     * A member's own claims in an event, newest first as the hub lists them, up to {@code limit}: asked as the member, and kept to the ones whose
+     * {@code discordId} (the hub puts it beside every person id) is theirs, so an organiser's wider view never shows other players' submissions.
+     */
+    public List<Claim> claimsOf(long guildId, long id, long userId, int limit) {
+        HubEventMap.Row row = map.event(id).filter(r -> r.guildId() == guildId).orElseThrow(() -> new EventProblem(404, "That event doesn't exist in this server."));
+        DataArray list = hub.get("/v1/events/" + row.hubId() + "/claims", Actor.member(userId, guildId)).optArray("claims").orElse(DataArray.empty());
+        List<Claim> out = new ArrayList<>();
+        for (int i = 0; i < list.length() && out.size() < limit; i++) {
+            DataObject c = list.getObject(i);
+            if (discordId(c.getString("discordId", null)) != userId) continue;
+            out.add(claim(c, id));
+        }
+        return out;
+    }
+
     /** Records progress for a player from the bot's own trackers or an organiser (the hub applies the objective's rules). */
     public void recordProgress(long guildId, long id, String objectiveKey, long userId, long amount, EventRules.Source source, String sourceKey, String note, Actor actor) {
         DataObject body = DataObject.empty().put("discordId", Long.toString(userId)).put("objectiveKey", objectiveKey).put("amount", amount).put("source", source.name())
@@ -728,11 +815,43 @@ public class HubEvents {
             for (int i = 0; i < organisers.length(); i++) if (!organisers.isNull(i)) ids.add(organisers.getString(i));
             config.put("organisers", ids);
         }
+        clanTeamsForBot(config, row);
         return new Event(row.localId(), row.guildId(), j.getString("template", "custom"), j.getString("name", ""), j.getString("description", ""),
                 enumOf(Status.class, j.getString("status", null), Status.DRAFT), enumOf(Scope.class, j.getString("scope", null), Scope.PRIVATE),
                 enumOf(ScoringMode.class, j.getString("scoringMode", null), ScoringMode.INDIVIDUAL), instant(j.getString("startsAt", null)), instant(j.getString("endsAt", null)),
                 j.getInt("maxParticipants", 0), config.toString(), discordId(j.getString("createdByDiscordId", null)), instant(j.getString("createdAt", null)), row.signupId(),
                 j.getBoolean("archived", false));
+    }
+
+    /**
+     * The hub keeps a clan-vs-clan event's teams as {@code cvcTeams: {"<hub clan id>": "<hub team id>"}}; the bot's code reads them as
+     * {@code {"<server id>": <local team id>}} ({@code ClanVsClan.teams}). Rewrites them to that form for the clans whose server the bot knows, and keeps
+     * every clan by its hub id with its local team in {@code cvcTeamsHub} ({@code ClanVsClan.hubTeams}) for what goes back to the hub (league results).
+     */
+    void clanTeamsForBot(DataObject config, HubEventMap.Row row) {
+        if (!config.hasKey(com.runeclans.bot.events.ClanVsClan.TEAMS) || config.isNull(com.runeclans.bot.events.ClanVsClan.TEAMS)) return;
+        DataObject teams;
+        try {
+            teams = config.getObject(com.runeclans.bot.events.ClanVsClan.TEAMS);
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (teams.keys().stream().noneMatch(k -> uuid(k) != null)) return; // already the bot's own form
+        Map<UUID, Long> guildOfClan = new HashMap<>();
+        map.guilds().forEach((guild, clan) -> { if (clan != null) guildOfClan.putIfAbsent(clan, guild); });
+        guildOfClan.put(row.clanId(), row.guildId());
+        DataObject byGuild = DataObject.empty();
+        DataObject byClan = DataObject.empty();
+        for (String key : teams.keys()) {
+            UUID clan = uuid(key);
+            UUID team = teams.isNull(key) ? null : uuid(String.valueOf(teams.get(key)));
+            if (clan == null || team == null) continue;
+            long local = map.localId(HubEventMap.TEAM, team, row.localId());
+            byClan.put(clan.toString(), local);
+            Long guild = guildOfClan.get(clan);
+            if (guild != null) byGuild.put(Long.toString(guild), local);
+        }
+        config.put(com.runeclans.bot.events.ClanVsClan.TEAMS, byGuild).put(com.runeclans.bot.events.ClanVsClan.TEAMS_HUB, byClan);
     }
 
     List<Participant> participants(DataArray list, HubEventMap.Row row) {
@@ -839,11 +958,16 @@ public class HubEvents {
         return out;
     }
 
-    /** A member's own prizes in an event: {@code place}, {@code kind}, {@code description}, {@code status} each, as the hub lists them for the player. */
+    /**
+     * A member's own prizes in an event: {@code place}, {@code kind}, {@code description}, {@code status} each, as the hub lists them for the player.
+     * An organiser asking is shown every award by the hub, so only the ones whose {@code discordId} is the member's are kept.
+     */
     public List<DataObject> awardsOf(long guildId, long id, long userId) {
         DataArray list = hub.get(path(guildId, id) + "/awards", Actor.member(userId, guildId)).optArray("awards").orElse(DataArray.empty());
         List<DataObject> out = new ArrayList<>();
-        for (int i = 0; i < list.length(); i++) out.add(list.getObject(i));
+        for (int i = 0; i < list.length(); i++) {
+            if (discordId(list.getObject(i).getString("discordId", null)) == userId) out.add(list.getObject(i));
+        }
         return out;
     }
 

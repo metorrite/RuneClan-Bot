@@ -76,8 +76,10 @@ public class DirectoryClanVsClanSection implements DirectoryRouteModule {
     /** The clan's finished, open clan-vs-clan events on the hub (the ones its own server hosted; T-941), newest first. A server with no hub clan has none. */
     private List<Event> finishedClanVsClan(long guildId) {
         try {
+            // the hub's list carries no settings, so the clan-vs-clan teams come from each event read in full
             return events.events(guildId, List.of(EventRules.Status.DONE), SHOWN * 3).stream()
-                    .filter(e -> ClanVsClan.is(e.template()) && e.scope() == EventRules.Scope.PUBLIC).toList();
+                    .filter(e -> ClanVsClan.is(e.template()) && e.scope() == EventRules.Scope.PUBLIC)
+                    .map(e -> events.full(e).orElse(null)).filter(java.util.Objects::nonNull).toList();
         } catch (EventProblem e) {
             return List.of();
         }

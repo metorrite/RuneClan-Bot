@@ -73,6 +73,12 @@ final class HubRetry implements RuneClansHubClient.Transport {
         return answer;
     }
 
+    /** Binary reads (board images) go straight through: without this the default {@code bytes} answered null for every image. */
+    @Override
+    public byte[] bytes(String path, Map<String, String> headers) {
+        return inner.bytes(path, headers);
+    }
+
     /** No answer at all, or an answer that means "busy, try again shortly". */
     static boolean worthRetrying(RuneClansHubClient.Answer answer) {
         return answer == null || TRY_AGAIN.contains(answer.status());

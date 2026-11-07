@@ -6,8 +6,8 @@ import com.runeclans.bot.discord.jobs.DiscordJobs;
 import com.runeclans.bot.embedder.EmbedderRepository;
 import com.runeclans.bot.embedder.EmbedderService;
 import com.runeclans.bot.events.EventProblem;
-import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventSpaceOps;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.giveaway.Giveaway;
 import com.runeclans.bot.giveaway.GiveawayRepository;
 import com.runeclans.bot.giveaway.GiveawayService;
@@ -87,7 +87,7 @@ class OutboxPhase2JobsTest {
         assertTrue(lockdown.idempotent(LockdownJobs.END));
 
         assertFalse(new AnnounceJob().idempotent(AnnounceJob.KIND));
-        assertTrue(new EventSpaceSyncJob(mock(EventService.class), mock(EventSpaceOps.class)).idempotent(EventSpaceSyncJob.KIND));
+        assertTrue(new EventSpaceSyncJob(mock(HubEvents.class), mock(EventSpaceOps.class)).idempotent(EventSpaceSyncJob.KIND));
     }
 
     @Test
@@ -190,7 +190,7 @@ class OutboxPhase2JobsTest {
 
     @Test
     void anEventRoleSyncWithChangesThatDidntGoThroughEndsAsFailedWithHowMany() {
-        EventService service = mock(EventService.class);
+        HubEvents service = mock(HubEvents.class);
         EventSpaceOps ops = mock(EventSpaceOps.class);
         when(ops.syncMembers(eq(guild), any())).thenReturn(2);
 

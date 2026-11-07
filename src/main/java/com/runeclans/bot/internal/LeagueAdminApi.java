@@ -1,9 +1,10 @@
 package com.runeclans.bot.internal;
 
 import com.runeclans.bot.events.ClanVsClan;
-import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
+import com.runeclans.bot.events.EventProblem;
 import com.runeclans.bot.events.EventRules.Status;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.internal.TicketAdminApi.ApiError;
 import com.runeclans.bot.leagues.LeagueDiscordStore;
 import com.runeclans.bot.leagues.LeagueHub;
@@ -42,10 +43,10 @@ public class LeagueAdminApi implements AdminRouteExtension {
 
     private final LeagueHub hub;
     private final LeagueReporter reporter;
-    private final EventRepository events;
+    private final HubEvents events;
     private final LeagueDiscordStore discord;
 
-    public LeagueAdminApi(LeagueHub hub, LeagueReporter reporter, EventRepository events, LeagueDiscordStore discord) {
+    public LeagueAdminApi(LeagueHub hub, LeagueReporter reporter, HubEvents events, LeagueDiscordStore discord) {
         this.hub = hub;
         this.reporter = reporter;
         this.events = events;
@@ -95,7 +96,14 @@ public class LeagueAdminApi implements AdminRouteExtension {
                     .put("leagues", json.optArray("leagues").orElse(DataArray.empty()));
         }
         DataArray list = DataArray.empty();
-        for (Event e : events.events(guild.getIdLong(), EVENT_STATUSES, EVENTS_LIMIT)) {
+        // the server's events on the hub (T-932): their local ids are what the bot's league reporter looks for in a round's eventRef
+        List<Event> mine;
+        try {
+            mine = events.events(guild.getIdLong(), EVENT_STATUSES, EVENTS_LIMIT);
+        } catch (EventProblem p) {
+            mine = List.of(); // no hub clan: nothing to attach
+        }
+        for (Event e : mine) {
             if (!ClanVsClan.is(e.template()) || e.archived()) continue;
             list.add(DataObject.empty().put("id", Long.toString(e.id())).put("name", e.name()).put("status", e.status().name())
                     .put("startsAt", e.startsAt() == null ? null : e.startsAt().toString()).put("endsAt", e.endsAt() == null ? null : e.endsAt().toString()));
@@ -122,7 +130,7 @@ public class LeagueAdminApi implements AdminRouteExtension {
     DataObject attach(Guild guild, Member actor, String leagueId, int round, DataObject body) {
         String raw = body.getString("eventId", "").strip();
         if (!raw.matches("\\d{1,18}")) throw new ApiError(400, "Pick one of this server's clan-vs-clan events.");
-        Event event = events.event(guild.getIdLong(), Long.parseLong(raw)).orElseThrow(() -> new ApiError(404, "That event doesn't exist in this server."));
+        Event event = hubEvent(guild.getIdLong(), Long.parseLong(raw)).orElseThrow(() -> new ApiError(404, "That event doesn't exist in this server."));
         if (!ClanVsClan.is(event.template())) throw new ApiError(400, "Only a clan-vs-clan event can be a league round's event.");
         if (event.status() == Status.CANCELLED) throw new ApiError(400, "That event was cancelled.");
         HubWriteQueue.Result result = hub.attach(leagueId, round, guild.getIdLong(), event.id(), event.name(), null);
@@ -144,12 +152,21 @@ public class LeagueAdminApi implements AdminRouteExtension {
         if (!answer.ok() || answer.json() == null) throw new ApiError(404, "This server's clan has no leagues on RuneClans.");
         Long eventId = eventOf(answer.json(), leagueId, round);
         if (eventId == null) throw new ApiError(409, "No event is attached to round " + round + ".");
-        Event event = events.event(guild.getIdLong(), eventId).orElseThrow(() -> new ApiError(404, "The attached event doesn't exist in this server any more."));
+        Event event = hubEvent(guild.getIdLong(), eventId).orElseThrow(() -> new ApiError(404, "The attached event doesn't exist in this server any more."));
         if (event.status() != Status.DONE) throw new ApiError(409, "The event isn't finished yet; its result is reported when it is.");
         LeagueReporter.Outcome outcome = reporter.report(event);
         if (!outcome.ok()) throw new ApiError(outcome.status() >= 400 && outcome.status() < 600 ? outcome.status() : 502, outcome.message());
         log.info("Dashboard: {} reported event {} for round {} of league {}", actor.getId(), event.id(), round, leagueId);
         return DataObject.empty().put("ok", true).put("queued", outcome.status() == 202).put("message", outcome.message());
+    }
+
+    /** One of this server's hub events by local id; empty when it isn't one (or the hub doesn't have it any more). */
+    private Optional<Event> hubEvent(long guildId, long id) {
+        try {
+            return events.eventById(id).filter(e -> e.guildId() == guildId);
+        } catch (EventProblem p) {
+            return Optional.empty();
+        }
     }
 
     /** The bot event attached to a round, by league id and number, from the hub's guild answer. */

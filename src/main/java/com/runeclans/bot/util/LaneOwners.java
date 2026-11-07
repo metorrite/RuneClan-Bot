@@ -86,6 +86,7 @@ public final class LaneOwners {
             Map.entry("panel-switches", Owner.EVERY), // this process's read of the website's Switches panel from the hub (T-817)
             // the league reporter sends a finished clan-vs-clan event's result to the hub from the process that finished it (T-759)
             Map.entry("leagues", Owner.EVERY),
+            Map.entry("tracked-names", Owner.EVERY), // refreshes the hub polling list the Refresh route answers from, in the process that serves it
             Map.entry("cache-bus-send", Owner.EVERY),
             Map.entry("cache-bus-listen", Owner.EVERY),
             Map.entry("api-leader", Owner.EVERY),

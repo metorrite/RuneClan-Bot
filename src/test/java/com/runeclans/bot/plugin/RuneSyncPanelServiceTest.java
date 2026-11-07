@@ -9,7 +9,7 @@ import com.runeclans.bot.events.EventRules.Scope;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.points.PointsRepository;
 import com.runeclans.bot.discord.DiscordLookups.MemberLookup;
 import com.runeclans.bot.discord.DiscordLookups.Outcome;
@@ -41,11 +41,10 @@ class RuneSyncPanelServiceTest {
     private static final Instant NOW = Instant.parse("2026-10-21T12:00:00Z");
 
     private final RuneSyncRepository repository = mock(RuneSyncRepository.class);
-    private final EventRepository events = mock(EventRepository.class);
-    private final EventService eventService = mock(EventService.class);
+    private final HubEvents events = mock(HubEvents.class);
     private final PointsRepository points = mock(PointsRepository.class);
     private final PluginRepository plugins = mock(PluginRepository.class);
-    private final RuneSyncPanelService service = new RuneSyncPanelService(repository, events, eventService, points, plugins);
+    private final RuneSyncPanelService service = new RuneSyncPanelService(repository, events, points, plugins);
 
     private static final String BOARD = "{\"board\":{\"size\":2,\"keys\":[\"a\",\"b\",\"c\",\"d\"]}}";
 
@@ -58,7 +57,7 @@ class RuneSyncPanelServiceTest {
     }
 
     private void boardObjectives(long eventId) {
-        when(eventService.objectives(eventId)).thenReturn(List.of(
+        when(events.objectives(eventId)).thenReturn(List.of(
                 new ObjectiveSpec("a", "Torva boots", "", 10, Evidence.AUTO, 1, 0, List.of()),
                 new ObjectiveSpec("b", "Elite clue", "", 10, Evidence.AUTO, 1, 0, List.of()),
                 new ObjectiveSpec("c", "99 Fishing", "", 10, Evidence.AUTO, 1, 0, List.of()),
@@ -70,9 +69,9 @@ class RuneSyncPanelServiceTest {
     void aSoloBingoSendsTheMembersOwnBoard() {
         when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
                 .thenReturn(List.of(bingo(1, ScoringMode.INDIVIDUAL)));
-        when(events.participant(1, ME)).thenReturn(Optional.of(player(1, ME)));
+        when(events.mine(GUILD, ME, RuneSyncPanelService.MINE_PER_CLAN)).thenReturn(List.of(new HubEvents.Mine(event(1, "x", Status.RUNNING), player(1, ME))));
         boardObjectives(1);
-        when(eventService.standings(GUILD, 1)).thenReturn(List.of(
+        when(events.standings(GUILD, 1)).thenReturn(List.of(
                 new Standing("u:" + OTHER, 40, 4, Map.of("a", 1, "b", 1, "c", 1, "d", 1), NOW),
                 new Standing("u:" + ME, 20, 2, Map.of("a", 1, "c", 1), NOW)));
 
@@ -97,9 +96,9 @@ class RuneSyncPanelServiceTest {
         long rival = 10L;
         when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
                 .thenReturn(List.of(bingo(2, ScoringMode.TEAM)));
-        when(events.participant(2, ME)).thenReturn(Optional.of(teamPlayer(2, ME, 5)));
+        when(events.mine(GUILD, ME, RuneSyncPanelService.MINE_PER_CLAN)).thenReturn(List.of(new HubEvents.Mine(event(2, "x", Status.RUNNING), teamPlayer(2, ME, 5))));
         boardObjectives(2);
-        when(eventService.standings(GUILD, 2)).thenReturn(List.of(
+        when(events.standings(GUILD, 2)).thenReturn(List.of(
                 new Standing("t:5", 30, 3, Map.of("a", 1, "b", 1, "d", 1), NOW),
                 new Standing("t:6", 10, 1, Map.of("c", 1), NOW)));
         when(events.teams(2)).thenReturn(List.of(new EventRepository.Team(5, 2, "Red", null), new EventRepository.Team(6, 2, "Blue", null)));
@@ -131,16 +130,25 @@ class RuneSyncPanelServiceTest {
     }
 
     @Test
+    void aHubThatCantAnswerStillLeavesTheClansPoints() {
+        when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
+                .thenThrow(new com.runeclans.bot.events.EventProblem(503, "RuneClans can't be reached."));
+        when(points.settings(GUILD)).thenReturn(new PointsRepository.Settings(GUILD, true, "points", null));
+        when(points.balance(GUILD, ME)).thenReturn(1250L);
+        DataObject clan = service.clan(GUILD, "Younglings", ME);
+        assertEquals(0, clan.getArray("events").length());
+        assertEquals(1250L, clan.getObject("points").getLong("balance"));
+    }
+
+    @Test
     void aClanShowsItsEventsAndOnlyTheMembersOwnPointsAndProgress() {
         when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
                 .thenReturn(List.of(event(1, "Boss night", Status.RUNNING), event(2, "Skill week", Status.SIGNUPS), event(3, "Other running", Status.RUNNING)));
-        when(events.participant(1, ME)).thenReturn(Optional.of(player(1, ME)));
-        when(events.participant(2, ME)).thenReturn(Optional.empty());
-        when(events.participant(3, ME)).thenReturn(Optional.empty());
-        when(eventService.standings(GUILD, 1)).thenReturn(List.of(
+        when(events.mine(GUILD, ME, RuneSyncPanelService.MINE_PER_CLAN)).thenReturn(List.of(new HubEvents.Mine(event(1, "x", Status.RUNNING), player(1, ME))));
+        when(events.standings(GUILD, 1)).thenReturn(List.of(
                 new Standing("u:" + OTHER, 90, 3, Map.of("a", 1, "b", 1, "c", 1), NOW),
                 new Standing("u:" + ME, 40, 1, Map.of("a", 2), NOW)));
-        when(eventService.objectives(1)).thenReturn(List.of(
+        when(events.objectives(1)).thenReturn(List.of(
                 new ObjectiveSpec("a", "Kill a boss", "", 20, Evidence.AUTO, 1, 0, List.of()),
                 new ObjectiveSpec("b", "Get a drop", "", 30, Evidence.AUTO, 1, 0, List.of())));
         when(points.settings(GUILD)).thenReturn(new PointsRepository.Settings(GUILD, true, "points", null));

@@ -1,7 +1,7 @@
 package com.runeclans.bot.internal;
 
 import com.runeclans.bot.events.ClanVsClan;
-import com.runeclans.bot.events.EventRepository;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Scope;
@@ -46,7 +46,7 @@ class LeagueAdminApiTest {
 
     private final Map<String, RuneClansHubClient.Read> answers = new HashMap<>();
     private final List<String> written = new ArrayList<>();
-    private EventRepository events;
+    private HubEvents events;
     private LeagueReporter reporter;
     private LeagueDiscordStore discord;
     private LeagueAdminApi api;
@@ -64,7 +64,7 @@ class LeagueAdminApiTest {
             written.add(method + " " + path + " " + body);
             return new HubWriteQueue.Result(HubWriteQueue.Outcome.SENT, new RuneClansHubClient.Answer(200, DataObject.empty().put("number", 2)));
         });
-        events = mock(EventRepository.class);
+        events = mock(HubEvents.class);
         reporter = mock(LeagueReporter.class);
         discord = mock(LeagueDiscordStore.class);
         when(discord.channel(GUILD)).thenReturn(Optional.empty());
@@ -74,10 +74,10 @@ class LeagueAdminApiTest {
         actor = mock(Member.class);
         when(actor.getId()).thenReturn("7");
         when(events.events(eq(GUILD), any(), anyInt())).thenReturn(List.of(event(77, ClanVsClan.KEY, Status.RUNNING), event(78, "bingo", Status.RUNNING)));
-        when(events.event(GUILD, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.RUNNING)));
-        when(events.event(GUILD, 78)).thenReturn(Optional.of(event(78, "bingo", Status.RUNNING)));
-        when(events.event(GUILD, 79)).thenReturn(Optional.empty());
-        when(events.event(GUILD, 80)).thenReturn(Optional.of(event(80, ClanVsClan.KEY, Status.CANCELLED)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.RUNNING)));
+        when(events.eventById(78)).thenReturn(Optional.of(event(78, "bingo", Status.RUNNING)));
+        when(events.eventById(79)).thenReturn(Optional.empty());
+        when(events.eventById(80)).thenReturn(Optional.of(event(80, ClanVsClan.KEY, Status.CANCELLED)));
     }
 
     private void hubAnswers(int status, DataObject json) {
@@ -178,7 +178,7 @@ class LeagueAdminApiTest {
         assertEquals(409, assertThrows(TicketAdminApi.ApiError.class, () -> api.route(guild, actor, "POST", report, DataObject::empty)).status, "not finished yet");
         assertEquals(409, assertThrows(TicketAdminApi.ApiError.class, () -> api.route(guild, actor, "POST", new String[]{"leagues", LEAGUE, "rounds", "1", "report"}, DataObject::empty)).status, "no event attached");
 
-        when(events.event(GUILD, 77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.DONE)));
+        when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.DONE)));
         when(reporter.report(any())).thenReturn(new LeagueReporter.Outcome(false, 409, "A participating clan has no clan on RuneClans."));
         assertEquals(409, assertThrows(TicketAdminApi.ApiError.class, () -> api.route(guild, actor, "POST", report, DataObject::empty)).status);
         when(reporter.report(any())).thenReturn(new LeagueReporter.Outcome(true, 202, "Saved; it reaches RuneClans shortly."));
