@@ -80,6 +80,24 @@ class HubClientPartsTest {
     }
 
     @Test
+    void boardImageBytesPassThroughTheRetryWrapper() {
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G'};
+        RuneClansHubClient.Transport inner = new RuneClansHubClient.Transport() {
+            @Override
+            public RuneClansHubClient.Answer call(String method, String path, String body) {
+                return null;
+            }
+
+            @Override
+            public byte[] bytes(String path, Map<String, String> headers) {
+                return path.endsWith("/board.png") ? png : null;
+            }
+        };
+        HubRetry retry = new HubRetry(inner, w -> { });
+        assertEquals(png, retry.bytes("/v1/events/e1/board.png", Map.of()), "the wrapper must not swallow the image");
+    }
+
+    @Test
     void aCallNeverOutlivesTheWebsitesPatience() {
         assertEquals(Duration.ofSeconds(8), RuneClansHubClient.REQUEST_TIMEOUT, "the website gives up on the bot after 8 seconds");
     }
