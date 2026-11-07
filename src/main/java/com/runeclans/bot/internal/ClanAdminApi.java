@@ -158,7 +158,7 @@ public class ClanAdminApi {
     }
 
     DataObject markPromoted(Guild guild, Member actor, String rsn) {
-        points.setPromotionNeeded(guild.getIdLong(), rsn, false, java.time.LocalDate.now(java.time.ZoneOffset.UTC));
+        if (!points.markPromoted(guild.getIdLong(), rsn)) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
         log.info("Dashboard: {} marked {} as promoted", actor.getId(), rsn);
         return promotions(guild);
     }
@@ -359,8 +359,9 @@ public class ClanAdminApi {
             }
         }
 
-        points.setSettings(guild.getIdLong(), daily, visit, cap);
-        for (long[] update : updates) points.setRankThreshold(guild.getIdLong(), update[0], update[1]);
+        java.util.Map<Long, Long> thresholds = new java.util.LinkedHashMap<>();
+        for (long[] update : updates) thresholds.put(update[0], update[1]);
+        if (!points.save(guild.getIdLong(), actor.getIdLong(), daily, visit, cap, thresholds)) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
         log.info("Dashboard: {} updated clan points settings and {} rank threshold(s)", actor.getId(), updates.size());
         return clanPoints(guild);
     }

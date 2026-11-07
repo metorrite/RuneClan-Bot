@@ -130,7 +130,10 @@ public class ClanPointsInteractionListener extends ListenerAdapter {
             return;
         }
 
-        repository.setSettings(guild.getIdLong(), daily, visit, cap);
+        if (!repository.save(guild.getIdLong(), event.getUser().getIdLong(), daily, visit, cap, Map.of())) {
+            Containers.replyError(event);
+            return;
+        }
         event.editComponents(List.of(buildMainPanel(guild.getIdLong()))).useComponentsV2(true).queue();
     }
 
@@ -166,7 +169,12 @@ public class ClanPointsInteractionListener extends ListenerAdapter {
 
         // Applied only after every field on the page validates — an all-or-nothing save, since a
         // half-applied page would be confusing (some ranks updated, the rest silently not).
-        parsedThresholds.forEach((rankId, threshold) -> repository.setRankThreshold(guildId, rankId, threshold));
+        ClanPointsRepository.PointsSettings settings = repository.getSettings(guildId);
+        if (!repository.save(guildId, event.getUser().getIdLong(), settings.dailyMembershipPoints(), settings.citadelVisitPoints(), settings.citadelCapPoints(),
+                parsedThresholds)) {
+            Containers.replyError(event);
+            return;
+        }
 
         event.editComponents(List.of(buildMainPanel(guildId))).useComponentsV2(true).queue();
     }

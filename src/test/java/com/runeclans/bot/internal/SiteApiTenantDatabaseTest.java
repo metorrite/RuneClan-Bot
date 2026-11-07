@@ -111,7 +111,7 @@ class SiteApiTenantDatabaseTest {
         stats = new SiteStatsRepository(db, initializer).withStats(HUB.backends());
         links = new PlayerLinkRepository(db, initializer).withStats(HUB.backends());
         digest = new WeeklyDigestRepository(db, initializer).withStats(HUB.backends());
-        points = new ClanPointsRepository(db, initializer);
+        points = new ClanPointsRepository(mock(com.runeclans.bot.runeclans.RuneClansHubClient.class));
         profiles = new MemberProfileRepository(db);
         community = new CommunitySettings(db, com.runeclans.bot.testsupport.SiteMappings.off(db));
         catalog = new WikiCatalog();
