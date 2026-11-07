@@ -109,7 +109,7 @@ class BotlessSiteEndToEndDatabaseTest {
         ClanProfileService profiles = new ClanProfileService(new ClanProfileRepository(db), clanSync, mock(PlayerLinkService.class), GateSource.ownTables(null, null, null));
         BotOwners owners = mock(BotOwners.class);
         SiteRoleGuard roles = new SiteRoleGuard(new SiteRoleRepository(db), mock(DashboardAccess.class), settings, mock(PlayerLinkService.class),
-                new com.runeclans.bot.access.OverallAdmins(new com.runeclans.bot.access.OverallAdminRepository(db), owners));
+                com.runeclans.bot.access.OverallAdmins.of(() -> com.runeclans.bot.access.OverallAdmins.HubList.EMPTY, owners));
         ClanSiteAdminApi clanSite = new ClanSiteAdminApi(sites, layouts, siteService, profiles, owners, mock(Premium.class), roles,
                 new SiteDiscordService(new SiteConnectionStore(db, new SiteDiscordSettings(db), new SiteNewsService(db, com.runeclans.bot.testsupport.SiteMappings.off(db)), com.runeclans.bot.testsupport.SiteMappings.off(db)), new SiteDiscordSettings(db),
                         new SiteNewsService(db, com.runeclans.bot.testsupport.SiteMappings.off(db)), mock(MemberProfileRepository.class), new SiteCache(), com.runeclans.bot.hubsites.HubSites.off()), mock(SiteAddressRoutes.class),
