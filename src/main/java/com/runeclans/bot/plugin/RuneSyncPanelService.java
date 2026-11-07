@@ -6,7 +6,6 @@ import com.runeclans.bot.discord.DiscordLookups.Outcome;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.events.BingoBoardView;
 import com.runeclans.bot.events.BingoTemplate;
-import com.runeclans.bot.events.EventProblem;
 import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
@@ -56,6 +55,8 @@ public class RuneSyncPanelService {
     private final HubEvents events;
     private final PointsRepository points;
     private final PluginRepository plugins;
+    /** How many of the member's own events the panel looks through for their places in the clan's open ones. */
+    static final int MINE_PER_CLAN = 50;
     private final Map<Long, Cached> cache = new ConcurrentHashMap<>();
     private volatile JDA jda;
 
@@ -197,21 +198,32 @@ public class RuneSyncPanelService {
     DataObject clan(long guildId, String name, long userId) {
         DataArray list = DataArray.empty();
         DataArray progress = DataArray.empty();
-        List<Event> open;
         try {
-            open = events.events(guildId, List.of(Status.RUNNING, Status.SIGNUPS), EVENTS_PER_CLAN);
-        } catch (EventProblem e) {
-            open = List.of();
-        }
-        for (Event event : open) {
-            if (event.archived()) continue;
-            Participant me = events.participant(event.id(), userId).orElse(null);
-            boolean joined = me != null && !me.waiting();
-            list.add(DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("template", event.template())
-                    .put("status", event.status().name()).put("startsAt", event.startsAt() == null ? null : event.startsAt().toString())
-                    .put("endsAt", event.endsAt() == null ? null : event.endsAt().toString()).put("joined", joined));
-            // the hub's list carries no settings: the board needs them, so a running event the member plays is read in full
-            if (joined && event.status() == Status.RUNNING) progress.add(progress(guildId, events.full(event).orElse(event), me));
+            List<Event> open = events.events(guildId, List.of(Status.RUNNING, Status.SIGNUPS), EVENTS_PER_CLAN);
+            // the member's own places in one call (not the whole roster of every event)
+            Map<Long, Participant> mine = new java.util.HashMap<>();
+            if (!open.isEmpty()) for (HubEvents.Mine m : events.mine(guildId, userId, MINE_PER_CLAN)) if (m.me() != null) mine.put(m.event().id(), m.me());
+            for (Event event : open) {
+                if (event.archived()) continue;
+                Participant me = mine.get(event.id());
+                boolean joined = me != null && !me.waiting();
+                list.add(DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("template", event.template())
+                        .put("status", event.status().name()).put("startsAt", event.startsAt() == null ? null : event.startsAt().toString())
+                        .put("endsAt", event.endsAt() == null ? null : event.endsAt().toString()).put("joined", joined));
+                // the hub's list carries no settings: the board needs them, so a running event the member plays is read in full
+                if (joined && event.status() == Status.RUNNING) {
+                    try {
+                        progress.add(progress(guildId, events.full(event).orElse(event), me));
+                    } catch (RuntimeException e) {
+                        log.debug("RuneSync panel: no progress for event {}: {}", event.id(), e.toString());
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            // no hub clan, or the hub can't answer just now: the clan still shows, with its points
+            log.debug("RuneSync panel: events of server {} couldn't be read: {}", guildId, e.toString());
+            list = DataArray.empty();
+            progress = DataArray.empty();
         }
         PointsRepository.Settings pointSettings = points.settings(guildId);
         DataObject own = pointSettings.enabled()

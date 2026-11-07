@@ -69,7 +69,7 @@ class RuneSyncPanelServiceTest {
     void aSoloBingoSendsTheMembersOwnBoard() {
         when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
                 .thenReturn(List.of(bingo(1, ScoringMode.INDIVIDUAL)));
-        when(events.participant(1, ME)).thenReturn(Optional.of(player(1, ME)));
+        when(events.mine(GUILD, ME, RuneSyncPanelService.MINE_PER_CLAN)).thenReturn(List.of(new HubEvents.Mine(event(1, "x", Status.RUNNING), player(1, ME))));
         boardObjectives(1);
         when(events.standings(GUILD, 1)).thenReturn(List.of(
                 new Standing("u:" + OTHER, 40, 4, Map.of("a", 1, "b", 1, "c", 1, "d", 1), NOW),
@@ -96,7 +96,7 @@ class RuneSyncPanelServiceTest {
         long rival = 10L;
         when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
                 .thenReturn(List.of(bingo(2, ScoringMode.TEAM)));
-        when(events.participant(2, ME)).thenReturn(Optional.of(teamPlayer(2, ME, 5)));
+        when(events.mine(GUILD, ME, RuneSyncPanelService.MINE_PER_CLAN)).thenReturn(List.of(new HubEvents.Mine(event(2, "x", Status.RUNNING), teamPlayer(2, ME, 5))));
         boardObjectives(2);
         when(events.standings(GUILD, 2)).thenReturn(List.of(
                 new Standing("t:5", 30, 3, Map.of("a", 1, "b", 1, "d", 1), NOW),
@@ -130,12 +130,21 @@ class RuneSyncPanelServiceTest {
     }
 
     @Test
+    void aHubThatCantAnswerStillLeavesTheClansPoints() {
+        when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
+                .thenThrow(new com.runeclans.bot.events.EventProblem(503, "RuneClans can't be reached."));
+        when(points.settings(GUILD)).thenReturn(new PointsRepository.Settings(GUILD, true, "points", null));
+        when(points.balance(GUILD, ME)).thenReturn(1250L);
+        DataObject clan = service.clan(GUILD, "Younglings", ME);
+        assertEquals(0, clan.getArray("events").length());
+        assertEquals(1250L, clan.getObject("points").getLong("balance"));
+    }
+
+    @Test
     void aClanShowsItsEventsAndOnlyTheMembersOwnPointsAndProgress() {
         when(events.events(eq(GUILD), eq(List.of(Status.RUNNING, Status.SIGNUPS)), eq(RuneSyncPanelService.EVENTS_PER_CLAN)))
                 .thenReturn(List.of(event(1, "Boss night", Status.RUNNING), event(2, "Skill week", Status.SIGNUPS), event(3, "Other running", Status.RUNNING)));
-        when(events.participant(1, ME)).thenReturn(Optional.of(player(1, ME)));
-        when(events.participant(2, ME)).thenReturn(Optional.empty());
-        when(events.participant(3, ME)).thenReturn(Optional.empty());
+        when(events.mine(GUILD, ME, RuneSyncPanelService.MINE_PER_CLAN)).thenReturn(List.of(new HubEvents.Mine(event(1, "x", Status.RUNNING), player(1, ME))));
         when(events.standings(GUILD, 1)).thenReturn(List.of(
                 new Standing("u:" + OTHER, 90, 3, Map.of("a", 1, "b", 1, "c", 1), NOW),
                 new Standing("u:" + ME, 40, 1, Map.of("a", 2), NOW)));

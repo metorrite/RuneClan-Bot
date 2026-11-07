@@ -96,6 +96,7 @@ class MemberEventsApiTest {
         Event full = event(id, name, status, config);
         Event compact = event(id, name, status, "{}");
         when(events.full(compact)).thenReturn(Optional.of(full));
+        when(events.fullWithSetup(compact)).thenReturn(Optional.of(new HubEvents.Full(full, EventRepository.Setup.NONE)));
         when(events.event(G, id)).thenReturn(full);
         return compact;
     }
@@ -176,6 +177,22 @@ class MemberEventsApiTest {
     }
 
     @Test
+    void onlyTheFirstFewEventsGetTheExtraHubReadsAndOneThatFailsIsLeftOut() {
+        List<HubEvents.Mine> many = new java.util.ArrayList<>();
+        for (long id = 100; id < 100 + MemberEventsApi.DETAILED + 5; id++) many.add(new HubEvents.Mine(onHub(id, "E" + id, Status.SIGNUPS, "{}"), player(id, INSIDE, EventRoster.Verification.NOT_REQUIRED, "")));
+        when(events.mine(G, INSIDE, 30)).thenReturn(many);
+        Event broken = event(300, "Broken", Status.SIGNUPS, "{}");
+        Event fine = onHub(301, "Fine", Status.SIGNUPS, "{}");
+        when(events.events(eq(G), eq(List.of(Status.SIGNUPS)), anyInt())).thenReturn(List.of(broken, fine));
+        when(events.fullWithSetup(broken)).thenThrow(new EventProblem(503, "RuneClans can't be reached."));
+        DataObject mine = api.mine(guild, INSIDE);
+        assertEquals(many.size(), mine.getArray("events").length(), "every event is listed");
+        verify(events, Mockito.times(MemberEventsApi.DETAILED)).full(any());
+        assertEquals(1, mine.getArray("open").length(), "the one the hub couldn't read is left out, the rest still show");
+        assertEquals("Fine", mine.getArray("open").getObject(0).getString("name"));
+    }
+
+    @Test
     void aServerWithNoClanOnTheHubHasNoEvents() {
         when(events.mine(anyLong(), anyLong(), anyInt())).thenThrow(new EventProblem(404, HubEvents.NO_CLAN_TEXT));
         DataObject mine = api.mine(guild, INSIDE);
@@ -187,8 +204,10 @@ class MemberEventsApiTest {
     void aClosedSignupSaysSo() {
         Event listed = onHub(11, "Closing", Status.SIGNUPS, "{}");
         when(events.events(eq(G), eq(List.of(Status.SIGNUPS)), anyInt())).thenReturn(List.of(listed));
-        when(events.setup(11)).thenReturn(new EventRepository.Setup(Instant.EPOCH, 9L, null, null, null, null, null, null, false, "", null, null));
-        assertTrue(api.mine(guild, INSIDE).getArray("open").getObject(0).getBoolean("closed"));
+        when(events.fullWithSetup(listed)).thenReturn(Optional.of(new HubEvents.Full(event(11, "Closing", Status.SIGNUPS, "{}"),
+                new EventRepository.Setup(Instant.EPOCH, 9L, null, null, null, null, null, null, false, "", null, null))));
+        assertTrue(api.mine(guild, INSIDE).getArray("open").getObject(0).getBoolean("closed"), "from the same read as the settings");
+        verify(events, never()).setup(anyLong());
     }
 
     @Test

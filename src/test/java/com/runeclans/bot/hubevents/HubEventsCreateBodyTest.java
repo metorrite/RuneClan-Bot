@@ -32,6 +32,15 @@ class HubEventsCreateBodyTest {
     }
 
     @Test
+    void noDatesLeaveTheStandardOnes() {
+        EventInput planned = EventQuickCreate.plan(EventQuickCreate.Kind.BINGO, "Winter bingo", 3, 2, null, NOW, null).input();
+        EventInput in = new EventInput(planned.name(), planned.description(), planned.template(), planned.scope(), planned.scoringMode(), null, null, planned.maxParticipants(), planned.config());
+        DataObject body = HubEvents.createBody(in, NOW);
+        assertFalse(body.hasKey("startsAt"), "a null would wipe the standard start");
+        assertFalse(body.hasKey("endsAt"));
+    }
+
+    @Test
     void aChosenLookIsSent() {
         EventInput in = EventQuickCreate.plan(EventQuickCreate.Kind.BINGO, "Winter bingo", 3, 2, null, NOW, BingoLooks.CLASSIC).input();
         assertEquals(BingoLooks.CLASSIC, HubEvents.createBody(in, NOW).getString("config.board.look"));

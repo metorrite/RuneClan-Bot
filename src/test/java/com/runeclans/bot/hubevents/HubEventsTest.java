@@ -109,6 +109,27 @@ class HubEventsTest {
     }
 
     @Test
+    void aMembersOwnPrizesAndClaimsOnlyEvenWhenTheHubShowsAnOrganiserEverything() {
+        long local = mapped();
+        hub.ok("GET /v1/events/" + EVENT + "/awards", DataObject.empty().put("awards", DataArray.empty()
+                .add(DataObject.empty().put("personId", UUID.randomUUID().toString()).put("discordId", "55").put("place", 1).put("kind", "OTHER"))
+                .add(DataObject.empty().put("personId", UUID.randomUUID().toString()).put("discordId", "66").put("place", 2).put("kind", "OTHER"))
+                .add(DataObject.empty().put("personId", UUID.randomUUID().toString()).put("discordId", null).put("place", 3).put("kind", "OTHER"))));
+        List<DataObject> awards = events.awardsOf(G, local, 55L);
+        assertEquals(1, awards.size(), "an organiser is shown every award by the hub; only the member's own are theirs");
+        assertEquals(1, awards.get(0).getInt("place"));
+
+        hub.ok("GET /v1/events/" + EVENT + "/claims", DataObject.empty().put("claims", DataArray.empty()
+                .add(DataObject.empty().put("id", UUID.randomUUID().toString()).put("kind", "OBJECTIVE").put("discordId", "66").put("status", "PENDING"))
+                .add(DataObject.empty().put("id", UUID.randomUUID().toString()).put("kind", "VERIFICATION").put("discordId", "55").put("status", "PENDING"))));
+        List<com.runeclans.bot.events.EventRepository.Claim> claims = events.claimsOf(G, local, 55L, 20);
+        assertEquals(1, claims.size());
+        assertEquals(55L, claims.get(0).userId());
+        assertEquals("55", hub.last().headers().get(HubEventClient.ACTOR_HEADER), "asked as the member");
+        assertTrue(hub.calls("GET", "/participants").isEmpty(), "no roster read for it");
+    }
+
+    @Test
     void settingsReadersGetEachListedEventInFull() {
         DataObject compact = eventJson("RUNNING");
         compact.remove("config");
