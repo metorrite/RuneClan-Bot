@@ -3,13 +3,12 @@ package com.runeclans.bot.internal;
 import com.runeclans.bot.clanprofile.ClanProfile;
 import com.runeclans.bot.clanprofile.ClanProfileRepository;
 import com.runeclans.bot.events.EventListing;
-import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.Scope;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.hubevents.HubEvents;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
@@ -22,6 +21,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
@@ -53,18 +53,18 @@ class DirectoryClanVsClanSectionTest {
 
     @Test
     void aListedClansPageListsItsFinishedOpenClanEventsWithItsPlace() {
-        EventRepository events = mock(EventRepository.class);
-        EventService service = mock(EventService.class);
+        HubEvents events = mock(HubEvents.class);
         ClanProfileRepository profiles = mock(ClanProfileRepository.class);
         when(profiles.get(anyLong())).thenReturn(Optional.empty());
         Event won = event(5, "clan-vs-clan", Scope.PUBLIC, Status.DONE, "{\"cvcTeams\":{\"1\":10,\"2\":20}}");
         Event hidden = event(6, "clan-vs-clan", Scope.PUBLIC, Status.DONE, "{\"cvcTeams\":{\"1\":11,\"2\":21},\"standings\":{\"visibility\":\"STAFF\"}}");
         Event takenDown = event(7, "clan-vs-clan", Scope.PUBLIC, Status.DONE, "{\"cvcTeams\":{\"1\":12,\"2\":22},\"hub\":{\"takedown\":{\"reason\":\"spam\"}}}");
         Event without = event(8, "clan-vs-clan", Scope.PUBLIC, Status.DONE, "{\"cvcTeams\":{\"1\":13,\"22\":23}}");
-        when(events.finishedClanVsClan(ALLY, DirectoryClanVsClanSection.SHOWN * 3)).thenReturn(List.of(won, hidden, takenDown, without));
-        when(service.standings(HOST, 5)).thenReturn(List.of(standing("t:20", 90), standing("t:10", 40)));
+        when(events.events(ALLY, List.of(Status.DONE), DirectoryClanVsClanSection.SHOWN * 3)).thenReturn(List.of(won, hidden, takenDown, without));
+        for (Event e : List.of(won, hidden, takenDown, without)) when(events.full(e)).thenReturn(Optional.of(e));
+        when(events.standings(HOST, 5)).thenReturn(List.of(standing("t:20", 90), standing("t:10", 40)));
 
-        DataArray history = new DirectoryClanVsClanSection(events, service, profiles).history(ALLY);
+        DataArray history = new DirectoryClanVsClanSection(events, profiles).history(ALLY);
 
         assertEquals(2, history.length(), "the taken-down event and the one the clan wasn't in are left out");
         DataObject first = history.getObject(0);
@@ -77,12 +77,12 @@ class DirectoryClanVsClanSectionTest {
 
     @Test
     void anUnlistedClanPageSaysNothing() {
-        EventRepository events = mock(EventRepository.class);
-        when(events.finishedClanVsClan(anyLong(), anyInt())).thenReturn(List.of());
+        HubEvents events = mock(HubEvents.class);
+        when(events.events(anyLong(), any(), anyInt())).thenReturn(List.of());
         ClanProfile unlisted = mock(ClanProfile.class);
         when(unlisted.visibility()).thenReturn(ClanProfile.Visibility.UNLISTED);
         DataObject json = DataObject.empty();
-        new DirectoryClanVsClanSection(events, mock(EventService.class), mock(ClanProfileRepository.class)).addToClan(unlisted, json);
+        new DirectoryClanVsClanSection(events, mock(ClanProfileRepository.class)).addToClan(unlisted, json);
         assertFalse(json.hasKey("clanVsClan"));
     }
 }

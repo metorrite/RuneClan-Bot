@@ -47,7 +47,7 @@ final class HubPollingList {
     private final Function<String, RuneClansHubClient.Answer> get;
     private final Clock clock;
     private volatile Groups last = Groups.EMPTY;
-    private Instant readAt;
+    private volatile Instant readAt;
     private Instant okAt;
     private State logged;
 
@@ -67,7 +67,13 @@ final class HubPollingList {
         return last;
     }
 
-    /** The groups as of at most {@link #KEEP} ago. Runs on the poll-jobs lane, so a slow hub only delays the next job. */
+    /** Whether the last read is under {@link #KEEP} old (a read that failed counts: it isn't tried again sooner). Never waits on a read in progress. */
+    boolean fresh() {
+        Instant at = readAt;
+        return at != null && clock.instant().isBefore(at.plus(KEEP));
+    }
+
+    /** The groups as of at most {@link #KEEP} ago. A slow hub only delays the caller. */
     synchronized Groups groups() {
         Instant now = clock.instant();
         if (readAt != null && now.isBefore(readAt.plus(KEEP))) return last;

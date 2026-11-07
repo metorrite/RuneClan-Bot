@@ -39,8 +39,8 @@ class RsAdminPanelTest {
         clanSyncService = mock(ClanSyncService.class);
         adminRoleFilter = mock(AdminRoleFilter.class);
         weeklyDigestService = mock(WeeklyDigestService.class);
-        listener = new RsAdminInteractionListener(null, null, adminRoleFilter, null, null, clanSyncService, null, null, null, null, null,
-                mock(ConfigureInteractionListener.class), weeklyDigestService, null, null);
+        listener = new RsAdminInteractionListener(null, null, adminRoleFilter, null, clanSyncService, null, null, null, null, null,
+                mock(ConfigureInteractionListener.class), weeklyDigestService, null);
         guild = mock(Guild.class);
         viewer = mock(Member.class);
         when(guild.getIdLong()).thenReturn(1L);

@@ -312,7 +312,7 @@ Panel (T-129): every control is at least 36 units tall for touch; "Link Discord"
 - The level is visible to the plugin (`GetVerification()`), in assertions (`ver`), and on `/links`, so consumers can decide how much to trust a link.
 - Staff checks are never added (volume). Still parked in T-122: a Jagex-signed identity (asked in T-119); a directed Hiscores XP challenge (gain XP in a named skill; clue-scroll fallback for 200m-all accounts); title or privacy toggles.
 
-### 12.1 "The plugin knew it first" (T-170; `LINK_VERIFY_ENABLED`, default off)
+### 12.1 "The plugin knew it first" (T-170; retired from the bot, the hub runs it now)
 
 Code: `rsnlink.verify` (pure logic `XpVerifier`, ports `PublicData` and `VerifyStore`, adapters `HttpPublicData`, `PgVerifyStore`, `XpLinkVerifier`). It imports only the JDK, slf4j, JDA's JSON type and the `LinkVerifier` hook, so it moves to rsclans-hub unchanged (a test holds this).
 

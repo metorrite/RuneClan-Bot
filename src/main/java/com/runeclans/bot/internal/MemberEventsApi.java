@@ -5,6 +5,7 @@ import com.runeclans.bot.clanprofile.JoinLinks;
 import com.runeclans.bot.discord.DiscordLookups;
 import com.runeclans.bot.events.BingoBoardView;
 import com.runeclans.bot.events.BingoTemplate;
+import com.runeclans.bot.events.EventListing;
 import com.runeclans.bot.events.EventProblem;
 import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventSpaceRepository;
@@ -13,11 +14,11 @@ import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
 import com.runeclans.bot.events.EventStandings;
-import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventRoster;
 import com.runeclans.bot.events.EventSettings;
 import com.runeclans.bot.events.PluginObjectiveMatcher;
-import com.runeclans.bot.events.PluginXpTracker;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
@@ -27,6 +28,7 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,29 +38,29 @@ import java.util.Optional;
  * Only the member's own rows are returned (other players' prizes and claims never are), and drafts and cancelled-before-start events
  * are left out. Also lists events taking signups that the member hasn't joined, so they can find them, and lets them join or leave one
  * ({@link #join}, {@link #leave}) by the same rules as {@code /events join}. Taking part in an event needs the member to be in the server's Discord.
+ * <p>
+ * The events are the hub's ({@link HubEvents}, T-932): the website's Event Manager events and the bot's alike, joined on the hub. The bot's old event
+ * tables are no longer read here. A server with no clan on the hub has no events to show.
  */
 @BService
 public class MemberEventsApi {
     private static final Logger log = LoggerFactory.getLogger(MemberEventsApi.class);
     private static final int MAX_EVENTS = 30;
+    /** How many of a member's events (and of the open ones) get the extra hub reads in one answer, and the time those reads may take. */
+    static final int DETAILED = 10;
+    static final java.time.Duration BUDGET = java.time.Duration.ofSeconds(4);
 
-    private final EventService service;
-    private final EventRepository repository;
+    private final HubEvents events;
     private final ClanProfileRepository profiles;
     private final EventSpaceRepository space;
     private final JoinLinks joinLinks;
     private final com.runeclans.bot.events.EventUpdateRepository updatePosts;
-    private final com.runeclans.bot.events.EventDrawRepository draws;
-    private final PluginXpTracker pluginXp;
 
-    public MemberEventsApi(EventService service, EventRepository repository, ClanProfileRepository profiles, EventSpaceRepository space, JoinLinks joinLinks,
-                           com.runeclans.bot.events.EventUpdateRepository updatePosts, com.runeclans.bot.events.EventDrawRepository draws, PluginXpTracker pluginXp) {
-        this.draws = draws;
+    public MemberEventsApi(HubEvents events, ClanProfileRepository profiles, EventSpaceRepository space, JoinLinks joinLinks,
+                           com.runeclans.bot.events.EventUpdateRepository updatePosts) {
         this.joinLinks = joinLinks;
         this.updatePosts = updatePosts;
-        this.pluginXp = pluginXp;
-        this.service = service;
-        this.repository = repository;
+        this.events = events;
         this.profiles = profiles;
         this.space = space;
     }
@@ -67,7 +69,7 @@ public class MemberEventsApi {
     public DataObject join(Guild guild, long userId, DataObject body) {
         long eventId = eventIdOf(body);
         requireInServer(guild, userId);
-        var joined = service.join(guild.getIdLong(), eventId, guild.getIdLong(), userId, null, false, null);
+        var joined = events.join(guild.getIdLong(), eventId, userId, null, false, Actor.member(userId, guild.getIdLong()));
         return mine(guild, userId).put("result", DataObject.empty().put("waiting", joined.waiting()).put("position", joined.position()));
     }
 
@@ -75,9 +77,9 @@ public class MemberEventsApi {
     public DataObject leave(Guild guild, long userId, DataObject body) {
         long eventId = eventIdOf(body);
         long guildId = guild.getIdLong();
-        Event event = service.event(guildId, eventId);
+        Event event = events.event(guildId, eventId);
         if (event.status() != Status.SIGNUPS) throw new EventProblem(409, Text.of(guildId, "events.problem.you_can_only_leave_while_an"));
-        service.leave(guildId, eventId, userId);
+        events.leave(guildId, eventId, userId, Actor.member(userId, guildId));
         return mine(guild, userId);
     }
 
@@ -108,25 +110,84 @@ public class MemberEventsApi {
         if (guild.getMemberById(userId) == null) return DataObject.empty().put("events", mine).put("open", open);
 
         long guildId = guild.getIdLong();
-        List<Event> joined = repository.eventsForUser(guildId, userId, MAX_EVENTS);
-        for (Event event : joined) {
+        List<HubEvents.Mine> joined;
+        List<Event> taking;
+        try {
+            joined = events.mine(guildId, userId, MAX_EVENTS);
+            taking = events.events(guildId, List.of(Status.SIGNUPS), 20);
+        } catch (EventProblem e) {
+            if (e.status() != 404) throw e;
+            return DataObject.empty().put("events", mine).put("open", open); // no clan on the hub: no events
+        }
+        // the website gives up after 8 seconds: only the first DETAILED events, and only within BUDGET, get the extra hub reads (settings, standings,
+        // prizes, proof); the rest are listed from the compact answers
+        Instant until = Instant.now().plus(BUDGET);
+        int detailed = 0;
+        for (HubEvents.Mine m : joined) {
+            if (m.me() == null) continue; // the hub listed it without the member's place
+            if (!shownToMember(m.event(), m.takenDown())) continue;
             try {
-                mine.add(one(guildId, event, userId));
+                boolean full = detailed < DETAILED && Instant.now().isBefore(until);
+                Event event = m.event();
+                if (full) {
+                    detailed++;
+                    // the hub's list is compact: the settings (verification, buy-in, standings) come with the event read in full
+                    event = events.full(m.event()).orElse(m.event());
+                }
+                mine.add(one(guildId, event, m.me(), userId, full));
             } catch (RuntimeException e) {
-                log.warn("Could not build member view of event {}", event.id(), e);
+                log.warn("Could not build member view of event {}", m.event().id(), e);
             }
         }
-        for (Event event : repository.events(guildId, List.of(Status.SIGNUPS), 20)) {
-            if (joined.stream().anyMatch(j -> j.id() == event.id())) continue;
-            EventSettings settings = settingsOf(event);
-            open.add(DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("description", event.description())
-                    .put("template", event.template()).put("scoringMode", event.scoringMode().name())
-                    .put("signupClosesAt", settings.signupClosesAt() == null ? null : settings.signupClosesAt().toString())
-                    .put("closed", repository.setup(event.id()).signupsClosed())
-                    .put("verification", settings.verification().required())
-                    .put("buyIn", settings.buyIn().enabled() ? settings.buyIn().amount() : 0));
+        int openDetailed = 0;
+        for (Event listed : taking) {
+            if (joined.stream().anyMatch(j -> j.event().id() == listed.id())) continue;
+            if (!shownToMember(listed, false)) continue;
+            try {
+                Event event = listed;
+                Boolean closed = null;
+                if (openDetailed < DETAILED && Instant.now().isBefore(until)) {
+                    openDetailed++;
+                    // one read gives the settings and whether signups are closed
+                    Optional<HubEvents.Full> full = events.fullWithSetup(listed);
+                    if (full.isPresent()) {
+                        event = full.get().event();
+                        closed = full.get().setup().signupsClosed();
+                    }
+                }
+                if (takenDownIn(event)) continue; // the full read's settings say whether staff took it down
+                EventSettings settings = settingsOf(event);
+                open.add(DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description())
+                        .put("template", event.template()).put("scoringMode", event.scoringMode().name())
+                        .put("signupClosesAt", settings.signupClosesAt() == null ? null : settings.signupClosesAt().toString())
+                        .put("closed", closed != null && closed)
+                        .put("verification", settings.verification().required())
+                        .put("buyIn", settings.buyIn().enabled() ? settings.buyIn().amount() : 0));
+            } catch (RuntimeException e) {
+                log.warn("Could not build the open event {} for a member", listed.id(), e);
+            }
         }
         return DataObject.empty().put("events", mine).put("open", open);
+    }
+
+    /**
+     * Whether a member's events page lists an event: announced ones only (signups, running, scoring, done), never a draft, a cancelled or archived
+     * one, or one RuneClans staff took down; the same as the website's {@code shownOnSite}.
+     */
+    private static boolean takenDownIn(Event event) {
+        try {
+            return event.config() != null && !event.config().isBlank() && EventListing.takenDown(DataObject.fromJson(event.config()));
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    static boolean shownToMember(Event event, boolean takenDown) {
+        if (takenDown || event.archived()) return false;
+        return switch (event.status()) {
+            case SIGNUPS, RUNNING, SCORING, DONE -> true;
+            case DRAFT, CANCELLED -> false;
+        };
     }
 
     /** How many rows of the standings a member is shown (the top of the table, plus their own row). */
@@ -143,20 +204,21 @@ public class MemberEventsApi {
     public DataObject detail(Guild guild, long userId, long eventId) {
         long guildId = guild.getIdLong();
         if (guild.getMemberById(userId) == null) throw new EventProblem(403, notInServerMessage(guild));
-        Event event = service.event(guildId, eventId);
-        Participant me = repository.participant(eventId, userId).orElse(null);
+        Event event = events.event(guildId, eventId);
+        // one roster read gives the member's own place and the player count
+        List<Participant> players = events.participants(eventId);
+        Participant me = players.stream().filter(p -> p.userId() == userId).findFirst().orElse(null);
         if (me == null && event.status() != Status.SIGNUPS) throw new EventProblem(404, Text.of(guildId, "events.problem.that_event_doesn_t_exist_or"));
         EventSettings settings = settingsOf(event);
-        var setup = repository.setup(eventId);
+        var setup = events.setup(eventId);
         boolean teamEvent = event.scoringMode() == com.runeclans.bot.events.EventRules.ScoringMode.TEAM;
         boolean scored = event.status() == Status.RUNNING || event.status() == Status.SCORING || event.status() == Status.DONE;
-        List<EventRepository.Team> teams = repository.teams(eventId);
-        List<Participant> players = repository.participants(eventId);
-        var objectives = service.objectives(eventId);
+        List<EventRepository.Team> teams = events.teams(eventId);
+        var objectives = events.objectives(eventId);
         DataArray xpTiles = xpTiles(event, objectives);
 
         DataObject out = DataObject.empty();
-        out.put("event", DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("description", event.description()).put("template", event.template())
+        out.put("event", DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description()).put("template", event.template())
                 .put("status", event.status().name()).put("scoringMode", event.scoringMode().name())
                 .put("startsAt", event.startsAt() == null ? null : event.startsAt().toString()).put("endsAt", event.endsAt() == null ? null : event.endsAt().toString())
                 .put("signupClosesAt", settings.signupClosesAt() == null ? null : settings.signupClosesAt().toString()).put("signupsClosed", setup.signupsClosed())
@@ -174,12 +236,12 @@ public class MemberEventsApi {
 
         String teamName = me.teamId() == null ? null : teams.stream().filter(t -> t.id() == me.teamId()).map(EventRepository.Team::name).findFirst().orElse(null);
         EventRoster.Verification verification = EventRoster.effective(me.verification(), settings.verification());
+        List<EventRepository.Claim> claims = events.claimsOf(guildId, eventId, userId, SUBMISSIONS_SHOWN);
         out.put("me", DataObject.empty().put("waiting", me.waiting()).put("team", teamName)
                 .put("buyIn", DataObject.empty().put("enabled", settings.buyIn().enabled()).put("amount", settings.buyIn().amount()).put("status", me.buyIn().name()))
                 .put("verification", DataObject.empty().put("required", settings.verification().required()).put("state", verification.name())
                         .put("note", me.verification() == EventRoster.Verification.REJECTED ? me.verificationNote() : "")
-                        .put("waitingProof", repository.pendingVerificationClaimsFor(eventId, userId) > 0)));
-        if (xpTiles != null) out.getObject("me").put("xpNotCounted", notCounted(pluginXp, eventId, userId));
+                        .put("waitingProof", pending(claims, EventRepository.ClaimKind.VERIFICATION) > 0)));
 
         DataArray teammates = DataArray.empty();
         if (teamEvent && me.teamId() != null) {
@@ -190,7 +252,7 @@ public class MemberEventsApi {
         }
         out.put("teammates", teammates);
 
-        List<Standing> standings = scored ? service.standings(guildId, eventId) : List.of();
+        List<Standing> standings = scored ? events.standings(guildId, eventId) : List.of();
         String subject = teamEvent ? (me.teamId() == null ? null : "t:" + me.teamId()) : "u:" + userId;
         Standing mineStanding = standings.stream().filter(s -> s.subject().equals(subject)).findFirst().orElse(null);
         EventStandings.Visibility visibility = EventStandings.of(DataObject.fromJson(event.config()));
@@ -229,22 +291,17 @@ public class MemberEventsApi {
         }
 
         DataArray submissions = DataArray.empty();
-        for (EventRepository.Claim c : repository.claimsOf(eventId, userId, SUBMISSIONS_SHOWN)) {
+        for (EventRepository.Claim c : claims) {
             String label = c.kind() == EventRepository.ClaimKind.VERIFICATION ? "Verification"
                     : objectives.stream().filter(o -> o.key().equals(c.objectiveKey())).map(o -> o.label()).findFirst().orElse(c.objectiveKey());
             submissions.add(DataObject.empty().put("id", Long.toString(c.id())).put("kind", c.kind().name()).put("label", label).put("status", c.status().name())
-                    .put("note", c.note()).put("decisionNote", c.decisionNote()).put("createdAt", c.createdAt().toString()));
+                    .put("note", c.note()).put("decisionNote", c.decisionNote()).put("createdAt", c.createdAt() == null ? null : c.createdAt().toString()));
         }
         out.put("submissions", submissions);
 
         out.put("prizes", prizes(event));
 
-        DataArray awards = DataArray.empty();
-        if (event.status() == Status.SCORING || event.status() == Status.DONE) {
-            service.awards(guildId, eventId).stream().filter(a -> a.userId() == userId).forEach(a -> awards.add(DataObject.empty()
-                    .put("place", a.place()).put("kind", a.kind().name()).put("description", a.description()).put("amount", a.amount()).put("status", a.status().name())));
-        }
-        out.put("awards", awards);
+        out.put("awards", awards(guildId, event, userId));
 
         out.put("channels", channels(guild, eventId, me, teamEvent));
         out.put("canSubmit", !me.waiting() && event.status() == Status.RUNNING);
@@ -263,29 +320,21 @@ public class MemberEventsApi {
         return labels.isEmpty() ? null : DataArray.fromCollection(labels);
     }
 
-    /** Whether the last XP pass listed this player as not counted (no RuneSync), so their XP tiles make no progress. */
-    static boolean notCounted(PluginXpTracker pluginXp, long eventId, long userId) {
-        return pluginXp != null && pluginXp.notCounted(eventId).map(n -> n.userIds().contains(userId)).orElse(false);
-    }
-
     /**
-     * How the event is won (T-649), when it isn't the usual "most points": the rules in words, and the prize draw (winners, seed and entries, so anyone
-     * can check it) once it has happened. Null for an event won on points, so the page looks as before. While the standings are hidden from players
-     * ({@code standingsShown} false) the entry list is left out too, as each entry carries a finished-tile count.
+     * How the event is won (T-649), when it isn't the usual "most points": the rules in words. Null for an event won on points, so the page looks as
+     * before. The draw itself is the hub's since T-941 (the event's page on RuneClans shows it with its seed and entries).
      */
     private DataObject win(Guild guild, long eventId, DataObject config, List<EventRepository.Team> teams, boolean standingsShown) {
         var rules = com.runeclans.bot.events.WinModes.of(config);
         if (rules.isDefault()) return null;
         DataArray lines = DataArray.empty();
         com.runeclans.bot.events.WinModes.describe(rules).forEach(lines::add);
-        var rounds = draws.rounds(eventId);
-        return DataObject.empty().put("mode", rules.mode().name()).put("rules", lines)
-                .put("draw", rounds.isEmpty() ? null : EventWinApi.drawJson(guild, teams, rounds, false, standingsShown));
+        return DataObject.empty().put("mode", rules.mode().name()).put("rules", lines).put("draw", (DataObject) null);
     }
 
     private DataArray prizes(Event event) {
         DataArray prizes = DataArray.empty();
-        for (var p : service.prizes(event.id())) {
+        for (var p : events.prizes(event.id())) {
             prizes.add(DataObject.empty().put("place", p.place()).put("placeTo", p.placeTo()).put("kind", p.kind().name()).put("description", p.description()).put("amount", p.amount()));
         }
         return prizes;
@@ -330,13 +379,38 @@ public class MemberEventsApi {
         }
     }
 
-    private DataObject one(long guildId, Event event, long userId) {
-        Participant me = repository.participant(event.id(), userId).orElseThrow();
+    /** The member's own prizes in a finished (or scoring) event, from the hub's list for the player. */
+    private DataArray awards(long guildId, Event event, long userId) {
+        DataArray awards = DataArray.empty();
+        if (event.status() != Status.SCORING && event.status() != Status.DONE) return awards;
+        for (DataObject a : events.awardsOf(guildId, event.id(), userId)) {
+            awards.add(DataObject.empty().put("place", a.getInt("place", 0)).put("kind", a.getString("kind", "")).put("description", a.getString("description", ""))
+                    .put("amount", a.getLong("amount", 0)).put("status", a.getString("status", "")));
+        }
+        return awards;
+    }
+
+    /** The event's id on the hub (a uuid), beside the bot's local {@code id}: what the website matches its own hub reads on, so an event isn't listed twice. */
+    /** The hub's id for an event the bot names by local id, or null when it isn't a hub event. Also the directory cards' ({@link HubEventsApi}). */
+    String hubIdOf(Event event) {
+        try {
+            return events.map().event(event.id()).map(r -> r.hubId().toString()).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static int pending(List<EventRepository.Claim> claims, EventRepository.ClaimKind kind) {
+        return (int) claims.stream().filter(c -> c.kind() == kind && c.status() == EventRepository.ClaimStatus.PENDING).count();
+    }
+
+    /** One of the member's events; {@code detailed} false lists it from what the hub's compact answer had, without further hub reads. */
+    private DataObject one(long guildId, Event event, Participant me, long userId, boolean detailed) {
         EventSettings settings = settingsOf(event);
-        String teamName = me.teamId() == null ? null : repository.teams(event.id()).stream().filter(t -> t.id() == me.teamId()).map(EventRepository.Team::name).findFirst().orElse(null);
+        String teamName = me.teamId() == null || !detailed ? null : events.teams(event.id()).stream().filter(t -> t.id() == me.teamId()).map(EventRepository.Team::name).findFirst().orElse(null);
 
         boolean scored = event.status() == Status.RUNNING || event.status() == Status.SCORING || event.status() == Status.DONE;
-        List<Standing> standings = scored ? service.standings(guildId, event.id()) : List.of();
+        List<Standing> standings = scored && detailed ? events.standings(guildId, event.id()) : List.of();
         String subject = event.scoringMode() == com.runeclans.bot.events.EventRules.ScoringMode.TEAM ? (me.teamId() == null ? null : "t:" + me.teamId()) : "u:" + userId;
         int rank = 0;
         Standing mineStanding = null;
@@ -349,21 +423,20 @@ public class MemberEventsApi {
         }
 
         DataArray objectives = DataArray.empty();
-        if (scored && !me.waiting()) {
-            for (var o : service.objectives(event.id())) {
+        if (scored && detailed && !me.waiting()) {
+            for (var o : events.objectives(event.id())) {
                 int done = mineStanding == null ? 0 : mineStanding.completions().getOrDefault(o.key(), 0);
                 objectives.add(DataObject.empty().put("key", o.key()).put("label", o.label()).put("points", o.points()).put("target", o.target())
                         .put("repeatLimit", o.repeatLimit()).put("done", done));
             }
         }
 
-        DataArray awards = DataArray.empty();
-        if (event.status() == Status.SCORING || event.status() == Status.DONE) {
-            service.awards(guildId, event.id()).stream().filter(a -> a.userId() == userId).forEach(a -> awards.add(DataObject.empty()
-                    .put("place", a.place()).put("kind", a.kind().name()).put("description", a.description()).put("amount", a.amount()).put("status", a.status().name())));
-        }
+        DataArray awards = detailed ? awards(guildId, event, userId) : DataArray.empty();
+        // proof waiting for staff only matters while the event can still take it
+        boolean open = event.status() == Status.SIGNUPS || event.status() == Status.RUNNING;
+        int pendingProof = open && detailed ? pending(events.claimsOf(guildId, event.id(), userId, SUBMISSIONS_SHOWN), EventRepository.ClaimKind.OBJECTIVE) : 0;
 
-        return DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("description", event.description()).put("template", event.template())
+        return DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description()).put("template", event.template())
                 .put("status", event.status().name()).put("scoringMode", event.scoringMode().name())
                 .put("waiting", me.waiting()).put("team", teamName)
                 .put("verification", DataObject.empty().put("required", settings.verification().required())
@@ -372,7 +445,7 @@ public class MemberEventsApi {
                         .put("instructions", settings.verification().required() ? EventRoster.askText(settings.verification()) : ""))
                 .put("buyIn", DataObject.empty().put("enabled", settings.buyIn().enabled()).put("amount", settings.buyIn().amount()).put("status", me.buyIn().name()))
                 .put("rank", rank).put("of", standings.size()).put("points", mineStanding == null ? 0 : mineStanding.points())
-                .put("objectives", objectives).put("pendingProof", repository.pendingClaimsFor(event.id(), userId)).put("awards", awards);
+                .put("objectives", objectives).put("pendingProof", pendingProof).put("awards", awards);
     }
 
     /** How many of the event's recaps and milestone posts a player is shown. */

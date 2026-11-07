@@ -1,6 +1,6 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.events.BingoBoardImage.TileView;
+import com.runeclans.bot.events.BingoBoardView.TileView;
 import com.runeclans.bot.internal.WikiCatalog;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
@@ -73,14 +73,5 @@ class BingoTilesTest {
         List<TileView> list = new ArrayList<>(Collections.nCopies(9, new TileView(1, "Nex: Torva boots", 50, false, 0, 0)));
         list.set(0, first);
         return list;
-    }
-
-    @Test
-    void aTileWithAPictureIsDrawnDifferentlyFromOneWithout() throws Exception {
-        byte[] plain = BingoBoardImage.render("t", "", 3, nine(new TileView(1, "Nex: Torva boots", 50, false, 0, 0)), "");
-        byte[] pictured = BingoBoardImage.render("t", "", 3, nine(new TileView(1, "Nex: Torva boots", 50, false, 0, 0, "torva_boots")), "");
-        assertFalse(Arrays.equals(plain, pictured));
-        assertArrayEquals(plain, BingoBoardImage.render("t", "", 3, nine(new TileView(1, "Nex: Torva boots", 50, false, 0, 0, "no_such_item")), ""),
-                "an unknown picture key draws exactly like no picture");
     }
 }

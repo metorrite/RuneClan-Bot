@@ -24,6 +24,9 @@ public final class BingoShapes {
     static final int GAP = 34;
     /** Room left around the shape inside the picture (the title is above, in the backdrop's header). */
     private static final int MARGIN = 80;
+    /** Where the title block ends and the board starts, and the room under the board, in picture pixels (the hub draws the picture, T-941; the geometry stays). */
+    static final int HEADER = 190;
+    static final int FOOTER = 116;
 
     /** What a shape can be sized to. {@code picture} is the size that keeps the painted picture, or 0 when the shape has none to keep (the tree). */
     public record Range(String id, String what, int min, int max, int picture) {}
@@ -94,13 +97,13 @@ public final class BingoShapes {
             names.add(tier == 0 ? "Apex" : tier == base - 1 ? "Base" : "Tier " + (base - tier));
         }
         int width = Math.max(760, base * (TILE + GAP) - GAP + 2 * MARGIN);
-        int height = BingoBackdrops.HEADER + base * (TILE + GAP) - GAP + BingoBackdrops.FOOTER;
+        int height = HEADER + base * (TILE + GAP) - GAP + FOOTER;
         List<Place> places = new ArrayList<>();
         for (int tier = 0; tier < base; tier++) {
             List<Integer> row = rows.get(tier);
             double rowWidth = row.size() * (TILE + GAP) - GAP;
             for (int p = 0; p < row.size(); p++) {
-                places.add(new Place(row.get(p), (width - rowWidth) / 2 + p * (TILE + GAP) + TILE / 2.0, BingoBackdrops.HEADER + tier * (TILE + GAP) + TILE / 2.0, false));
+                places.add(new Place(row.get(p), (width - rowWidth) / 2 + p * (TILE + GAP) + TILE / 2.0, HEADER + tier * (TILE + GAP) + TILE / 2.0, false));
             }
         }
         places.sort((a, b) -> Integer.compare(a.number(), b.number()));
@@ -131,7 +134,7 @@ public final class BingoShapes {
         }
         int lines = (tiles + PER_ROW - 1) / PER_ROW;
         int width = Math.max(760, PER_ROW * (TILE + GAP) - GAP + 2 * MARGIN);
-        int height = BingoBackdrops.HEADER + lines * (TILE + GAP) - GAP + BingoBackdrops.FOOTER;
+        int height = HEADER + lines * (TILE + GAP) - GAP + FOOTER;
         List<Place> places = new ArrayList<>();
         for (int n = 1; n <= tiles; n++) {
             int line = (n - 1) / PER_ROW;
@@ -139,7 +142,7 @@ public final class BingoShapes {
             // the trail winds: every other row runs back the other way
             int slot = line % 2 == 0 ? col : PER_ROW - 1 - col;
             double rowWidth = PER_ROW * (TILE + GAP) - GAP;
-            places.add(new Place(n, (width - rowWidth) / 2 + slot * (TILE + GAP) + TILE / 2.0, BingoBackdrops.HEADER + line * (TILE + GAP) + TILE / 2.0, false));
+            places.add(new Place(n, (width - rowWidth) / 2 + slot * (TILE + GAP) + TILE / 2.0, HEADER + line * (TILE + GAP) + TILE / 2.0, false));
         }
         // rows for the dashboard run from the top of the picture, which is where the trail starts, so they are the stretches in order
         return new Built(BingoLayout.PATH, tiles, width, height, places, rows, names, requires, depth, "A path of " + tiles + " tiles",
@@ -199,9 +202,9 @@ public final class BingoShapes {
         int radius = rings * RING_STEP;
         int side = 2 * (radius + TILE / 2) + 2 * MARGIN;
         int width = Math.max(760, side);
-        int height = BingoBackdrops.HEADER + side - 2 * MARGIN + BingoBackdrops.FOOTER;
+        int height = HEADER + side - 2 * MARGIN + FOOTER;
         double cx = width / 2.0;
-        double cy = BingoBackdrops.HEADER + radius + TILE / 2.0;
+        double cy = HEADER + radius + TILE / 2.0;
         List<Place> places = new ArrayList<>();
         for (int m = 1; m <= rings; m++) {
             int c = ringTiles(m);
@@ -245,7 +248,7 @@ public final class BingoShapes {
         }
         int widest = 1 << (levels - 1);
         int width = Math.max(760, widest * (TILE + GAP) - GAP + 2 * MARGIN);
-        int height = BingoBackdrops.HEADER + levels * (TILE + GAP) - GAP + BingoBackdrops.FOOTER;
+        int height = HEADER + levels * (TILE + GAP) - GAP + FOOTER;
         List<Place> places = new ArrayList<>();
         for (int level = 0; level < levels; level++) {
             List<Integer> row = rows.get(level);
@@ -253,7 +256,7 @@ public final class BingoShapes {
             double slot = (double) widest / row.size();
             for (int p = 0; p < row.size(); p++) {
                 double x = (width - (widest * (TILE + GAP) - GAP)) / 2 + (p * slot + slot / 2) * (TILE + GAP) - GAP / 2.0;
-                places.add(new Place(row.get(p), x, BingoBackdrops.HEADER + level * (TILE + GAP) + TILE / 2.0, false));
+                places.add(new Place(row.get(p), x, HEADER + level * (TILE + GAP) + TILE / 2.0, false));
             }
         }
         places.sort((a, b) -> Integer.compare(a.number(), b.number()));

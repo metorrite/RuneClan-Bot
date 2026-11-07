@@ -4,10 +4,11 @@ import com.runeclans.bot.clanprofile.ClanProfile;
 import com.runeclans.bot.clanprofile.ClanProfileRepository;
 import com.runeclans.bot.events.ClanVsClan;
 import com.runeclans.bot.events.EventListing;
-import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.events.EventProblem;
+import com.runeclans.bot.events.EventRules;
+import com.runeclans.bot.hubevents.HubEvents;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
@@ -28,14 +29,12 @@ public class DirectoryClanVsClanSection implements DirectoryRouteModule {
     static final int SHOWN = 10;
     private static final long TTL_MILLIS = 5 * 60_000L;
 
-    private final EventRepository events;
-    private final EventService service;
+    private final HubEvents events;
     private final ClanProfileRepository profiles;
     private final TtlCache cache = new TtlCache();
 
-    public DirectoryClanVsClanSection(EventRepository events, EventService service, ClanProfileRepository profiles) {
+    public DirectoryClanVsClanSection(HubEvents events, ClanProfileRepository profiles) {
         this.events = events;
-        this.service = service;
         this.profiles = profiles;
     }
 
@@ -52,7 +51,7 @@ public class DirectoryClanVsClanSection implements DirectoryRouteModule {
     /** The clan's finished open clan-vs-clan events, with its place among the clans (null when the host keeps the standings to staff). */
     DataArray history(long guildId) {
         DataArray out = DataArray.empty();
-        for (Event e : events.finishedClanVsClan(guildId, SHOWN * 3)) {
+        for (Event e : finishedClanVsClan(guildId)) {
             if (out.length() >= SHOWN) break;
             DataObject config = DataObject.fromJson(e.config());
             if (EventListing.takenDown(config)) continue;
@@ -62,7 +61,7 @@ public class DirectoryClanVsClanSection implements DirectoryRouteModule {
             Integer place = null;
             int clans = teams.size();
             if (EventListing.clanStandingsShown(e)) {
-                List<Standing> standings = service.standings(e.guildId(), e.id());
+                List<Standing> standings = events.standings(e.guildId(), e.id());
                 for (int i = 0; i < standings.size(); i++) if (standings.get(i).subject().equals("t:" + team)) place = i + 1;
                 clans = Math.max(clans, standings.size());
             }
@@ -72,5 +71,17 @@ public class DirectoryClanVsClanSection implements DirectoryRouteModule {
                     .put("hosted", e.guildId() == guildId));
         }
         return out;
+    }
+
+    /** The clan's finished, open clan-vs-clan events on the hub (the ones its own server hosted; T-941), newest first. A server with no hub clan has none. */
+    private List<Event> finishedClanVsClan(long guildId) {
+        try {
+            // the hub's list carries no settings, so the clan-vs-clan teams come from each event read in full
+            return events.events(guildId, List.of(EventRules.Status.DONE), SHOWN * 3).stream()
+                    .filter(e -> ClanVsClan.is(e.template()) && e.scope() == EventRules.Scope.PUBLIC)
+                    .map(e -> events.full(e).orElse(null)).filter(java.util.Objects::nonNull).toList();
+        } catch (EventProblem e) {
+            return List.of();
+        }
     }
 }

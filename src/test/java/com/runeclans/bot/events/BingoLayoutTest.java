@@ -2,7 +2,7 @@ package com.runeclans.bot.events;
 
 import com.runeclans.bot.events.BingoBoard.Board;
 import com.runeclans.bot.events.BingoBoard.Tile;
-import com.runeclans.bot.events.BingoBoardImage.TileView;
+import com.runeclans.bot.events.BingoBoardView.TileView;
 import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
@@ -48,9 +48,6 @@ class BingoLayoutTest {
                 }
                 assertTrue(s.icon()[0] >= s.bounds()[0] && s.icon()[0] + s.icon()[2] <= s.bounds()[0] + s.bounds()[2], "the icon sits inside its tile");
             }
-            BufferedImage image = l.image();
-            assertEquals(1600, image.getWidth());
-            assertEquals(1000, image.getHeight());
         }
     }
 
@@ -292,27 +289,5 @@ class BingoLayoutTest {
                 new EventScoring.Entry("u:1", "a", 1, t0.plusSeconds(20)));
         assertEquals("u:2", BingoBoardView.firstCompleters(List.of(o), log).get("a"), "u:2 reached 3 first");
         assertTrue(BingoBoardView.firstCompleters(List.of(o), List.of(new EventScoring.Entry("u:1", "a", 2, t0))).isEmpty(), "nobody has finished it");
-    }
-
-    @Test
-    void everyShapeDrawsAPictureTheSizeOfItsTemplateAndFinishedTilesChangeIt() throws Exception {
-        for (BingoLayout l : BingoLayout.all()) {
-            List<TileView> empty = new ArrayList<>();
-            List<TileView> partly = new ArrayList<>();
-            for (int i = 1; i <= l.tiles(); i++) {
-                empty.add(new TileView(i, "Kill Telos", 25, false, 0, 0));
-                partly.add(new TileView(i, "Kill Telos", 25, i == 1, i == 1 ? 2 : 0, 5, null, "Metorrite", i == 2));
-            }
-            BufferedImage a = ImageIO.read(new ByteArrayInputStream(BingoBoardImage.render(l, empty)));
-            BufferedImage b = ImageIO.read(new ByteArrayInputStream(BingoBoardImage.render(l, partly)));
-            assertEquals(1600, a.getWidth());
-            assertEquals(1000, a.getHeight());
-            int[] slot = l.slots().get(0).bounds();
-            int x = slot[0] + 6;
-            int y = slot[1] + slot[3] / 2;
-            assertNotEquals(a.getRGB(x, y), b.getRGB(x, y), l.id() + ": a finished tile is tinted");
-            assertThrows(IllegalArgumentException.class, () -> BingoBoardImage.render(l, empty.subList(0, 3)));
-        }
-        assertEquals(Set.of(BingoLayout.PATH, BingoLayout.PYRAMID, BingoLayout.CONVERGENCE, BingoLayout.TREE), new HashSet<>(BingoLayout.ids()));
     }
 }

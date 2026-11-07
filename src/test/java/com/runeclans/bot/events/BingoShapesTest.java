@@ -1,6 +1,6 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.events.BingoBoardImage.TileView;
+import com.runeclans.bot.events.BingoBoardView.TileView;
 import com.runeclans.bot.events.EventRules.ObjectiveSpec;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
@@ -50,7 +50,7 @@ class BingoShapesTest {
             // the tiles fit on the picture and never overlap
             for (var p : b.places()) {
                 assertTrue(p.x() - BingoShapes.TILE / 2.0 >= 0 && p.x() + BingoShapes.TILE / 2.0 <= b.width(), what + ": tile " + p.number() + " off the side");
-                assertTrue(p.y() - BingoShapes.TILE / 2.0 >= BingoBackdrops.HEADER - 1 && p.y() + BingoShapes.TILE / 2.0 <= b.height() - BingoBackdrops.FOOTER + 1, what + ": tile " + p.number() + " off the top or bottom");
+                assertTrue(p.y() - BingoShapes.TILE / 2.0 >= BingoShapes.HEADER - 1 && p.y() + BingoShapes.TILE / 2.0 <= b.height() - BingoShapes.FOOTER + 1, what + ": tile " + p.number() + " off the top or bottom");
             }
             for (int i = 0; i < tiles; i++) {
                 for (int j = i + 1; j < tiles; j++) {
@@ -121,27 +121,6 @@ class BingoShapesTest {
         for (int i = 1; i <= layout.tiles(); i++) tiles.add(new BingoBoard.Tile("t" + i, "Tile " + i, 10, 1));
         var bonuses = BingoBoard.layoutBonuses(layout, tiles, 50, 250);
         assertEquals(6, bonuses.size());
-    }
-
-    @Test
-    void everySizeDrawsInBothLooks() throws Exception {
-        for (int[] at : allSizes()) {
-            if (at[1] % 2 == 0 && at[1] > 4) continue; // every other size keeps the run short; the extremes and odd sizes are all covered
-            var range = BingoShapes.RANGES.get(at[0]);
-            var layout = BingoLayout.of(range.id(), at[1]).orElseThrow();
-            if (!layout.generated()) continue;
-            List<TileView> tiles = new ArrayList<>();
-            var pool = BingoBoard.dropsPool();
-            for (int i = 0; i < layout.tiles(); i++) tiles.add(new TileView(i + 1, pool.get(i % pool.size()).label(), 50, i % 5 == 0, 0, 0, null, null, i % 3 == 1));
-            for (String look : BingoLooks.ids()) {
-                DataObject config = DataObject.fromJson("{\"board\":{\"layout\":\"" + range.id() + "\",\"shapeSize\":" + at[1] + ",\"look\":\"" + look + "\"}}");
-                byte[] png = BingoBoardImage.render(config, "Winter Bingo", "Your board", "6 tiles done", tiles);
-                var image = ImageIO.read(new ByteArrayInputStream(png));
-                assertEquals(layout.canvasWidth(), image.getWidth(), range.id() + " " + at[1]);
-                assertEquals(layout.canvasHeight(), image.getHeight(), range.id() + " " + at[1]);
-                assertTrue(png.length < 4_000_000, range.id() + " " + at[1] + " is " + png.length + " bytes");
-            }
-        }
     }
 
     @Test

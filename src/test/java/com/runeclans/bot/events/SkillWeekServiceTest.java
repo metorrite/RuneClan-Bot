@@ -1,329 +1,117 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.events.EventRules.Status;
-import com.runeclans.bot.events.SkillWeekRepository.Settings;
-import com.runeclans.bot.events.SkillWeekRepository.Week;
+import com.runeclans.bot.hubevents.HubEventClient;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.runeclans.RuneClansHubClient;
-import com.runeclans.bot.member.MemberProfileRepository;
-import com.runeclans.bot.plugin.PluginVisibilityRepository;
-import com.runeclans.bot.runescape.PlayerLink;
-import com.runeclans.bot.runescape.PlayerLinkService;
+import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mockito;
 
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.OptionalInt;
-import java.util.OptionalLong;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** Skill of the week (T-541): opening the week's competition from the rota, once, and only where it is switched on. */
+/**
+ * Skill of the week is the hub's (T-941): the bot reads the clan's week as the server itself, saves the setting as the staff member, takes a member's
+ * vote and auto-enrol choice as them, shows the public widget with nobody named, and has nothing for a server without a clan on RuneClans.
+ */
 class SkillWeekServiceTest {
-    private static final long GUILD = Long.parseLong("7".repeat(18));
-    private static final long ADMIN = Long.parseLong("5".repeat(18));
-    private static final Instant NOW = Instant.parse("2026-10-27T13:00:00Z");
-    private static final Instant MONDAY = Instant.parse("2026-10-26T00:00:00Z");
+    private static final long G = 1L;
+    private static final UUID CLAN = UUID.randomUUID();
 
-    private final SkillWeekRepository weeks = Mockito.mock(SkillWeekRepository.class);
-    private final EventService events = Mockito.mock(EventService.class);
-    private final EventRepository repository = Mockito.mock(EventRepository.class);
-    private final RuneClansHubClient hub = Mockito.mock(RuneClansHubClient.class);
-    private final PlayerLinkService links = Mockito.mock(PlayerLinkService.class);
-    private final MemberProfileRepository profiles = Mockito.mock(MemberProfileRepository.class);
-    private final PluginVisibilityRepository plugins = Mockito.mock(PluginVisibilityRepository.class);
-    private final com.runeclans.bot.discord.jobs.DiscordOutbox outbox = Mockito.mock(com.runeclans.bot.discord.jobs.DiscordOutbox.class);
-    private final SkillWeekService service = new SkillWeekService(weeks, events, repository, Mockito.mock(PluginXpTracker.class), hub, links, profiles, plugins, outbox)
-            .withClock(Clock.fixed(NOW, ZoneOffset.UTC));
+    /** A scripted hub, recording each call's method, path and headers. */
+    private final List<String> calls = new ArrayList<>();
+    private final Map<String, DataObject> answers = new LinkedHashMap<>();
+    private SkillWeekService service;
 
-    @Test
-    void opensTheNextSkillOfTheRotaAsAWholeWeekRuneSyncCompetition() {
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9, 15, 25), 4, ADMIN));
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.empty());
-        when(weeks.claim(GUILD, MONDAY)).thenReturn(OptionalInt.of(15));
-        when(events.createWholeSpanEvent(eq(GUILD), eq(ADMIN), any())).thenReturn(42L);
+    @BeforeEach
+    void setUp() {
+        HubEventClient.Hub hub = new HubEventClient.Hub() {
+            @Override
+            public RuneClansHubClient.Answer call(String method, String path, String body, Map<String, String> headers) {
+                calls.add(method + " " + path + " " + headers.getOrDefault(HubEventClient.ACTOR_HEADER, "-") + " " + headers.getOrDefault(HubEventClient.STAFF_HEADER, "-") + (body == null ? "" : " " + body));
+                String key = method + " " + path.replaceAll("\\?.*", "");
+                return answers.containsKey(key) ? new RuneClansHubClient.Answer(200, answers.get(key), null)
+                        : new RuneClansHubClient.Answer(409, DataObject.empty().put("message", "This clan doesn't vote."), null);
+            }
 
-        assertEquals(OptionalLong.of(42), service.open(GUILD, NOW));
-        ArgumentCaptor<EventService.EventInput> input = ArgumentCaptor.forClass(EventService.EventInput.class);
-        verify(events).createWholeSpanEvent(eq(GUILD), eq(ADMIN), input.capture());
-        assertEquals(CompetitionTemplate.KEY, input.getValue().template());
-        assertEquals(MONDAY, input.getValue().startsAt());
-        assertEquals(Instant.parse("2026-11-01T23:59:59Z"), input.getValue().endsAt());
-        DataObject config = input.getValue().config();
-        assertEquals(15, CompetitionTemplate.skillOf(config));
-        assertTrue(CompetitionTemplate.countsFromPlugin(config));
-        assertTrue(CompetitionTemplate.countsWholeSpan(config));
-        verify(weeks).setEvent(GUILD, MONDAY, 42);
-        verify(events).moveStage(GUILD, 42, Status.RUNNING);
+            @Override
+            public byte[] bytes(String path, Map<String, String> headers) {
+                return null;
+            }
+        };
+        HubEvents events = mock(HubEvents.class);
+        when(events.client()).thenReturn(new HubEventClient(hub, true));
+        when(events.enabled()).thenReturn(true);
+        when(events.clanOf(G)).thenReturn(Optional.of(CLAN));
+        when(events.clanOf(2L)).thenReturn(Optional.empty());
+        when(events.self(G)).thenReturn(Actor.of(77L, G, true));
+        service = new SkillWeekService(events);
+        DataObject standing = DataObject.empty().put("personId", "p1").put("name", "Alice").put("xp", 12_345).put("mine", true);
+        answers.put("GET /v1/clans/" + CLAN + "/skill-week", DataObject.empty().put("enabled", true).put("autoEnrol", true).put("optedOut", true).put("announceChannelId", "555")
+                .put("current", DataObject.empty().put("skill", "Mining").put("standings", DataArray.empty().add(standing)))
+                .put("last", DataObject.empty().put("skill", "Fishing").put("winners", DataArray.empty().add(DataObject.fromJson(standing.toString()))))
+                .put("vote", DataObject.empty().put("open", true).put("mine", 3)));
+        answers.put("POST /v1/clans/" + CLAN + "/skill-week", DataObject.empty().put("enabled", false));
+        answers.put("POST /v1/clans/" + CLAN + "/skill-week/auto", DataObject.empty().put("autoEnrol", true).put("optedOut", false));
     }
 
     @Test
-    void offAnEmptyRotaOrAnOpenWeekOpensNothing() {
-        when(weeks.settings(GUILD)).thenReturn(Settings.OFF);
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(), 0, ADMIN));
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 0, ADMIN));
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.of(new Week(GUILD, MONDAY, 9, 1L, null, null)));
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        verify(weeks, never()).claim(anyLong(), any());
-        verify(events, never()).createWholeSpanEvent(anyLong(), anyLong(), any());
+    void theDashboardViewIsReadAsTheServerItselfWithTheShownCountClamped() {
+        DataObject view = service.view(G, 999);
+        assertTrue(view.getBoolean("available"));
+        assertEquals("Alice", view.getObject("current").getArray("standings").getObject(0).getString("name"), "staff see every name");
+        assertEquals("GET /v1/clans/" + CLAN + "/skill-week?shown=" + SkillWeekService.MAX_SHOWN + " 77 " + G, calls.get(0));
     }
 
     @Test
-    void aCompetitionThatCantBeMadeGivesTheWeekBackForTheNextPass() {
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 0, ADMIN));
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.empty());
-        when(weeks.claim(GUILD, MONDAY)).thenReturn(OptionalInt.of(9));
-        when(events.createWholeSpanEvent(eq(GUILD), eq(ADMIN), any())).thenThrow(new EventProblem(409, "Too many unfinished events."));
-
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        verify(weeks).release(GUILD, MONDAY);
-        verify(weeks, never()).setEvent(anyLong(), any(), anyLong());
+    void thePublicWidgetNamesNobodyAndShowsNoXp() {
+        DataObject view = service.publicView(G, 5);
+        assertFalse(view.hasKey("announceChannelId"));
+        DataObject row = view.getObject("current").getArray("standings").getObject(0);
+        assertEquals("A member", row.getString("name"));
+        assertTrue(row.isNull("xp"));
+        assertFalse(row.getBoolean("mine"));
+        assertEquals("A member", view.getObject("last").getArray("winners").getObject(0).getString("name"));
     }
 
     @Test
-    void aDatabaseFailureMakingItGivesTheWeekBackToo() {
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 0, ADMIN));
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.empty());
-        when(weeks.claim(GUILD, MONDAY)).thenReturn(OptionalInt.of(9));
-        when(events.createWholeSpanEvent(eq(GUILD), eq(ADMIN), any())).thenThrow(new RuntimeException("database down"));
-
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        verify(weeks).release(GUILD, MONDAY);
+    void savingGoesAsTheStaffMemberWhoPressedSave() {
+        DataObject out = service.save(G, 42L, DataObject.empty().put("enabled", false));
+        assertFalse(out.getBoolean("enabled"));
+        assertTrue(calls.get(0).startsWith("POST /v1/clans/" + CLAN + "/skill-week 42 " + G), calls.get(0));
     }
 
     @Test
-    void aCompetitionTheWeekCantPointAtIsCancelledAndTheWeekGivenBack() {
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 0, ADMIN));
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.empty());
-        when(weeks.claim(GUILD, MONDAY)).thenReturn(OptionalInt.of(9));
-        when(events.createWholeSpanEvent(eq(GUILD), eq(ADMIN), any())).thenReturn(42L);
-        Mockito.doThrow(new RuntimeException("database down")).when(weeks).setEvent(GUILD, MONDAY, 42);
-
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        verify(events).moveStage(GUILD, 42, Status.CANCELLED);
-        verify(weeks).release(GUILD, MONDAY);
-        verify(events, never()).moveStage(GUILD, 42, Status.RUNNING);
+    void aMembersChoicesAndVoteGoAsThemselves() {
+        DataObject auto = service.autoView(G, 42L);
+        assertTrue(auto.getBoolean("autoEnrol"));
+        assertTrue(auto.getBoolean("optedOut"));
+        assertTrue(calls.get(0).contains("skill-week?shown=1 42 -"), calls.get(0));
+        DataObject back = service.setOptOut(G, 42L, false);
+        assertFalse(back.getBoolean("optedOut"));
+        assertTrue(calls.get(1).startsWith("POST /v1/clans/" + CLAN + "/skill-week/auto 42 -"), calls.get(1));
+        assertEquals(3, service.voteView(G, 42L).getInt("mine"));
+        EventProblem refused = assertThrows(EventProblem.class, () -> service.castVote(G, 42L, 3));
+        assertEquals(409, refused.status());
     }
 
     @Test
-    void aCompetitionThatDidntStartIsStartedOnTheNextPassAndCancelledIfTheWeekEndsFirst() {
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 1, ADMIN));
-        Week week = new Week(GUILD, MONDAY, 9, 42L, null, null);
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.of(week));
-        when(repository.event(GUILD, 42)).thenReturn(Optional.of(event(Status.DRAFT)));
-
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        verify(events).moveStage(GUILD, 42, Status.RUNNING);
-        verify(weeks, never()).claim(anyLong(), any());
-
-        when(weeks.close(eq(GUILD), eq(MONDAY), any())).thenReturn(true);
-        assertEquals(List.of(), service.close(week).orElseThrow());
-        verify(events).moveStage(GUILD, 42, Status.CANCELLED);
-        verify(events, never()).moveStage(GUILD, 42, Status.DONE);
-    }
-
-    @Test
-    void onlyRuneSyncsGainsCountNotAnOrganisersCorrection() {
-        when(repository.progress(42)).thenReturn(List.of(progress(1, EventRules.Source.IMPORT, 5_000), progress(1, EventRules.Source.MANUAL, 90_000),
-                progress(2, EventRules.Source.IMPORT, 7_000)));
-        assertEquals(java.util.Map.of(1L, 5_000L, 2L, 7_000L), service.xpByUser(42));
-    }
-
-    private static EventRepository.Event event(Status status) {
-        return new EventRepository.Event(42, GUILD, CompetitionTemplate.KEY, "Skill of the week", "", status, null, EventRules.ScoringMode.INDIVIDUAL, MONDAY,
-                SkillWeekRules.weekEnd(MONDAY), 0, "{\"skillId\":9,\"xpSource\":\"plugin\",\"wholeSpan\":true}", ADMIN, MONDAY, null, false);
-    }
-
-    private static EventRepository.Progress progress(long userId, EventRules.Source source, long amount) {
-        return new EventRepository.Progress(1, 42, CompetitionTemplate.OBJECTIVE_KEY, userId, null, amount, source, "k", null, null, MONDAY);
-    }
-
-    @Test
-    void theSweepClosesOnlyWeeksThatAreOverAndOpensThisOne() {
-        Week last = new Week(GUILD, MONDAY.minusSeconds(7 * 86_400), 9, null, null, null);
-        Week current = new Week(GUILD, MONDAY, 15, null, null, null);
-        when(weeks.unclosedBefore(any())).thenReturn(List.of(last, current));
-        when(weeks.enabledGuilds()).thenReturn(List.of(GUILD));
-        when(weeks.settings(GUILD)).thenReturn(Settings.OFF);
-        when(weeks.close(eq(GUILD), any(), any())).thenReturn(true);
-
-        service.sweep();
-        verify(weeks).close(GUILD, last.start(), "[]");
-        verify(weeks, never()).close(eq(GUILD), eq(MONDAY), any());
-        assertFalse(service.available());
-    }
-
-    @Test
-    void theClanWebsiteNamesNobodyWhoHidThemselvesFromTheRankings() {
-        long shown = Long.parseLong("1".repeat(18));
-        long hiddenName = Long.parseLong("2".repeat(18));
-        long hiddenLink = Long.parseLong("3".repeat(18));
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 1, ADMIN));
-        when(weeks.recent(GUILD, 4)).thenReturn(List.of(new Week(GUILD, MONDAY, 9, 42L, null, null),
-                new Week(GUILD, MONDAY.minusSeconds(7 * 86_400), 9, 41L, MONDAY, "[{\"rank\":1,\"userId\":\"" + hiddenName + "\",\"xp\":900}]")));
-        when(repository.progress(42)).thenReturn(List.of(progress(shown, EventRules.Source.IMPORT, 3_000), progress(hiddenName, EventRules.Source.IMPORT, 2_000),
-                progress(hiddenLink, EventRules.Source.IMPORT, 1_000)));
-        when(links.getLinksForUser(GUILD, shown)).thenReturn(List.of(link(shown, "Shown")));
-        when(links.getLinksForUser(GUILD, hiddenName)).thenReturn(List.of(link(hiddenName, "Hidden Name")));
-        when(links.getLinksForUser(GUILD, hiddenLink)).thenReturn(List.of(link(hiddenLink, "Hidden Link")));
-        when(profiles.hiddenRsns(GUILD, true)).thenReturn(Set.of("hidden name"));
-        when(profiles.hiddenDiscordUsers(GUILD)).thenReturn(Set.of(hiddenLink));
-        when(plugins.showToClan(anyLong())).thenReturn(true);
-
-        DataObject site = service.publicView(GUILD, 10);
-        assertEquals(List.of("Shown", "A member", "A member"), names(site.getObject("current").getArray("standings")));
-        assertEquals(List.of("A member"), names(site.getObject("last").getArray("winners")));
-        assertEquals(2_000, site.getObject("current").getArray("standings").getObject(1).getLong("xp"));
-
-        DataObject dashboard = service.view(GUILD, 10);
-        assertEquals(List.of("Shown", "Hidden Name", "Hidden Link"), names(dashboard.getObject("current").getArray("standings")), "organisers see who it is");
-    }
-
-    private static List<String> names(net.dv8tion.jda.api.utils.data.DataArray rows) {
-        List<String> out = new java.util.ArrayList<>();
-        for (int i = 0; i < rows.length(); i++) out.add(rows.getObject(i).getString("name"));
-        return out;
-    }
-
-    private static PlayerLink link(long userId, String rsn) {
-        return new PlayerLink(1, GUILD, userId, rsn, "test", null, null);
-    }
-
-    @Test
-    void aWeekLeftWithoutItsCompetitionByARestartIsGivenBackAndOpenedAgain() {
-        // read before the claim is given back: position 1 (15) is already past this week's skill (9)
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9, 15), 1, ADMIN));
-        when(weeks.week(GUILD, MONDAY)).thenReturn(Optional.of(new Week(GUILD, MONDAY, 9, null, null, null)));
-        // claimed only a moment ago: another pass may still be making it
-        assertTrue(service.open(GUILD, NOW).isEmpty());
-        verify(weeks).releaseStale(GUILD, MONDAY, NOW.minus(SkillWeekService.STALE_CLAIM));
-        verify(weeks, never()).claim(anyLong(), any());
-
-        when(weeks.releaseStale(GUILD, MONDAY, NOW.minus(SkillWeekService.STALE_CLAIM))).thenReturn(true);
-        EventRepository.Event orphan = new EventRepository.Event(40, GUILD, CompetitionTemplate.KEY, SkillWeekRules.eventName(9, MONDAY), "", Status.DRAFT, null,
-                EventRules.ScoringMode.INDIVIDUAL, MONDAY, SkillWeekRules.weekEnd(MONDAY), 0, "{}", ADMIN, MONDAY, null, false);
-        when(repository.events(GUILD, List.of(Status.DRAFT), 50)).thenReturn(List.of(orphan));
-        when(weeks.claim(GUILD, MONDAY)).thenReturn(OptionalInt.of(9));
-        when(events.createWholeSpanEvent(eq(GUILD), eq(ADMIN), any())).thenReturn(42L);
-        assertEquals(OptionalLong.of(42), service.open(GUILD, NOW));
-        verify(events).moveStage(GUILD, 40, Status.CANCELLED);
-        verify(weeks).setEvent(GUILD, MONDAY, 42);
-        ArgumentCaptor<EventService.EventInput> input = ArgumentCaptor.forClass(EventService.EventInput.class);
-        verify(events).createWholeSpanEvent(eq(GUILD), eq(ADMIN), input.capture());
-        assertEquals(9, CompetitionTemplate.skillOf(input.getValue().config()), "the week opens again in the skill the claim gives, not the stale read's");
-    }
-
-    @Test
-    void aCompetitionThatCantBeFinishedYetLeavesTheWeekOpenForTheNextPass() {
-        Week week = new Week(GUILD, MONDAY.minusSeconds(7 * 86_400), 9, 42L, null, null);
-        EventRepository.Event scoring = new EventRepository.Event(42, GUILD, CompetitionTemplate.KEY, "Skill of the week", "", Status.SCORING, null,
-                EventRules.ScoringMode.INDIVIDUAL, week.start(), SkillWeekRules.weekEnd(week.start()), 0, "{}", ADMIN, week.start(), null, false);
-        when(repository.event(GUILD, 42)).thenReturn(Optional.of(scoring));
-        when(repository.progress(42)).thenReturn(List.of(progress(1, EventRules.Source.IMPORT, 5_000)));
-        Mockito.doThrow(new RuntimeException("database down")).when(events).moveStage(GUILD, 42, Status.DONE);
-
-        assertTrue(service.close(week).isEmpty());
-        verify(weeks, never()).close(anyLong(), any(), any());
-
-        Mockito.reset(events);
-        assertEquals(1, service.close(week).orElseThrow().size());
-        verify(events).moveStage(GUILD, 42, Status.DONE);
-        verify(weeks).close(eq(GUILD), eq(week.start()), any());
-    }
-
-    @Test
-    void theClanWebsiteNamesAndShowsTheXpOfOnlyThoseWhoChoseToShowTheirRuneSyncActivity() {
-        long optedIn = Long.parseLong("1".repeat(18));
-        long notOptedIn = Long.parseLong("2".repeat(18));
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 1, ADMIN));
-        when(weeks.recent(GUILD, 4)).thenReturn(List.of(new Week(GUILD, MONDAY, 9, 42L, null, null),
-                new Week(GUILD, MONDAY.minusSeconds(7 * 86_400), 9, 41L, MONDAY, "[{\"rank\":1,\"userId\":\"" + notOptedIn + "\",\"xp\":900}]")));
-        when(repository.progress(42)).thenReturn(List.of(progress(notOptedIn, EventRules.Source.IMPORT, 1_284_310), progress(optedIn, EventRules.Source.IMPORT, 2_000)));
-        when(links.getLinksForUser(GUILD, optedIn)).thenReturn(List.of(link(optedIn, "Shown")));
-        when(links.getLinksForUser(GUILD, notOptedIn)).thenReturn(List.of(link(notOptedIn, "Axley")));
-        when(plugins.showToClan(optedIn)).thenReturn(true); // the other never switched it on
-
-        DataObject site = service.publicView(GUILD, 10);
-        var standings = site.getObject("current").getArray("standings");
-        assertEquals(List.of("A member", "Shown"), names(standings));
-        assertTrue(standings.getObject(0).isNull("xp"), "no XP for a member who didn't choose to show it");
-        assertEquals(2_000, standings.getObject(1).getLong("xp"));
-        var winners = site.getObject("last").getArray("winners");
-        assertEquals(List.of("A member"), names(winners));
-        assertTrue(winners.getObject(0).isNull("xp"));
-        assertFalse(site.toString().contains("Axley"));
-
-        DataObject dashboard = service.view(GUILD, 10);
-        assertEquals(List.of("Axley", "Shown"), names(dashboard.getObject("current").getArray("standings")), "organisers see who it is");
-    }
-
-    @Test
-    void theClanWebsiteShowsNoStandingsTheCompetitionKeepsToStaffOrHidesUntilItEnds() {
-        long player = Long.parseLong("1".repeat(18));
-        when(weeks.settings(GUILD)).thenReturn(new Settings(true, List.of(9), 1, ADMIN));
-        when(weeks.recent(GUILD, 4)).thenReturn(List.of(new Week(GUILD, MONDAY, 9, 42L, null, null),
-                new Week(GUILD, MONDAY.minusSeconds(7 * 86_400), 9, 41L, MONDAY, "[{\"rank\":1,\"userId\":\"" + player + "\",\"xp\":900}]")));
-        when(repository.progress(42)).thenReturn(List.of(progress(player, EventRules.Source.IMPORT, 2_000)));
-        when(plugins.showToClan(player)).thenReturn(true);
-        when(links.getLinksForUser(GUILD, player)).thenReturn(List.of(link(player, "Shown")));
-        when(repository.event(GUILD, 42)).thenReturn(Optional.of(withStandings(42, Status.RUNNING, "HIDDEN_UNTIL_END")));
-        when(repository.event(GUILD, 41)).thenReturn(Optional.of(withStandings(41, Status.DONE, "HIDDEN_UNTIL_END")));
-
-        DataObject site = service.publicView(GUILD, 10);
-        assertTrue(site.getObject("current").getBoolean("hidden"));
-        assertEquals(0, site.getObject("current").getArray("standings").length());
-        assertFalse(site.getObject("last").getBoolean("hidden"), "hidden until the end: shown once it ended");
-        assertEquals(List.of("Shown"), names(site.getObject("last").getArray("winners")));
-
-        when(repository.event(GUILD, 41)).thenReturn(Optional.of(withStandings(41, Status.DONE, "STAFF")));
-        site = service.publicView(GUILD, 10);
-        assertTrue(site.getObject("last").getBoolean("hidden"));
-        assertEquals(0, site.getObject("last").getArray("winners").length());
-
-        DataObject dashboard = service.view(GUILD, 10);
-        assertFalse(dashboard.getObject("current").getBoolean("hidden"), "staff always see them");
-        assertEquals(1, dashboard.getObject("current").getArray("standings").length());
-    }
-
-    private static EventRepository.Event withStandings(long id, Status status, String visibility) {
-        return new EventRepository.Event(id, GUILD, CompetitionTemplate.KEY, "Skill of the week", "", status, null, EventRules.ScoringMode.INDIVIDUAL, MONDAY,
-                SkillWeekRules.weekEnd(MONDAY), 0, "{\"skillId\":9,\"standings\":{\"visibility\":\"" + visibility + "\"}}", ADMIN, MONDAY, null, false);
-    }
-
-    @Test
-    void aCancelledCompetitionClosesWithNoWinners() {
-        Week week = new Week(GUILD, MONDAY.minusSeconds(7 * 86_400), 9, 42L, null, null);
-        when(repository.event(GUILD, 42)).thenReturn(Optional.of(event(Status.CANCELLED)));
-        when(repository.progress(42)).thenReturn(List.of(progress(1, EventRules.Source.IMPORT, 5_000)));
-
-        assertEquals(List.of(), service.close(week).orElseThrow());
-        verify(weeks).close(GUILD, week.start(), "[]");
-        verify(events, never()).moveStage(anyLong(), anyLong(), any());
-    }
-
-    @Test
-    void theSweepOpensNoWeekInAServerTheBotLeft() {
-        when(weeks.unclosedBefore(any())).thenReturn(List.of());
-        when(weeks.enabledGuilds()).thenReturn(List.of(GUILD));
-
-        service.sweep(guildId -> false);
-        verify(weeks, never()).settings(GUILD);
-        verify(events, never()).createWholeSpanEvent(anyLong(), anyLong(), any());
+    void aServerWithoutAClanOnRuneClansHasNoSkillOfTheWeek() {
+        EventProblem none = assertThrows(EventProblem.class, () -> service.view(2L, 5));
+        assertEquals(409, none.status());
+        assertTrue(calls.isEmpty());
     }
 }

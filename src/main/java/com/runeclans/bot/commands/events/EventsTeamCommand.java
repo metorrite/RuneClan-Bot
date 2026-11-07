@@ -8,8 +8,9 @@ import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventRoster;
 import com.runeclans.bot.events.EventRules.ScoringMode;
-import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventTeams;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.events.TeamBuilder;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.permission.AdminRoleFilter;
@@ -37,8 +38,9 @@ import java.util.Optional;
 /**
  * {@code /events team ...}: building an event's teams from Discord, for staff and the event's own organisers. {@code create}, {@code rename} and {@code delete}
  * manage the teams themselves, {@code assign} and {@code unassign} put players on them, {@code captain} names a team's captain, {@code list} shows who is where and
- * who still needs a team, and {@code finalise} / {@code reopen} call the teams final or take that back. It is the same engine and rules as the website's team
- * builder, so a player who hasn't passed the verification the event needs can't be put on a team until an organiser verifies or waives them.
+ * who still needs a team, and {@code finalise} / {@code reopen} call the teams final or take that back. The teams are the hub's ({@link HubEvents}, T-934), the
+ * same the website's team builder edits, so a player who hasn't passed the verification the event needs can't be put on a team until an organiser verifies or
+ * waives them.
  */
 @Command
 public class EventsTeamCommand {
@@ -52,16 +54,18 @@ public class EventsTeamCommand {
     private static final int BUDGET = 3000;
     private static final int HEADINGS_BUDGET = 3300;
 
-    private final EventService service;
+    private final HubEvents service;
     private final EventTeams eventTeams;
-    private final EventRepository repository;
     private final AdminRoleFilter adminRoleFilter;
 
-    public EventsTeamCommand(EventService service, EventTeams eventTeams, EventRepository repository, AdminRoleFilter adminRoleFilter) {
+    public EventsTeamCommand(HubEvents service, EventTeams eventTeams, AdminRoleFilter adminRoleFilter) {
         this.service = service;
         this.eventTeams = eventTeams;
-        this.repository = repository;
         this.adminRoleFilter = adminRoleFilter;
+    }
+
+    private Actor actor(GuildSlashEvent event) {
+        return Actor.of(event.getUser().getIdLong(), event.getGuild().getIdLong(), isStaff(event.getGuild(), event.getMember()));
     }
 
     // ---------- the teams ----------
@@ -74,7 +78,7 @@ public class EventsTeamCommand {
         Event e = organised(event, eventId);
         if (e == null) return;
         try {
-            service.addTeam(event.getGuild().getIdLong(), eventId, name, captain == null ? null : captain.getIdLong());
+            service.addTeam(event.getGuild().getIdLong(), eventId, name, captain == null ? null : captain.getIdLong(), actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, Text.of(event, "events.team_added_to", name.strip(), e.name(), (captain == null ? "" : Text.of(event, "events.team_captain_suffix", captain.getAsMention()))),
                     Text.of(event, "events.put_players_on_it_with_events"));
         } catch (EventProblem p) {
@@ -91,7 +95,7 @@ public class EventsTeamCommand {
         if (e == null) return;
         try {
             EventRepository.Team found = teamNamed(eventId, team);
-            service.renameTeam(event.getGuild().getIdLong(), eventId, found.id(), newName);
+            service.renameTeam(event.getGuild().getIdLong(), eventId, found.id(), newName, actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, Text.of(event, "events.is_now", found.name(), newName.strip()));
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, refusal(p));
@@ -106,8 +110,8 @@ public class EventsTeamCommand {
         if (e == null) return;
         try {
             EventRepository.Team found = teamNamed(eventId, team);
-            long members = repository.participants(eventId).stream().filter(p -> p.teamId() != null && p.teamId() == found.id()).count();
-            service.removeTeam(event.getGuild().getIdLong(), eventId, found.id());
+            long members = service.participants(eventId).stream().filter(p -> p.teamId() != null && p.teamId() == found.id()).count();
+            service.removeTeam(event.getGuild().getIdLong(), eventId, found.id(), actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, Text.of(event, "events.team_was_removed_from", found.name(), e.name()),
                     members == 0 ? Text.of(event, "events.it_had_no_players") : Text.of(event, members == 1 ? "events.its_one_player_without_a_team" : "events.its_players_without_a_team", members));
         } catch (EventProblem p) {
@@ -126,7 +130,7 @@ public class EventsTeamCommand {
         if (e == null) return;
         try {
             EventRepository.Team found = teamNamed(eventId, team);
-            service.setTeam(event.getGuild().getIdLong(), eventId, player.getIdLong(), found.id());
+            service.setTeam(event.getGuild().getIdLong(), eventId, player.getIdLong(), found.id(), actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, Text.of(event, "events.is_on_in", player.getAsMention(), found.name(), e.name()));
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, refusal(p));
@@ -140,7 +144,7 @@ public class EventsTeamCommand {
         Event e = organised(event, eventId);
         if (e == null) return;
         try {
-            service.setTeam(event.getGuild().getIdLong(), eventId, player.getIdLong(), null);
+            service.setTeam(event.getGuild().getIdLong(), eventId, player.getIdLong(), null, actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, Text.of(event, "events.has_no_team_in_now", player.getAsMention(), e.name()));
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, refusal(p));
@@ -156,7 +160,7 @@ public class EventsTeamCommand {
         if (e == null) return;
         try {
             EventRepository.Team found = teamNamed(eventId, team);
-            service.setCaptain(event.getGuild().getIdLong(), eventId, found.id(), player == null ? null : player.getIdLong());
+            service.setCaptain(event.getGuild().getIdLong(), eventId, found.id(), player == null ? null : player.getIdLong(), actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, player == null ? Text.of(event, "events.has_no_captain_now", found.name()) : Text.of(event, "events.is_the_captain_of", player.getAsMention(), found.name()));
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, refusal(p));
@@ -178,14 +182,14 @@ public class EventsTeamCommand {
         List<TeamBuilder.Player> players = eventTeams.players(guildId, e);
         List<TeamBuilder.Team> teams = eventTeams.teams(eventId);
         Map<Long, Participant> participants = new HashMap<>();
-        repository.participants(eventId).forEach(p -> participants.put(p.userId(), p));
+        service.participants(eventId).forEach(p -> participants.put(p.userId(), p));
         Map<Long, String> blocked = new HashMap<>();
         for (TeamBuilder.Player p : players) {
             if (service.teamBlock(e, participants.get(p.userId())) != null) {
                 blocked.put(p.userId(), EventRoster.effective(participants.get(p.userId()).verification(), service.settings(e).verification()) == EventRoster.Verification.REJECTED ? "turned down" : "not verified");
             }
         }
-        EventPrep.Step step = service.prepOf(e).steps().stream().filter(s -> s.key().equals("teams")).findFirst().orElse(null);
+        EventPrep.Step step = service.prepOf(guildId, e.id()).steps().stream().filter(s -> s.key().equals("teams")).findFirst().orElse(null);
         Containers.replyEphemeral(event, Containers.INFO, listLines(e.name(), teams, TeamBuilder.totals(teams, players), players, blocked, step == null ? "" : step.detail()).toArray(String[]::new));
     }
 
@@ -194,7 +198,7 @@ public class EventsTeamCommand {
         Event e = organised(event, eventId);
         if (e == null) return;
         try {
-            service.finaliseTeams(event.getGuild().getIdLong(), eventId, event.getUser().getIdLong());
+            service.finaliseTeams(event.getGuild().getIdLong(), eventId, actor(event));
             Containers.reply(event, Containers.SUCCESS, false, Text.of(event, "events.the_teams_are_final", e.name()), Text.of(event, "events.players_can_still_be_moved_with"));
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, refusal(p));
@@ -206,7 +210,7 @@ public class EventsTeamCommand {
         Event e = organised(event, eventId);
         if (e == null) return;
         try {
-            service.reopenTeams(event.getGuild().getIdLong(), eventId);
+            service.reopenTeams(event.getGuild().getIdLong(), eventId, actor(event));
             Containers.replyEphemeral(event, Containers.SUCCESS, Text.of(event, "events.the_teams_are_open_again", e.name()), Text.of(event, "events.finalise_them_again_with_events_team"));
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, refusal(p));
@@ -226,8 +230,12 @@ public class EventsTeamCommand {
         } catch (RuntimeException e) {
             return List.of();
         }
-        if (repository.event(event.getGuild().getIdLong(), eventId).isEmpty()) return List.of();
-        return repository.teams(eventId).stream().map(EventRepository.Team::name).toList();
+        try {
+            if (service.map().event(eventId).filter(r -> r.guildId() == event.getGuild().getIdLong()).isEmpty()) return List.of();
+            return service.teams(eventId).stream().map(EventRepository.Team::name).toList();
+        } catch (RuntimeException e) {
+            return List.of();
+        }
     }
 
     // ---------- helpers ----------
@@ -255,7 +263,7 @@ public class EventsTeamCommand {
 
     private EventRepository.Team teamNamed(long eventId, String name) {
         String wanted = name == null ? "" : name.strip();
-        Optional<EventRepository.Team> found = repository.teams(eventId).stream().filter(t -> t.name().equalsIgnoreCase(wanted)).findFirst();
+        Optional<EventRepository.Team> found = service.teams(eventId).stream().filter(t -> t.name().equalsIgnoreCase(wanted)).findFirst();
         return found.orElseThrow(() -> new EventProblem(404, "This event has no team called **" + wanted + "**. See `/events team list`."));
     }
 

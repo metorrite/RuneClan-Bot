@@ -22,7 +22,6 @@ public final class LaneOwners {
 
     private static final Map<String, Owner> OWNERS = Map.ofEntries(
             // database, hub and outside-API work that reads no server list (posts, if any, go through the Discord job outbox)
-            Map.entry("runemetrics-clock-check", Owner.API),
             Map.entry("rsnlink-retention", Owner.API),
             Map.entry("linked-roles", Owner.API),
             Map.entry("premium-expiry", Owner.API),
@@ -33,24 +32,15 @@ public final class LaneOwners {
             Map.entry("clan-site-race", Owner.API), // the leaderboard race's hub reads (T-710), for the website's overview
             Map.entry("address-change-scheduler", Owner.API),
             Map.entry("quick-groups", Owner.API),
-            Map.entry("event-export-expiry", Owner.API), // deletes expired wrap-up exports (T-698)
-            // RuneMetrics polling, its budget and the event trackers that feed it: one budget, kept in the one gateway process (M1, M2).
-            // Gateway, not api, because the poll targets are the servers the bot is in (RosterPollScheduler reads the server list).
-            Map.entry("poll-jobs", Owner.GATEWAY),
-            Map.entry("runemetrics-budget", Owner.GATEWAY),
-            Map.entry("event-tracker", Owner.GATEWAY),
-            Map.entry("plugin-xp-tracker", Owner.GATEWAY),
             Map.entry("hub-tracked", Owner.GATEWAY), // the names the hub should poll, from the servers the bot is in (T-851)
             // work that reads the gateway's servers, channels or members (M9, M11)
             Map.entry("clan-sync-scheduler", Owner.GATEWAY),
             Map.entry("clan-points-scheduler", Owner.GATEWAY),
             Map.entry("runeclans-feed", Owner.GATEWAY),
-            Map.entry("skill-of-the-week", Owner.GATEWAY),
             Map.entry("plugin-xp-points", Owner.GATEWAY),
             Map.entry("clan-seasons", Owner.GATEWAY),
             // the rank-up advisor's weekly update reads Discord names and channels from the cache
             Map.entry("rank-weekly", Owner.GATEWAY),
-            Map.entry("event-draws", Owner.GATEWAY),
             Map.entry("event-board-updates", Owner.GATEWAY),
             Map.entry("guild-retention", Owner.GATEWAY),
             Map.entry("discord-jobs", Owner.GATEWAY),
@@ -64,6 +54,7 @@ public final class LaneOwners {
             Map.entry("event-board-panels", Owner.GATEWAY),
             Map.entry("cohost-panels", Owner.GATEWAY),
             Map.entry("event-signups", Owner.GATEWAY),
+            Map.entry("hub-event-reminders", Owner.GATEWAY), // posts the hub's event reminders in the event's channel or DMs its players (T-934)
             Map.entry("event-announcer-sweep", Owner.GATEWAY),
             Map.entry("reminders", Owner.GATEWAY),
             Map.entry("server-reminders", Owner.GATEWAY),
@@ -95,6 +86,7 @@ public final class LaneOwners {
             Map.entry("panel-switches", Owner.EVERY), // this process's read of the website's Switches panel from the hub (T-817)
             // the league reporter sends a finished clan-vs-clan event's result to the hub from the process that finished it (T-759)
             Map.entry("leagues", Owner.EVERY),
+            Map.entry("tracked-names", Owner.EVERY), // refreshes the hub polling list the Refresh route answers from, in the process that serves it
             Map.entry("cache-bus-send", Owner.EVERY),
             Map.entry("cache-bus-listen", Owner.EVERY),
             Map.entry("api-leader", Owner.EVERY),

@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
  * answer is the same rule the dashboard applied to that page's own read (runeclans packages/dashboard/src/lib/featureStatus.ts).
  * <p>
  * Read from the database (most of it in one query, {@link FeatureStatusRepository}) and the bot's in-memory copy of the server; never a call to Discord.
- * "na" means no dot: the Overview and the Feature map are views, a page this person can't open (the Admin-only role pages for a Developer, the
+ * "na" means no dot: the Overview and the Feature map are views, the hub-owned pages ({@link #HUB_OWNED}) are read from the hub, a page this person can't open (the Admin-only role pages for a Developer, the
  * owner's Snapshots) stays grey as it did, and so does every stored dot if the query fails, as a failed read always left it. The dashboard reads a
  * tab the old way only when this answer doesn't name it (a tab newer than this bot), or for every tab from an older bot without this route.
  * <p>
@@ -62,7 +62,7 @@ public class FeatureStatusApi implements AdminRouteExtension {
             "/community/polls", "/community/giveaways", "/community/suggestions", "/community/starboard", "/community/tickets", "/community/forms",
             "/levels/points", "/levels/chat-levels", "/levels/skill-week",
             "/voice/temp-voice", "/voice/voice-text",
-            "/event-tools/event-manager", "/event-tools/event-announcer", "/event-tools/discord-events", "/event-tools/citadel-wheel", "/event-tools/bingo-pool",
+            "/event-tools/event-manager", "/event-tools/event-announcer", "/event-tools/discord-events", "/event-tools/citadel-wheel",
             "/event-tools/coffer",
             "/clan/clan-profile", "/clan/members", "/clan/attention", "/clan/promotions", "/clan/clan-points", "/clan/role-sync",
             "/runescape/tracking", "/runescape/rs-timers", "/runescape/anniversaries", "/runescape/pvm-help", "/runescape/alliances", "/runescape/plugin",
@@ -70,6 +70,9 @@ public class FeatureStatusApi implements AdminRouteExtension {
 
     /** The tabs that are views, not features: never a dot. */
     static final Set<String> VIEWS = Set.of("", "/feature-map");
+
+    /** The tabs whose feature lives on the RuneClans hub (T-941; the event manager, T-942), which this one query can't read: no dot, like a view. */
+    static final Set<String> HUB_OWNED = Set.of("/levels/skill-week", "/event-tools/event-manager");
 
     /** The role pages the bot answers only to an Admin (RoleKeepAdminApi and the others): a Developer never had a dot for them. */
     static final Set<String> ADMIN_ONLY = Set.of("/roles/role-keeper", "/roles/role-rules", "/roles/role-toolkit");

@@ -1,6 +1,6 @@
 package com.runeclans.bot.events;
 
-import com.runeclans.bot.events.BingoBoardImage.TileView;
+import com.runeclans.bot.events.BingoBoardView.TileView;
 import net.dv8tion.jda.api.utils.data.DataObject;
 
 import java.awt.Color;

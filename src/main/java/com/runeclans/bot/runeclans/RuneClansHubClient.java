@@ -42,6 +42,11 @@ public class RuneClansHubClient {
         default Answer call(String method, String path, String body, Map<String, String> headers) {
             return call(method, path, body);
         }
+
+        /** {@code GET path} for a binary answer (a board image): the bytes of a 2xx, null otherwise or when the hub can't be reached. */
+        default byte[] bytes(String path, Map<String, String> headers) {
+            return null;
+        }
     }
 
     /** The hub's status and JSON answer ({@code json} null when the body wasn't JSON), and its {@code Retry-After} in seconds, if any. */
@@ -114,6 +119,12 @@ public class RuneClansHubClient {
     public Answer call(String method, String path, String body, Map<String, String> headers) {
         if (!enabled()) return null;
         return transport.call(method, path, body, headers);
+    }
+
+    /** A raw {@code GET} for bytes (an event's board image, T-934). Null when off, unreachable, or not a success. */
+    public byte[] bytes(String path, Map<String, String> headers) {
+        if (!enabled()) return null;
+        return transport.bytes(path, headers);
     }
 
     // ---------- cached reads, queued writes, change eviction ----------
@@ -307,6 +318,20 @@ public class RuneClansHubClient {
             @Override
             public Answer call(String method, String path, String body, Map<String, String> headers) {
                 return send(client, settings, method, path, body, headers);
+            }
+
+            @Override
+            public byte[] bytes(String path, Map<String, String> headers) {
+                try {
+                    HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(REQUEST_TIMEOUT)
+                            .header("Authorization", "Bearer " + settings.apiKey()).header("User-Agent", "JonnyBot runeclans-client");
+                    headers.forEach(request::header);
+                    HttpResponse<byte[]> response = client.send(request.GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+                    return response.statusCode() >= 200 && response.statusCode() < 300 ? response.body() : null;
+                } catch (Exception e) {
+                    if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                    return null;
+                }
             }
         };
     }

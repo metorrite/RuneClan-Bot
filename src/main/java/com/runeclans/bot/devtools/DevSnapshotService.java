@@ -3,7 +3,6 @@ package com.runeclans.bot.devtools;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.config.BotConfig;
 import com.runeclans.bot.configure.GuildSettingsService;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.JDA;
@@ -100,16 +99,14 @@ public class DevSnapshotService {
     private final ConnectionSupplier connections;
     private final BotConfig config;
     private final GuildSettingsService guildSettings;
-    private final PollCoordinator polls;
     private final SnapshotLogBuffer logs;
     private final DevSnapshotRepository repository;
 
-    public DevSnapshotService(ConnectionSupplier connections, BotConfig config, GuildSettingsService guildSettings, PollCoordinator polls,
+    public DevSnapshotService(ConnectionSupplier connections, BotConfig config, GuildSettingsService guildSettings,
                               SnapshotLogBuffer logs, DevSnapshotRepository repository) {
         this.connections = connections;
         this.config = config;
         this.guildSettings = guildSettings;
-        this.polls = polls;
         this.logs = logs;
         this.repository = repository;
     }
@@ -180,7 +177,6 @@ public class DevSnapshotService {
         files.put("manifest.json", manifest.toPrettyString());
 
         files.put("environment.json", environmentJson(jda, environment, botCommit, siteCommit).toPrettyString());
-        files.put("polling.json", pollingJson().toPrettyString());
 
         DataObject guildJson = guildJson(guild, rowCap);
         files.put("guild.json", guildJson.toPrettyString());
@@ -199,7 +195,6 @@ public class DevSnapshotService {
 
                 manifest.json     who/what/when, bot and site commit
                 environment.json  environment, uptime, gateway, intents, database time
-                polling.json      RuneMetrics pacer state and the recurring poll jobs (last run, period)
                 guild.json        the server's settings and which features have settings stored
                 logs.txt          warnings and errors from the 30 minutes before the snapshot
                 db/*.json         the focused event, ticket or member: every related row (capped per table)
@@ -226,33 +221,6 @@ public class DevSnapshotService {
                 .put("memoryUsedMb", (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)).put("memoryMaxMb", rt.maxMemory() / (1024 * 1024))
                 .put("databaseTimeUtc", databaseTime())
                 .put("pollAutoEnabled", config.getRunescapeAutoPollEnabled());
-    }
-
-    private DataObject pollingJson() {
-        PollCoordinator.Status status = polls.status();
-        var engine = status.engine();
-        DataObject byPriority = DataObject.empty();
-        engine.queuedByPriority().forEach((priority, count) -> byPriority.put(priority.name(), count));
-        DataArray jobs = DataArray.empty();
-        for (PollCoordinator.JobStatus job : status.jobs()) {
-            long lastMs = job.lastRunAtMs();
-            long periodMs = job.periodSeconds() * 1000;
-            jobs.add(DataObject.empty().put("name", job.name()).put("priority", job.priority().name())
-                    .put("periodSeconds", job.periodSeconds()).put("spreadSeconds", job.spreadSeconds())
-                    .put("lastRunUtc", lastMs == 0 ? null : Instant.ofEpochMilli(lastMs).toString())
-                    .put("nextRunUtc", lastMs == 0 ? null : Instant.ofEpochMilli(lastMs + periodMs).toString())
-                    .put("lastSubmitted", job.lastSubmitted()));
-        }
-        return DataObject.empty()
-                .put("note", "Only the RuneMetrics poll jobs report last/next runs; the bot's other schedulers do not expose them.")
-                .put("pacer", DataObject.empty().put("queued", engine.queued()).put("queuedByPriority", byPriority).put("inFlight", engine.inFlight())
-                        .put("requestBudget", engine.tokens()).put("burst", engine.burst()).put("secondsPerRequest", engine.intervalMs() / 1000.0)
-                        .put("slowdownMultiplier", engine.multiplier()).put("requestsLastMinute", engine.requestsLastMinute())
-                        .put("requestsLast10Minutes", engine.requestsLast10Minutes()).put("polled", engine.polled())
-                        .put("skippedAsRecent", engine.reusedRecent()).put("mergedDuplicates", engine.merged())
-                        .put("rateLimited", engine.rateLimited()).put("gaveUp", engine.gaveUp()).put("failed", engine.failed())
-                        .put("oldestWaitingSeconds", engine.oldestWaitingMs() / 1000))
-                .put("jobs", jobs);
     }
 
     private DataObject guildJson(Guild guild, int rowCap) {

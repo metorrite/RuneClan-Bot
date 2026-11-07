@@ -1,5 +1,7 @@
 # The event lifecycle project
 
+> **T-942 (2026-11-06):** the bot dashboard's event manager is gone. Events are set up and run on runeclans.com (`/events/host`) against the RuneClans hub; the bot's dashboard routes below (`EventsAdminApi`, `EventSetupApi`, `EventWinApi`, `EventUpdatesApi`, `EventWrapupApi`, `EventSpaceApi`, `EventCohostApi`, `BingoPoolAdminApi`) were deleted. The Discord-side classes this page describes (spaces, wrap-up steps, boards, panels) stay. Read the route and test names below as history.
+
 What was asked for, what has been decided, what is built, and what is next for the event lifecycle (first written 2026-10-17).
 
 ## The goal
@@ -177,7 +179,7 @@ How it works:
 
 - The draw reuses the giveaway's fair pick (`GiveawayDraw.pick`) over numbered entries, with a `java.util.Random` seeded from a number the bot chooses. Entries are listed in a fixed order (subject keys sorted, each one's entries together); the seed and the list are saved with the draw (`younglings.event_draw`, one row per round) and shown on the event page and in the post, so anyone can re-run `WinModes.draw` and get the same winners.
 - Only tiles finished by the end time count, and only players still in the event (not on the waitlist) and teams that still exist.
-- **Automatic draw**: `EventDraws` checks every minute on its own `BotScheduler` lane (`event-draws`) for draw events past their end time (up to 2 days late, so a bot that was down catches up), drawn once (a round number is the table's key, so a "Draw now" at the same moment can't draw twice). A bot that is not live (`/dev toggleposting` off) draws nothing by itself.
+- **Automatic draw**: the hub draws a draw event at its end time and announces it on its feed (`clan_event.draw`); the bot only posts what the feed says (`HubEventPosts`, T-941). A bot that is not live (`/dev toggleposting` off) posts nothing by itself.
 - **Draw now**: staff, from the website (`POST events/{id}/win/draw`). Allowed once the event is running, and again only if the last draw found nobody who qualified.
 - **Reroll**: for a winner who doesn't claim (`POST events/{id}/win/reroll` with `{place}`): a new winner from the same entries, never anyone drawn before; the old winner's pending awards at that place are revoked. Refused once that prize is paid.
 - **Prizes**: the draw records the winners' prizes from the event's prize list as **pending** awards (`PrizePlan`, fixed amounts or pot shares, split for teams as set); nothing is paid until staff mark an award paid. For first to a line or blackout, "Work out awards" uses the finishing order instead of the standings.

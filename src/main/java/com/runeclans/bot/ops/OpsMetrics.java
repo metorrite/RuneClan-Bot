@@ -2,8 +2,6 @@ package com.runeclans.bot.ops;
 
 import com.runeclans.bot.config.BotConfig;
 import com.runeclans.bot.database.DatabaseSource;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollEngine;
 import com.runeclans.bot.discord.Shards;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
@@ -32,16 +30,14 @@ public class OpsMetrics {
     private static final Logger log = LoggerFactory.getLogger(OpsMetrics.class);
 
     /** What the ops alert rules look at, read once a minute. A value that couldn't be read is -1. */
-    public record Snapshot(long outboxDue, double outboxOldestSeconds, boolean pollBudgetExhausted, long discord429Total, double heapUsedRatio) {}
+    public record Snapshot(long outboxDue, double outboxOldestSeconds, long discord429Total, double heapUsedRatio) {}
 
     private final ConnectionSupplier connections;
-    private final PollCoordinator polling;
     private final BotConfig config;
     private volatile JDA jda;
 
-    public OpsMetrics(ConnectionSupplier connections, PollCoordinator polling, BotConfig config) {
+    public OpsMetrics(ConnectionSupplier connections, BotConfig config) {
         this.connections = connections;
-        this.polling = polling;
         this.config = config;
         OpsTelemetry.configure(config.isMetricsEnabled() && config.getMetricsToken() != null, config.isRequestLogEnabled());
         if (config.isMetricsEnabled() && config.getMetricsToken() == null) {
@@ -73,16 +69,11 @@ public class OpsMetrics {
         }
     }
 
-    /** True while due work waits on the poll budget: the bucket is empty and something due is queued. */
-    static boolean exhausted(PollEngine.Status s) {
-        return s.tokens() < 1 && s.oldestWaitingMs() > 0;
-    }
-
     public Snapshot snapshot() {
         double[] outbox = outbox();
         MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
         double ratio = heap.getMax() > 0 ? heap.getUsed() / (double) heap.getMax() : -1;
-        return new Snapshot((long) outbox[0], outbox[1], exhausted(polling.status().engine()), OpsTelemetry.registry().counterTotal(OpsTelemetry.DISCORD_429), ratio);
+        return new Snapshot((long) outbox[0], outbox[1], OpsTelemetry.registry().counterTotal(OpsTelemetry.DISCORD_429), ratio);
     }
 
     List<MetricRegistry.Gauge> gauges() {
@@ -109,19 +100,6 @@ public class OpsMetrics {
         g.add(new MetricRegistry.Gauge("rc_queue_depth", "Jobs due and not yet done, per queue.", outboxLabel, outbox[0]));
         g.add(new MetricRegistry.Gauge("rc_queue_oldest_age_seconds", "How long the oldest due job has waited, per queue.", outboxLabel, outbox[1]));
 
-        PollEngine.Status poll = polling.status().engine();
-        Map<String, String> pollLabel = Map.of("queue", "runemetrics_poll");
-        g.add(new MetricRegistry.Gauge("rc_queue_depth", "Jobs due and not yet done, per queue.", pollLabel, poll.queued()));
-        g.add(new MetricRegistry.Gauge("rc_queue_oldest_age_seconds", "How long the oldest due job has waited, per queue.", pollLabel, poll.oldestWaitingMs() / 1000.0));
-        g.add(MetricRegistry.Gauge.of("rc_poll_budget_per_minute", "The RuneMetrics requests per minute the budget allows (RUNESCAPE_POLL_REQUESTS_PER_MINUTE).",
-                config.getRunescapePollRequestsPerMinute()));
-        g.add(MetricRegistry.Gauge.of("rc_poll_requests_last_minute", "RuneMetrics requests sent in the last minute.", poll.requestsLastMinute()));
-        g.add(MetricRegistry.Gauge.of("rc_poll_requests_last_10_minutes", "RuneMetrics requests sent in the last 10 minutes.", poll.requestsLast10Minutes()));
-        g.add(MetricRegistry.Gauge.of("rc_poll_budget_tokens", "Requests the budget could send at once right now.", poll.tokens()));
-        g.add(MetricRegistry.Gauge.of("rc_poll_budget_burst", "The most requests the budget saves up.", poll.burst()));
-        g.add(MetricRegistry.Gauge.of("rc_poll_backoff_multiplier", "How much RuneMetrics 429s have slowed the budget (1 = normal pace).", poll.multiplier()));
-        g.add(MetricRegistry.Gauge.of("rc_poll_budget_exhausted", "1 while due work waits on an empty budget.", exhausted(poll) ? 1 : 0));
-        g.add(MetricRegistry.Gauge.of("rc_poll_rate_limited", "RuneMetrics 429s since start.", poll.rateLimited()));
 
         JDA current = jda;
         if (current != null) {

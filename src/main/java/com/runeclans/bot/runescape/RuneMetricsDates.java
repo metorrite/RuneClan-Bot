@@ -17,7 +17,7 @@ import java.util.Locale;
  * so an entry also shows up in the log within about a minute of the event, and the time is when the event happened, not when it was logged.
  * <p>
  * Whether the zone is really "UK local time" or a fixed UTC+1 can't be told from summer data alone (they are the same until the clocks go back on
- * 2026-10-25); {@code RuneMetricsClockCheck} watches for the difference, and the zone can be overridden with the {@code RUNEMETRICS_TIME_ZONE}
+ * 2026-10-25); the zone can be overridden with the {@code RUNEMETRICS_TIME_ZONE}
  * environment variable without a code change.
  */
 public final class RuneMetricsDates {

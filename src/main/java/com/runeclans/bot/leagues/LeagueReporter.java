@@ -2,11 +2,10 @@ package com.runeclans.bot.leagues;
 
 import com.runeclans.bot.events.ClanVsClan;
 import com.runeclans.bot.events.EventChanges;
-import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.runeclans.HubWriteQueue;
 import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -39,14 +38,12 @@ public class LeagueReporter {
         }
     }
 
-    private final EventRepository events;
-    private final EventService service;
+    private final HubEvents events;
     private final LeagueHub hub;
     private final ScheduledExecutorService lane = BotScheduler.lane("leagues");
 
-    public LeagueReporter(EventRepository events, EventService service, LeagueHub hub, EventChanges changes) {
+    public LeagueReporter(HubEvents events, LeagueHub hub, EventChanges changes) {
         this.events = events;
-        this.service = service;
         this.hub = hub;
         changes.subscribe(change -> {
             if (change.kind() == EventChanges.Kind.STAGE && hub.enabled()) lane.execute(() -> onStage(change.guildId(), change.eventId()));
@@ -55,7 +52,7 @@ public class LeagueReporter {
 
     void onStage(long guildId, long eventId) {
         try {
-            Event event = events.event(guildId, eventId).orElse(null);
+            Event event = events.eventById(eventId).filter(e -> e.guildId() == guildId).orElse(null);
             if (event == null || !ClanVsClan.is(event.template())) return;
             if (event.status() == Status.DONE) {
                 Outcome outcome = report(event);
@@ -93,14 +90,26 @@ public class LeagueReporter {
         if (!round.isHost()) return Outcome.fail(403, "Only the host clan's server reports a round's event.");
         List<Standing> standings;
         try {
-            standings = service.standings(event.guildId(), event.id());
+            standings = events.standings(event.guildId(), event.id());
         } catch (RuntimeException e) {
             return Outcome.fail(500, "The event's standings couldn't be read.");
         }
-        Map<Long, Long> teams = ClanVsClan.teams(DataObject.fromJson(event.config() == null || event.config().isBlank() ? "{}" : event.config()));
-        if (teams == null || teams.isEmpty()) return Outcome.fail(400, "The event has no participating clans yet.");
-        List<LeagueRounds.ClanResult> results = LeagueRounds.results(round.metric(), standings, teams, events.participants(event.id()));
-        Optional<DataArray> clans = LeagueRounds.clansJson(results, hub::clanIdOf);
+        DataObject config = DataObject.fromJson(event.config() == null || event.config().isBlank() ? "{}" : event.config());
+        Map<String, Long> byClan = ClanVsClan.hubTeams(config);
+        Optional<DataArray> clans;
+        if (!byClan.isEmpty()) {
+            // a hub event names its clans by hub clan id already: no server lookup, and a clan whose server the bot isn't in still counts
+            List<String> clanIds = new java.util.ArrayList<>(byClan.keySet());
+            Map<Long, Long> teams = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < clanIds.size(); i++) teams.put((long) i, byClan.get(clanIds.get(i)));
+            List<LeagueRounds.ClanResult> results = LeagueRounds.results(round.metric(), standings, teams, events.participants(event.id()));
+            clans = LeagueRounds.clansJson(results, i -> Optional.of(clanIds.get(i.intValue())));
+        } else {
+            Map<Long, Long> teams = ClanVsClan.teams(config);
+            if (teams == null || teams.isEmpty()) return Outcome.fail(400, "The event has no participating clans yet.");
+            List<LeagueRounds.ClanResult> results = LeagueRounds.results(round.metric(), standings, teams, events.participants(event.id()));
+            clans = LeagueRounds.clansJson(results, hub::clanIdOf);
+        }
         if (clans.isEmpty()) return Outcome.fail(409, "A participating clan has no clan on RuneClans, so this round's result is entered by hand on the website.");
         HubWriteQueue.Result result = hub.report(round.leagueId(), round.number(), event.guildId(), clans.get(), "Reported by RuneClan Bot from " + event.name());
         return outcomeOf(result, "The hub didn't take the result.");

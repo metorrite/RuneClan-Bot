@@ -93,7 +93,7 @@ class FeatureStatusApiTest {
         assertEquals(new HashSet<>(FeatureStatusApi.TABS), features.keys());
         for (String tab : FeatureStatusApi.TABS) {
             String state = features.getString(tab);
-            if (FeatureStatusApi.VIEWS.contains(tab)) assertEquals("na", state, tab);
+            if (FeatureStatusApi.VIEWS.contains(tab) || FeatureStatusApi.HUB_OWNED.contains(tab)) assertEquals("na", state, tab);
             else assertTrue(state.equals("on") || state.equals("off"), tab + " has no rule: add it to FeatureStatusApi or FeatureStatusRepository");
         }
         assertEquals(FeatureStatusApi.TABS.size(), new HashSet<>(FeatureStatusApi.TABS).size(), "a tab is listed twice");

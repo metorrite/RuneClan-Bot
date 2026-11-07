@@ -60,7 +60,7 @@ class ClanVsClanEventTest {
     @BeforeEach
     void setUp() {
         repository = new EventRepository(supplier);
-        cohosts = new EventCohostRepository(supplier);
+        cohosts = new EventCohostRepository(supplier, new com.runeclans.bot.hubevents.HubEventMap(supplier));
         links = Mockito.mock(PlayerLinkService.class);
         clanSync = Mockito.mock(ClanSyncService.class);
         ClanProfileRepository profiles = Mockito.mock(ClanProfileRepository.class);

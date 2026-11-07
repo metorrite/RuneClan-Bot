@@ -43,7 +43,7 @@ import java.util.function.Supplier;
  *   {@code DELETE overall/premium/{id}}: answer the list. Structure only: nothing reads these grants ({@link PremiumAccessRepository})</li>
  *   <li>{@code overall/owner-sites...}: every clan site ({@link SiteOwnerAdminApi}'s routes) and {@code overall/beta-testers...}: the beta
  *   testers ({@link SiteBuilderBetaAdminApi}'s), for every overall admin</li>
- *   <li>{@code GET overall/health} and {@code GET overall/runemetrics-budget}: the bot's health and RuneMetrics budget, and {@code GET overall/runesync/diagnostics/{id}} (the bot's owner only) ({@link OverallOpsRoutes})</li>
+ *   <li>{@code GET overall/health}: the bot's health, and {@code GET overall/runesync/diagnostics/{id}} (the bot's owner only) ({@link OverallOpsRoutes})</li>
  * </ul>
  */
 @BService
@@ -136,7 +136,7 @@ public class OverallAdminApi {
                 yield sites.routes(home, actor, method, parts, body);
             }
             case SiteBuilderBetaAdminApi.TESTERS -> beta.testersRoute(actor, method, parts, body);
-            case OverallOpsRoutes.HEALTH, OverallOpsRoutes.BUDGET, OverallOpsRoutes.RUNESYNC, OverallOpsRoutes.PREMIUM_GUILDS, OverallOpsRoutes.RSNLINK -> ops.route(jda, actor, home(jda), method, parts, body);
+            case OverallOpsRoutes.HEALTH, OverallOpsRoutes.RUNESYNC, OverallOpsRoutes.PREMIUM_GUILDS, OverallOpsRoutes.RSNLINK -> ops.route(jda, actor, home(jda), method, parts, body);
             default -> null;
         };
     }

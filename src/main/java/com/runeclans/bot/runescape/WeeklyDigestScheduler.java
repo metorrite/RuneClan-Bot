@@ -2,9 +2,6 @@ package com.runeclans.bot.runescape;
 
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.config.BotConfig;
-import com.runeclans.bot.runescape.polling.PollCoordinator;
-import com.runeclans.bot.runescape.polling.PollPriority;
-import com.runeclans.bot.runescape.polling.PollRequest;
 import com.runeclans.bot.tracking.CitadelWeek;
 import com.runeclans.bot.tracking.CitadelWheelPoster;
 import com.runeclans.bot.tracking.WeeklyDigestService;
@@ -45,22 +42,17 @@ public class WeeklyDigestScheduler {
 
     private static final LocalTime RUN_TIME_UTC = LocalTime.of(12, 0);
     private static final Duration INTERVAL = Duration.ofDays(7);
-    private static final Duration REFRESH_WAIT = Duration.ofMinutes(10);
 
     private final WeeklyDigestService weeklyDigestService;
     private final ClanSyncService clanSyncService;
-    private final ClanMemberRepository clanMembers;
-    private final PollCoordinator polls;
     private final CitadelWheelPoster wheelPoster;
     private final BotConfig botConfig;
     private final ScheduledExecutorService executor = BotScheduler.lane("weekly-digest-scheduler");
 
-    public WeeklyDigestScheduler(WeeklyDigestService weeklyDigestService, ClanSyncService clanSyncService, ClanMemberRepository clanMembers,
-                                 PollCoordinator polls, CitadelWheelPoster wheelPoster, BotConfig botConfig) {
+    public WeeklyDigestScheduler(WeeklyDigestService weeklyDigestService, ClanSyncService clanSyncService,
+                                 CitadelWheelPoster wheelPoster, BotConfig botConfig) {
         this.weeklyDigestService = weeklyDigestService;
         this.clanSyncService = clanSyncService;
-        this.clanMembers = clanMembers;
-        this.polls = polls;
         this.wheelPoster = wheelPoster;
         this.botConfig = botConfig;
     }
@@ -96,7 +88,7 @@ public class WeeklyDigestScheduler {
             if (clanSyncService.getClanName(guild.getIdLong()) == null) continue; // nothing configured to report on
 
             try {
-                refreshStaleProfiles(guild, windowEnd, now);
+                // the hub keeps every member's profile current, so there is nothing to refresh first
                 weeklyDigestService.sendWeeklyDigests(guild, windowStart, windowEnd);
                 wheelPoster.autoPost(guild, window); // if the server turned it on, the wheel's winner is announced with the list
                 log.info("Weekly digest sent for guild {} covering {} to {}.", guild.getIdLong(), windowStart, windowEnd);
@@ -104,20 +96,5 @@ public class WeeklyDigestScheduler {
                 log.error("Weekly digest failed for guild {}", guild.getIdLong(), e);
             }
         }
-    }
-
-    /**
-     * Polls every clan member whose latest profile is older than {@code reset}: a profile fetched since the reset has the whole finished week in its
-     * adventure log, one fetched before it may not. A recent enough profile is reused without a request, so on a normal week this does very little.
-     */
-    private void refreshStaleProfiles(Guild guild, OffsetDateTime reset, OffsetDateTime now) {
-        Duration maxAge = Duration.between(reset, now);
-        List<PollRequest> requests = clanMembers.getAll(guild.getIdLong(), true).stream()
-                .map(member -> PollRequest.background(member.rsn(), PollPriority.CLAN, maxAge, "weekly report"))
-                .toList();
-        if (requests.isEmpty()) return;
-        var outcomes = polls.awaitAll(polls.submitAll(requests), REFRESH_WAIT);
-        long fresh = outcomes.stream().filter(o -> o.hasFreshData()).count();
-        log.info("Weekly report refresh for guild {}: {} of {} profiles are current.", guild.getIdLong(), fresh, requests.size());
     }
 }

@@ -4,8 +4,8 @@ import com.runeclans.bot.discord.jobs.DiscordJob;
 import com.runeclans.bot.discord.jobs.DiscordJobHandler;
 import com.runeclans.bot.discord.jobs.DiscordJobs;
 import com.runeclans.bot.events.EventProblem;
-import com.runeclans.bot.events.EventService;
 import com.runeclans.bot.events.EventSpaceOps;
+import com.runeclans.bot.hubevents.HubEvents;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
@@ -14,16 +14,17 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 /**
  * Puts who holds each of an event's roles right ({@code events/{id}/space/sync}), run by the outbox (T-456) instead of inside the request: one
  * Discord request per member changed. It sets each role to who should have it, so running it again is harmless; when some changes didn't go
- * through it ends as failed with how many, and Retry on the website runs it again.
+ * through it ends as failed with how many, and Retry on the website runs it again. The event is the hub's ({@link HubEvents}, by its local id), the
+ * same one {@link EventSpaceOps} manages the roles of.
  */
 @BService
 public class EventSpaceSyncJob implements DiscordJobHandler {
     static final String KIND = "event.space.sync";
 
-    private final EventService service;
+    private final HubEvents service;
     private final EventSpaceOps ops;
 
-    public EventSpaceSyncJob(EventService service, EventSpaceOps ops) {
+    public EventSpaceSyncJob(HubEvents service, EventSpaceOps ops) {
         this.service = service;
         this.ops = ops;
     }

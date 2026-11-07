@@ -3,7 +3,6 @@ package com.runeclans.bot.linkedroles;
 import com.runeclans.bot.database.SchemaBootstrapper;
 import com.runeclans.bot.linkedroles.RoleMetadata.Profile;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
-import com.runeclans.bot.runescape.stats.StatsBackend;
 import com.runeclans.bot.runescape.stats.StatsBackends;
 import io.github.freya022.botcommands.api.core.service.annotations.BConfiguration;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -165,15 +164,14 @@ public class LinkedRolesStore {
      * that {@code listed} says is publicly listed.
      */
     public Profile profile(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed) {
-        StatsBackend hub = stats.hub();
-        Profile fromTables = profileFromTables(userId, rsLinkRsn, rsLinkSince, listed, hub != null);
-        if (hub == null || fromTables.rsn() == null) return fromTables;
-        // T-851: the levels come from the hub while it polls, read after the database connection is back in the pool
-        var latest = hub.latest(fromTables.rsn());
+        Profile fromTables = profileFromTables(userId, rsLinkRsn, rsLinkSince, listed);
+        if (fromTables.rsn() == null) return fromTables;
+        // the levels are the hub's, read after the database connection is back in the pool
+        var latest = stats.backend().latest(fromTables.rsn());
         return latest == null ? fromTables : new Profile(fromTables.rsn(), fromTables.linkedSince(), latest.totalLevel(), latest.combatLevel(), fromTables.clanMember());
     }
 
-    private Profile profileFromTables(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed, boolean levelsFromHub) {
+    private Profile profileFromTables(long userId, String rsLinkRsn, Instant rsLinkSince, LongPredicate listed) {
         try (Connection c = db.getConnection()) {
             String rsn = null;
             Instant since = null;
@@ -199,16 +197,6 @@ public class LinkedRolesStore {
 
             Integer total = null;
             Integer combat = null;
-            if (!levelsFromHub) try (PreparedStatement s = c.prepareStatement(
-                    "SELECT total_level, combat_level FROM younglings.player_stats_snapshot WHERE LOWER(rsn) = LOWER(?) ORDER BY snapshot_at DESC LIMIT 1")) {
-                s.setString(1, rsn);
-                try (ResultSet rs = s.executeQuery()) {
-                    if (rs.next()) {
-                        total = rs.getInt(1);
-                        combat = rs.getInt(2);
-                    }
-                }
-            }
             boolean member = false;
             try (PreparedStatement s = c.prepareStatement("SELECT DISTINCT guild_id FROM younglings.clan_member WHERE LOWER(rsn) = LOWER(?) AND active")) {
                 s.setString(1, rsn);

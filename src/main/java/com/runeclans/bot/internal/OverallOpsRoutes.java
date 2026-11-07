@@ -12,7 +12,7 @@ import java.time.Instant;
 import java.util.function.Supplier;
 
 /**
- * The bot's own health and RuneMetrics budget for the overall admin panel ({@code overall/health}, {@code overall/runemetrics-budget}) the plans per server ({@code overall/premium-guilds...}, the bot's owner only, as before) the RS Link abuse view ({@code overall/rsnlink/...}, the bot's owner only, as before) and the RuneSync
+ * The bot's own health for the overall admin panel ({@code overall/health}) the plans per server ({@code overall/premium-guilds...}, the bot's owner only, as before) the RS Link abuse view ({@code overall/rsnlink/...}, the bot's owner only, as before) and the RuneSync
  * diagnostics viewer ({@code overall/runesync/diagnostics/{id}}, the bot's owner only as before). Read only: the
  * same answers the bot owner's dashboard gives, here for every overall admin, who need not be in any server. {@link OverallAdminApi} has already
  * checked the asker is an overall admin; the answers are about the whole bot, with the home server only supplying the roster and the words.
@@ -20,21 +20,18 @@ import java.util.function.Supplier;
 @BService
 public class OverallOpsRoutes {
     static final String HEALTH = "health";
-    static final String BUDGET = "runemetrics-budget";
     static final String RUNESYNC = "runesync";
     static final String RSNLINK = "rsnlink";
     static final String PREMIUM_GUILDS = "premium-guilds";
 
     private final AdminOpsApi ops;
-    private final RuneMetricsBudgetAdminApi budget;
     private final RuneSyncService runeSync;
     private final BotOwners owners;
     private final PremiumAdminApi premium;
     private final RsnLinkAdminApi rsLink;
 
-    public OverallOpsRoutes(AdminOpsApi ops, RuneMetricsBudgetAdminApi budget, RuneSyncService runeSync, BotOwners owners, PremiumAdminApi premium, RsnLinkAdminApi rsLink) {
+    public OverallOpsRoutes(AdminOpsApi ops, RuneSyncService runeSync, BotOwners owners, PremiumAdminApi premium, RsnLinkAdminApi rsLink) {
         this.ops = ops;
-        this.budget = budget;
         this.runeSync = runeSync;
         this.owners = owners;
         this.premium = premium;
@@ -50,10 +47,6 @@ public class OverallOpsRoutes {
         if (parts[0].equals(HEALTH)) {
             AdminRouteExtension.requireMethod(method, "GET");
             return ops.health(home);
-        }
-        if (parts[0].equals(BUDGET)) {
-            AdminRouteExtension.requireMethod(method, "GET");
-            return budget.overview(home);
         }
         return null;
     }

@@ -1,6 +1,7 @@
 package com.runeclans.bot.events;
 
 import com.runeclans.bot.database.SchemaBootstrapper;
+import com.runeclans.bot.hubevents.HubEventMap;
 import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import org.slf4j.Logger;
@@ -31,13 +32,14 @@ public class EventCohostRepository {
 
     private final ConnectionSupplier connectionSupplier;
 
-    public EventCohostRepository(ConnectionSupplier connectionSupplier) {
+    /** Events are the hub's (T-934): {@code event_id} is the event's local id from {@link HubEventMap}, whose table the host lookup joins (a dependency so it exists first). */
+    public EventCohostRepository(ConnectionSupplier connectionSupplier, HubEventMap map) {
         this.connectionSupplier = connectionSupplier;
         SchemaBootstrapper.run(connectionSupplier, log, "event co-hosts", List.of(
                 "CREATE SCHEMA IF NOT EXISTS younglings;",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_cohost (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     guild_id BIGINT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'INVITED',
                     invited_by BIGINT NULL,
@@ -50,12 +52,9 @@ public class EventCohostRepository {
                 "CREATE INDEX IF NOT EXISTS event_cohost_guild ON younglings.event_cohost (guild_id, status);",
                 // T-220: the co-host's seat quota (null = no quota), read with the roster by EventRepository#cohostQuotas
                 "ALTER TABLE younglings.event_cohost ADD COLUMN IF NOT EXISTS quota INT NULL;",
-                // T-221: the co-host's signup panel (its channel, chosen when accepting, and the message JonnyBot posted there)
-                "ALTER TABLE younglings.event_cohost ADD COLUMN IF NOT EXISTS panel_channel_id BIGINT NULL;",
-                "ALTER TABLE younglings.event_cohost ADD COLUMN IF NOT EXISTS panel_message_id BIGINT NULL;",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_pending_join (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     user_id BIGINT NOT NULL,
                     origin_guild_id BIGINT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -63,66 +62,10 @@ public class EventCohostRepository {
                     PRIMARY KEY (event_id, user_id)
                 );
                 """,
-                "CREATE INDEX IF NOT EXISTS event_pending_join_user ON younglings.event_pending_join (user_id);"));
-    }
-
-    // ---------- the co-host's signup panel (T-221) ----------
-
-    /** Where a co-host's signup panel is: its channel (null until chosen) and the message JonnyBot posted (null when none is up). */
-    public record Panel(long eventId, long guildId, Long channelId, Long messageId) {}
-
-    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
-        long v = rs.getLong(column);
-        return rs.wasNull() ? null : v;
-    }
-
-    /** The panels of an event's accepted co-hosts that chose a channel. */
-    public List<Panel> panels(long eventId) {
-        List<Panel> list = new ArrayList<>();
-        try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(
-                "SELECT event_id, guild_id, panel_channel_id, panel_message_id FROM younglings.event_cohost WHERE event_id = ? AND status = 'ACCEPTED' AND panel_channel_id IS NOT NULL")) {
-            s.setLong(1, eventId);
-            try (ResultSet rs = s.executeQuery()) {
-                while (rs.next()) list.add(new Panel(rs.getLong(1), rs.getLong(2), nullableLong(rs, "panel_channel_id"), nullableLong(rs, "panel_message_id")));
-            }
-            return list;
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to read the co-hosts' signup panels", e);
-        }
-    }
-
-    /** One co-host's panel, whatever its status, or empty when the server isn't a co-host. */
-    public Optional<Panel> panel(long eventId, long guildId) {
-        try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(
-                "SELECT event_id, guild_id, panel_channel_id, panel_message_id FROM younglings.event_cohost WHERE event_id = ? AND guild_id = ?")) {
-            s.setLong(1, eventId);
-            s.setLong(2, guildId);
-            try (ResultSet rs = s.executeQuery()) {
-                return rs.next() ? Optional.of(new Panel(rs.getLong(1), rs.getLong(2), nullableLong(rs, "panel_channel_id"), nullableLong(rs, "panel_message_id"))) : Optional.empty();
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to read the co-host's signup panel", e);
-        }
-    }
-
-    public void setPanelChannel(long eventId, long guildId, Long channelId) {
-        update("UPDATE younglings.event_cohost SET panel_channel_id = ? WHERE event_id = ? AND guild_id = ?", channelId, eventId, guildId);
-    }
-
-    public void setPanelMessage(long eventId, long guildId, Long messageId) {
-        update("UPDATE younglings.event_cohost SET panel_message_id = ? WHERE event_id = ? AND guild_id = ?", messageId, eventId, guildId);
-    }
-
-    private void update(String sql, Long value, long eventId, long guildId) {
-        try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
-            if (value == null) s.setNull(1, Types.BIGINT);
-            else s.setLong(1, value);
-            s.setLong(2, eventId);
-            s.setLong(3, guildId);
-            s.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to save the co-host's signup panel", e);
-        }
+                "CREATE INDEX IF NOT EXISTS event_pending_join_user ON younglings.event_pending_join (user_id);",
+                // T-934: the rows name hub events by their local id, which the bot's old event table never held
+                "ALTER TABLE younglings.event_cohost DROP CONSTRAINT IF EXISTS event_cohost_event_id_fkey;",
+                "ALTER TABLE younglings.event_pending_join DROP CONSTRAINT IF EXISTS event_pending_join_event_id_fkey;"));
     }
 
     // ---------- pending joins (T-221) ----------
@@ -152,7 +95,7 @@ public class EventCohostRepository {
         List<PendingJoin> list = new ArrayList<>();
         String sql = """
                 SELECT p.event_id, p.user_id, p.origin_guild_id, p.expires_at FROM younglings.event_pending_join p
-                JOIN younglings.event e ON e.id = p.event_id WHERE p.user_id = ? AND e.guild_id = ? AND p.expires_at > ? ORDER BY p.created_at
+                JOIN younglings.hub_event_map e ON e.local_id = p.event_id WHERE p.user_id = ? AND e.guild_id = ? AND p.expires_at > ? ORDER BY p.created_at
                 """;
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
             s.setLong(1, userId);

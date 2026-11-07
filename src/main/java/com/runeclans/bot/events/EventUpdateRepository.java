@@ -28,20 +28,22 @@ public class EventUpdateRepository {
 
     private final ConnectionSupplier connectionSupplier;
 
-    public EventUpdateRepository(ConnectionSupplier connectionSupplier, EventRepository events) {
+    public EventUpdateRepository(ConnectionSupplier connectionSupplier) {
         this.connectionSupplier = connectionSupplier;
         SchemaBootstrapper.run(connectionSupplier, log, "event update posts", List.of(
                 "CREATE SCHEMA IF NOT EXISTS younglings;",
                 """
                 CREATE TABLE IF NOT EXISTS younglings.event_update_post (
-                    event_id BIGINT NOT NULL REFERENCES younglings.event (id) ON DELETE CASCADE,
+                    event_id BIGINT NOT NULL,
                     post_key TEXT NOT NULL,
                     kind TEXT NOT NULL,
                     text TEXT NOT NULL DEFAULT '',
                     posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (event_id, post_key)
                 );
-                """));
+                """,
+                // T-934: the rows name hub events by their local id, which the bot's old event table never held
+                "ALTER TABLE younglings.event_update_post DROP CONSTRAINT IF EXISTS event_update_post_event_id_fkey;"));
     }
 
     /** Notes a post as made. True when this call was the first (go ahead and post it); false when it was already made. */

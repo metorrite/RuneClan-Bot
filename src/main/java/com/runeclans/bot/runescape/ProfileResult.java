@@ -3,12 +3,8 @@ package com.runeclans.bot.runescape;
 import java.time.Duration;
 
 /**
- * Outcome of {@link RuneScapeApiClient#fetchProfileResult}. RuneMetrics reports failure as
- * {@code {"error": "..."}} rather than an HTTP status — {@code NO_PROFILE} is confirmed live
- * (a made-up name returns exactly that). {@code PROFILE_PRIVATE} is the value long documented by
- * community RuneMetrics tooling for an account whose Adventurer's Log is set to private, but it
- * hasn't been reproduced live this session — every account tested (including padding out the clan
- * roster) came back public, so there was nothing private to fetch against.
+ * A player's profile as the hub holds it ({@link RuneScapeStatsService#latestAsResult}), or why there is none. The bot fetches nothing from
+ * Jagex itself; {@code Unavailable} is "the hub has nothing for this name right now".
  */
 public sealed interface ProfileResult {
     /** A public profile was fetched successfully. */

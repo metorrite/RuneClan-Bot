@@ -99,13 +99,11 @@ public class FeatureStatusRepository {
         enabled("/levels/chat-levels", "chat_level_config");
         exists("/voice/temp-voice", "tempvoice_hub", "");
         enabled("/voice/voice-text", "voice_text_config");
-        exists("/event-tools/event-manager", "event", "NOT t.archived AND t.template <> 'quick-group'");
         enabled("/event-tools/event-announcer", "eventannounce_config");
         exists("/event-tools/citadel-wheel", "citadel_wheel_settings", "t.auto_post AND t.channel_id IS NOT NULL");
-        exists("/event-tools/bingo-pool", "bingo_tile", "");
         // the coffer is in use once someone holds gp in it
         exists("/event-tools/coffer", "coffer_holder", "t.amount > 0");
-        enabled("/levels/skill-week", "skill_week_settings");
+        // the bingo pool and skill of the week are the hub's (T-941): no bot table to read, so their tabs get no dot
         // no profile row reads as UNLISTED (ClanProfile.empty), so the tab is on until someone makes it private
         FLAGS.put("/clan/clan-profile", "COALESCE((SELECT t.visibility FROM younglings.clan_profile t WHERE t.guild_id = g.id), 'UNLISTED') <> 'PRIVATE'");
         exists("/clan/clan-points", "clan_points_settings", "(t.daily_membership_points > 0 OR t.citadel_visit_points > 0 OR t.citadel_cap_points > 0)");
