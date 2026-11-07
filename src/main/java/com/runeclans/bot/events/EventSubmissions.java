@@ -110,14 +110,23 @@ public class EventSubmissions {
         });
     }
 
-    /** The screenshot now lives in the review channel: the hub keeps its link on the claim, so the website shows the same picture staff see (T-941). */
+    /**
+     * The screenshot now lives in the review channel: the hub keeps a link to it on the claim (T-941). The link is the review message's own jump link,
+     * which lasts as long as the message; an attachment's CDN address is signed and stops working after about a day.
+     */
     private void attachProof(long guildId, long eventId, long claimId, Message message) {
-        if (message.getAttachments().isEmpty()) return;
+        String link = proofLinkOf(message);
+        if (link == null) return;
         try {
-            service.setClaimProof(guildId, eventId, claimId, message.getAttachments().get(0).getUrl());
+            service.setClaimProof(guildId, eventId, claimId, link);
         } catch (RuntimeException e) {
             log.info("Couldn't attach the proof of claim {} of event {} on the hub: {}", claimId, eventId, e.getMessage());
         }
+    }
+
+    /** The lasting link to a review message's screenshot: the message's jump link; null when it carries no picture. */
+    static String proofLinkOf(Message message) {
+        return message.getAttachments().isEmpty() ? null : message.getJumpUrl();
     }
 
     private static byte[] readAll(InputStream stream) {

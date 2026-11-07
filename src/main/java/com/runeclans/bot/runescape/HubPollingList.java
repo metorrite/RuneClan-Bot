@@ -67,6 +67,11 @@ final class HubPollingList {
         return last;
     }
 
+    /** Whether the last read is under {@link #KEEP} old (a read that failed counts: it isn't tried again sooner). */
+    synchronized boolean fresh() {
+        return readAt != null && clock.instant().isBefore(readAt.plus(KEEP));
+    }
+
     /** The groups as of at most {@link #KEEP} ago. A slow hub only delays the caller. */
     synchronized Groups groups() {
         Instant now = clock.instant();
