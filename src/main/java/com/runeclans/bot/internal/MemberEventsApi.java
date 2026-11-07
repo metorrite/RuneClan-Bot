@@ -128,7 +128,7 @@ public class MemberEventsApi {
             if (joined.stream().anyMatch(j -> j.event().id() == listed.id())) continue;
             Event event = events.full(listed).orElse(listed);
             EventSettings settings = settingsOf(event);
-            open.add(DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("description", event.description())
+            open.add(DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description())
                     .put("template", event.template()).put("scoringMode", event.scoringMode().name())
                     .put("signupClosesAt", settings.signupClosesAt() == null ? null : settings.signupClosesAt().toString())
                     .put("closed", events.setup(event.id()).signupsClosed())
@@ -165,7 +165,7 @@ public class MemberEventsApi {
         DataArray xpTiles = xpTiles(event, objectives);
 
         DataObject out = DataObject.empty();
-        out.put("event", DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("description", event.description()).put("template", event.template())
+        out.put("event", DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description()).put("template", event.template())
                 .put("status", event.status().name()).put("scoringMode", event.scoringMode().name())
                 .put("startsAt", event.startsAt() == null ? null : event.startsAt().toString()).put("endsAt", event.endsAt() == null ? null : event.endsAt().toString())
                 .put("signupClosesAt", settings.signupClosesAt() == null ? null : settings.signupClosesAt().toString()).put("signupsClosed", setup.signupsClosed())
@@ -337,6 +337,15 @@ public class MemberEventsApi {
         return awards;
     }
 
+    /** The event's id on the hub (a uuid), beside the bot's local {@code id}: what the website matches its own hub reads on, so an event isn't listed twice. */
+    private String hubIdOf(Event event) {
+        try {
+            return events.map().event(event.id()).map(r -> r.hubId().toString()).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     private static int pending(List<EventRepository.Claim> claims, EventRepository.ClaimKind kind) {
         return (int) claims.stream().filter(c -> c.kind() == kind && c.status() == EventRepository.ClaimStatus.PENDING).count();
     }
@@ -372,7 +381,7 @@ public class MemberEventsApi {
         boolean open = event.status() == Status.SIGNUPS || event.status() == Status.RUNNING;
         int pendingProof = open ? pending(events.claimsOf(guildId, event.id(), userId, SUBMISSIONS_SHOWN), EventRepository.ClaimKind.OBJECTIVE) : 0;
 
-        return DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("description", event.description()).put("template", event.template())
+        return DataObject.empty().put("id", Long.toString(event.id())).put("hubId", hubIdOf(event)).put("name", event.name()).put("description", event.description()).put("template", event.template())
                 .put("status", event.status().name()).put("scoringMode", event.scoringMode().name())
                 .put("waiting", me.waiting()).put("team", teamName)
                 .put("verification", DataObject.empty().put("required", settings.verification().required())

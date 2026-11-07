@@ -76,7 +76,12 @@ class MemberEventsApiTest {
         when(events.mine(anyLong(), anyLong(), anyInt())).thenReturn(List.of());
         when(events.events(anyLong(), any(), anyInt())).thenReturn(List.of());
         when(events.setup(anyLong())).thenReturn(EventRepository.Setup.NONE);
+        com.runeclans.bot.hubevents.HubEventMap map = Mockito.mock(com.runeclans.bot.hubevents.HubEventMap.class);
+        when(events.map()).thenReturn(map);
+        when(map.event(7L)).thenReturn(Optional.of(new com.runeclans.bot.hubevents.HubEventMap.Row(7, HUB_ID, java.util.UUID.randomUUID(), G, null, null, null, null, null, 0)));
     }
+
+    private static final java.util.UUID HUB_ID = java.util.UUID.randomUUID();
 
     private static Event event(long id, String name, Status status, String config) {
         return new Event(id, G, "custom", name, "", status, EventRules.Scope.PRIVATE, EventRules.ScoringMode.INDIVIDUAL, null, null, 0, config, 9L, Instant.EPOCH, null, false);
@@ -134,6 +139,7 @@ class MemberEventsApiTest {
         DataObject before = api.mine(guild, INSIDE);
         assertEquals(1, before.getArray("open").length(), "an event made on the website is offered");
         assertTrue(before.getArray("open").getObject(0).getBoolean("verification"), "its settings come from the event read in full");
+        assertEquals(HUB_ID.toString(), before.getArray("open").getObject(0).getString("hubId"), "the website dedupes its own hub reads on the hub id");
 
         when(events.join(eq(G), eq(7L), eq(INSIDE), any(), eq(false), any(Actor.class))).thenReturn(new Joined(true, 3));
         when(events.mine(G, INSIDE, 30)).thenReturn(List.of(new HubEvents.Mine(listed, player(7, INSIDE, EventRoster.Verification.PENDING, ""))));
