@@ -126,6 +126,7 @@ public class HubEventFeed implements HubFeedListener {
                 UUID claimHubId = HubEvents.uuid(claim.getString("id", null));
                 long claimLocal = claimHubId == null ? 0 : map.localId(HubEventMap.CLAIM, claimHubId, local);
                 boolean approved = ClaimStatus.APPROVED.name().equals(claim.getString("status", ""));
+                if (claimLocal != 0 && events.echoOfDecisionHere(claimLocal, approved)) yield null; // decided from Discord: already published there
                 yield new EventChanges.Change(EventChanges.Kind.CLAIM_DECIDED, guildId, local, claimLocal, HubEvents.discordId(claim.getString("discordId", null)), approved,
                         claim.getString("decisionNote", ""));
             }

@@ -193,6 +193,30 @@ class MemberEventsApiTest {
     }
 
     @Test
+    void draftsCancelledArchivedAndTakenDownEventsAreLeftOutAsOnTheWebsite() {
+        Event running = onHub(400, "Running", Status.RUNNING, "{}");
+        Event draft = onHub(401, "Draft", Status.DRAFT, "{}");
+        Event cancelled = onHub(402, "Cancelled", Status.CANCELLED, "{}");
+        Event archived = new Event(403, G, "custom", "Archived", "", Status.DONE, EventRules.Scope.PRIVATE, EventRules.ScoringMode.INDIVIDUAL, null, null, 0, "{}", 9L, Instant.EPOCH, null, true);
+        Event down = onHub(404, "Down", Status.RUNNING, "{}");
+        when(events.mine(G, INSIDE, 30)).thenReturn(List.of(
+                new HubEvents.Mine(running, player(400, INSIDE, EventRoster.Verification.NOT_REQUIRED, "")),
+                new HubEvents.Mine(draft, player(401, INSIDE, EventRoster.Verification.NOT_REQUIRED, "")),
+                new HubEvents.Mine(cancelled, player(402, INSIDE, EventRoster.Verification.NOT_REQUIRED, "")),
+                new HubEvents.Mine(archived, player(403, INSIDE, EventRoster.Verification.NOT_REQUIRED, "")),
+                new HubEvents.Mine(down, player(404, INSIDE, EventRoster.Verification.NOT_REQUIRED, ""), true)));
+        Event open = onHub(405, "Open", Status.SIGNUPS, "{}");
+        Event openDown = event(406, "Open but down", Status.SIGNUPS, "{}");
+        when(events.fullWithSetup(openDown)).thenReturn(Optional.of(new HubEvents.Full(event(406, "Open but down", Status.SIGNUPS, "{\"hub\":{\"takedown\":\"spam\"}}"), EventRepository.Setup.NONE)));
+        when(events.events(eq(G), eq(List.of(Status.SIGNUPS)), anyInt())).thenReturn(List.of(open, openDown));
+        DataObject mine = api.mine(guild, INSIDE);
+        assertEquals(1, mine.getArray("events").length(), "only the announced, live event");
+        assertEquals("Running", mine.getArray("events").getObject(0).getString("name"));
+        assertEquals(1, mine.getArray("open").length(), "an open event staff took down isn't offered");
+        assertEquals("Open", mine.getArray("open").getObject(0).getString("name"));
+    }
+
+    @Test
     void aServerWithNoClanOnTheHubHasNoEvents() {
         when(events.mine(anyLong(), anyLong(), anyInt())).thenThrow(new EventProblem(404, HubEvents.NO_CLAN_TEXT));
         DataObject mine = api.mine(guild, INSIDE);

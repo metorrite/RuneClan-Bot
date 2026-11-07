@@ -27,6 +27,7 @@ class HubEventFeedTest {
     private FakeEventHub hub;
     private final List<EventChanges.Change> published = new ArrayList<>();
     private HubEventFeed feed;
+    private HubEvents events;
 
     @BeforeAll
     static void connect() throws Exception {
@@ -39,7 +40,7 @@ class HubEventFeedTest {
         hub = new FakeEventHub();
         EventChanges changes = new EventChanges();
         changes.subscribe(published::add);
-        HubEvents events = new HubEvents(new HubEventClient(hub, true), map, changes);
+        events = new HubEvents(new HubEventClient(hub, true), map, changes);
         feed = new HubEventFeed(events, map, changes) {
             @Override
             List<Long> candidateGuilds() {
@@ -121,6 +122,44 @@ class HubEventFeedTest {
         assertEquals(55L, change.userId());
         assertEquals("Wrong tile", change.note());
         assertTrue(!change.approved());
+    }
+
+    @Test
+    void aClaimDecidedFromDiscordTellsThePlayerOnceAndTheFeedsEchoIsSkipped() {
+        long local = map.localId(EVENT, CLAN, G);
+        UUID claim = UUID.randomUUID();
+        long claimLocal = map.localId(HubEventMap.CLAIM, claim, local);
+        DataObject json = DataObject.empty().put("id", claim.toString()).put("kind", "OBJECTIVE").put("objectiveKey", "zuk").put("personId", "p").put("discordId", "55")
+                .put("amount", 1).put("note", "").put("status", "APPROVED").put("createdAt", "2026-11-06T00:00:00Z");
+        hub.ok("POST /v1/events/" + EVENT + "/claims/" + claim + "/decide", DataObject.empty().put("claim", json));
+        events.decideClaim(G, local, claimLocal, true, "", HubEventClient.Actor.of(222L, G, false));
+        assertEquals(1, published.size(), "the decision made here is published once, here");
+        DataObject echo = DataObject.empty().put("eventId", EVENT.toString()).put("change", "decided").put("claim", json).put("guildId", Long.toString(G));
+        feed.onHubFeed("clan_event.claim", entry(claim, 1, echo));
+        assertEquals(1, published.size(), "the feed's echo of that decision is not a second DM");
+        feed.onHubFeed("clan_event.claim", entry(claim, 1, echo));
+        assertEquals(2, published.size(), "only one echo is swallowed: a later decision on the website still reaches the player");
+        published.clear();
+
+        DataObject denied = DataObject.fromJson(json.toJson()).put("status", "DENIED");
+        feed.onHubFeed("clan_event.claim", entry(claim, 1, DataObject.fromJson(echo.toJson()).put("claim", denied)));
+        assertEquals(1, published.size(), "a website decision the other way goes through");
+    }
+
+    @Test
+    void aFailedDecisionFromDiscordDoesntHideTheWebsitesOne() {
+        long local = map.localId(EVENT, CLAN, G);
+        UUID claim = UUID.randomUUID();
+        long claimLocal = map.localId(HubEventMap.CLAIM, claim, local);
+        try {
+            events.decideClaim(G, local, claimLocal, true, "", HubEventClient.Actor.of(222L, G, false));
+        } catch (RuntimeException expected) {
+            // the fake hub has no answer for the decide call
+        }
+        assertTrue(published.isEmpty());
+        DataObject json = DataObject.empty().put("id", claim.toString()).put("status", "APPROVED").put("discordId", "55");
+        feed.onHubFeed("clan_event.claim", entry(claim, 1, DataObject.empty().put("eventId", EVENT.toString()).put("change", "decided").put("claim", json).put("guildId", Long.toString(G))));
+        assertEquals(1, published.size());
     }
 
     @Test

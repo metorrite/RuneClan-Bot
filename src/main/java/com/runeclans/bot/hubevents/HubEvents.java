@@ -79,6 +79,10 @@ public class HubEvents {
     private volatile Clock clock = Clock.systemUTC();
     private record KnownClan(UUID clanId, Instant until) {}
     private final Map<Long, KnownClan> clans = new ConcurrentHashMap<>();
+    /** How long a claim decided here waits for its own echo on the hub feed. */
+    static final Duration ECHO_KEPT = Duration.ofMinutes(10);
+    /** Claims decided from Discord ({@code claimLocalId:approved}) until the feed's echo of them: the player is told once, by the local publish. */
+    private final Map<String, Instant> decidedHere = new ConcurrentHashMap<>();
 
     /** The bot's own Discord user id, once connected: the actor of what the bot does on its own (a signup mirrored, a space set up). */
     private volatile long selfId;
@@ -612,10 +616,30 @@ public class HubEvents {
     /** An organiser's decision on a claim. The claim as it stands after. */
     public Claim decideClaim(long guildId, long id, long claimId, boolean approve, String note, Actor actor) {
         UUID claimHub = map.hubId(HubEventMap.CLAIM, claimId).orElseThrow(() -> new EventProblem(404, "That claim doesn't exist."));
-        DataObject json = hub.send("POST", path(guildId, id) + "/claims/" + claimHub + "/decide", DataObject.empty().put("approve", approve).put("note", note == null ? "" : note), actor);
+        // noted before the call: the feed can bring the echo back before the hub's answer arrives here
+        String key = claimId + ":" + approve;
+        Instant now = clock.instant();
+        decidedHere.values().removeIf(until -> !until.isAfter(now));
+        decidedHere.put(key, now.plus(ECHO_KEPT));
+        DataObject json;
+        try {
+            json = hub.send("POST", path(guildId, id) + "/claims/" + claimHub + "/decide", DataObject.empty().put("approve", approve).put("note", note == null ? "" : note), actor);
+        } catch (RuntimeException e) {
+            decidedHere.remove(key);
+            throw e;
+        }
         Claim claim = claim(json.optObject("claim").orElse(json), id);
         changes.publish(new EventChanges.Change(EventChanges.Kind.CLAIM_DECIDED, guildId, id, claimId, claim.userId(), approve, note == null ? "" : note));
         return claim;
+    }
+
+    /**
+     * Whether a decided-claim feed entry is the echo of a decision made here (and already published by {@link #decideClaim}): true once per decision,
+     * so the player gets one DM whichever side decided. A decision made on the website isn't noted here and goes through.
+     */
+    public boolean echoOfDecisionHere(long claimId, boolean approved) {
+        Instant until = decidedHere.remove(claimId + ":" + approved);
+        return until != null && until.isAfter(clock.instant());
     }
 
     /** The proof behind a claim, once the bot has re-hosted it (T-945 {@code PATCH .../claims/{claimId}}): the review channel's copy outlives the player's own attachment link. */
@@ -933,7 +957,12 @@ public class HubEvents {
     // ---------- what a member sees ----------
 
     /** One of a member's events: the event and their own place in it (null when the hub listed it without one). */
-    public record Mine(Event event, Participant me) {}
+    /** One of a member's events. {@code takenDown}: RuneClans staff took it off the hub (the compact list's flag; its config isn't in that list). */
+    public record Mine(Event event, Participant me, boolean takenDown) {
+        public Mine(Event event, Participant me) {
+            this(event, me, false);
+        }
+    }
 
     /** The events a member is in or waiting for in this server, with their own place in each, newest first (one hub call). */
     public List<Mine> mine(long guildId, long userId, int limit) {
@@ -953,7 +982,7 @@ public class HubEvents {
                 DataObject withId = DataObject.fromJson(me.toJson()).put("discordId", Long.toString(userId));
                 p = participants(DataArray.empty().add(withId), row).get(0);
             }
-            out.add(new Mine(toEvent(compact, row), p));
+            out.add(new Mine(toEvent(compact, row), p, compact.getBoolean("takenDown", false)));
         }
         return out;
     }
