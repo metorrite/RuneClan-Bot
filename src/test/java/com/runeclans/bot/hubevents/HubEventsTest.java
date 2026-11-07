@@ -109,6 +109,33 @@ class HubEventsTest {
     }
 
     @Test
+    void settingsReadersGetEachListedEventInFull() {
+        DataObject compact = eventJson("RUNNING");
+        compact.remove("config");
+        hub.ok("GET /v1/clans/" + CLAN + "/events", DataObject.empty().put("events", DataArray.empty().add(compact)));
+        hub.ok("GET /v1/events/" + EVENT, eventJson("RUNNING"));
+        assertFalse(DataObject.fromJson(events.events(G, List.of(Status.RUNNING), 10).get(0).config()).hasKey("verification"), "the hub's list is compact");
+        List<Event> full = events.eventsInFull(G, List.of(Status.RUNNING), 10);
+        assertEquals(1, full.size());
+        assertTrue(DataObject.fromJson(full.get(0).config()).hasKey("verification"), "read in full, the settings come along");
+    }
+
+    @Test
+    void clanVsClanTeamsByHubIdBecomeServerAndLocalTeamIds() {
+        long local = mapped();
+        UUID other = UUID.randomUUID();
+        UUID otherTeam = UUID.randomUUID();
+        DataObject json = eventJson("DONE").put("template", "clan-vs-clan");
+        json.getObject("config").put("cvcTeams", DataObject.empty().put(CLAN.toString(), TEAM.toString()).put(other.toString(), otherTeam.toString()));
+        hub.ok("GET /v1/events/" + EVENT, json);
+        DataObject config = DataObject.fromJson(events.event(G, local).config());
+        long team = map.localId(HubEventMap.TEAM, TEAM, local);
+        assertEquals(java.util.Map.of(G, team), com.runeclans.bot.events.ClanVsClan.teams(config), "the host's server is known; the other clan's isn't");
+        assertEquals(java.util.Map.of(CLAN.toString(), team, other.toString(), map.localId(HubEventMap.TEAM, otherTeam, local)),
+                com.runeclans.bot.events.ClanVsClan.hubTeams(config), "every clan by its hub id, for the league results");
+    }
+
+    @Test
     void anEventIsReadByItsLocalIdOnlyInItsOwnServer() {
         long local = mapped();
         hub.ok("GET /v1/events/" + EVENT, eventJson("RUNNING"));

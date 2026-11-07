@@ -192,8 +192,10 @@ public class EventsCommand {
         long userId = event.getUser().getIdLong();
         Event target;
         try {
+            // the member's list is compact (no settings), so each running candidate is read in full before its game is checked
             target = eventId != null ? service.event(guildId, eventId) : service.mine(guildId, userId, 30).stream().map(HubEvents.Mine::event)
-                    .filter(e -> ClanVsClan.plays(e, BingoTemplate.KEY) && (e.status() == Status.RUNNING || e.status() == Status.SCORING)).findFirst().orElse(null);
+                    .filter(e -> e.status() == Status.RUNNING || e.status() == Status.SCORING).map(e -> service.full(e).orElse(null))
+                    .filter(e -> e != null && ClanVsClan.plays(e, BingoTemplate.KEY)).findFirst().orElse(null);
         } catch (EventProblem p) {
             Containers.replyEphemeral(event, Containers.WARNING, p.getMessage());
             return;

@@ -119,6 +119,19 @@ class LeagueReporterTest {
     }
 
     @Test
+    void aHubEventReportsItsClansByHubClanIdWithoutAServerLookup() {
+        String c3 = "00000000-0000-4000-8000-000000000003";
+        String config = DataObject.empty().put(ClanVsClan.TEAMS, DataObject.empty().put(Long.toString(HOST), 10L))
+                .put(ClanVsClan.TEAMS_HUB, DataObject.empty().put("c1", 10L).put(c3, 20L)).toString();
+        Event done = new Event(77, HOST, ClanVsClan.KEY, "Boss night", "", Status.DONE, Scope.PUBLIC, ScoringMode.TEAM, Instant.EPOCH, Instant.EPOCH, 0, config, 1, Instant.EPOCH, null, false);
+        hubSays(round(2, 77L, "running", true));
+        LeagueReporter.Outcome ok = reporter.report(done);
+        assertTrue(ok.ok(), ok.message());
+        assertTrue(written.get(0).contains("\"clanId\":\"c1\"") && written.get(0).contains("\"raw\":340"), written.get(0));
+        assertTrue(written.get(0).contains("\"clanId\":\"" + c3 + "\"") && written.get(0).contains("\"raw\":120"), "a clan whose server the bot isn't in still counts: " + written.get(0));
+    }
+
+    @Test
     void onlyADoneEventIsReportedAndACancelledOneIsDetached() {
         hubSays(round(2, 77L, "running", true));
         when(events.eventById(77)).thenReturn(Optional.of(event(77, ClanVsClan.KEY, Status.RUNNING)));

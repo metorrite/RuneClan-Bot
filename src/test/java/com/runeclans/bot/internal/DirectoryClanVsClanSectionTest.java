@@ -61,6 +61,7 @@ class DirectoryClanVsClanSectionTest {
         Event takenDown = event(7, "clan-vs-clan", Scope.PUBLIC, Status.DONE, "{\"cvcTeams\":{\"1\":12,\"2\":22},\"hub\":{\"takedown\":{\"reason\":\"spam\"}}}");
         Event without = event(8, "clan-vs-clan", Scope.PUBLIC, Status.DONE, "{\"cvcTeams\":{\"1\":13,\"22\":23}}");
         when(events.events(ALLY, List.of(Status.DONE), DirectoryClanVsClanSection.SHOWN * 3)).thenReturn(List.of(won, hidden, takenDown, without));
+        for (Event e : List.of(won, hidden, takenDown, without)) when(events.full(e)).thenReturn(Optional.of(e));
         when(events.standings(HOST, 5)).thenReturn(List.of(standing("t:20", 90), standing("t:10", 40)));
 
         DataArray history = new DirectoryClanVsClanSection(events, profiles).history(ALLY);

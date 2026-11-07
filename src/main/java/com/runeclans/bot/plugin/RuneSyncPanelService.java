@@ -6,13 +6,14 @@ import com.runeclans.bot.discord.DiscordLookups.Outcome;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.events.BingoBoardView;
 import com.runeclans.bot.events.BingoTemplate;
+import com.runeclans.bot.events.EventProblem;
 import com.runeclans.bot.events.EventRepository;
 import com.runeclans.bot.events.EventRepository.Event;
 import com.runeclans.bot.events.EventRepository.Participant;
 import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.events.EventScoring.Standing;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.points.PointsRepository;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
@@ -52,8 +53,7 @@ public class RuneSyncPanelService {
     static final int EVENTS_PER_CLAN = 10;
 
     private final RuneSyncRepository repository;
-    private final EventRepository events;
-    private final EventService eventService;
+    private final HubEvents events;
     private final PointsRepository points;
     private final PluginRepository plugins;
     private final Map<Long, Cached> cache = new ConcurrentHashMap<>();
@@ -96,11 +96,9 @@ public class RuneSyncPanelService {
         }
     };
 
-    public RuneSyncPanelService(RuneSyncRepository repository, EventRepository events, EventService eventService, PointsRepository points,
-                                PluginRepository plugins) {
+    public RuneSyncPanelService(RuneSyncRepository repository, HubEvents events, PointsRepository points, PluginRepository plugins) {
         this.repository = repository;
         this.events = events;
-        this.eventService = eventService;
         this.points = points;
         this.plugins = plugins;
     }
@@ -192,18 +190,28 @@ public class RuneSyncPanelService {
         return answer;
     }
 
-    /** One clan: its open and running events, the member's own points, and the member's own progress. */
+    /**
+     * One clan: its open and running events (the hub's, T-932: the website's Event Manager events and the bot's alike), the member's own points, and
+     * the member's own progress. A server with no clan on the hub (or a hub that can't answer) shows no events, but still its points.
+     */
     DataObject clan(long guildId, String name, long userId) {
         DataArray list = DataArray.empty();
         DataArray progress = DataArray.empty();
-        for (Event event : events.events(guildId, List.of(Status.RUNNING, Status.SIGNUPS), EVENTS_PER_CLAN)) {
+        List<Event> open;
+        try {
+            open = events.events(guildId, List.of(Status.RUNNING, Status.SIGNUPS), EVENTS_PER_CLAN);
+        } catch (EventProblem e) {
+            open = List.of();
+        }
+        for (Event event : open) {
             if (event.archived()) continue;
             Participant me = events.participant(event.id(), userId).orElse(null);
             boolean joined = me != null && !me.waiting();
             list.add(DataObject.empty().put("id", Long.toString(event.id())).put("name", event.name()).put("template", event.template())
                     .put("status", event.status().name()).put("startsAt", event.startsAt() == null ? null : event.startsAt().toString())
                     .put("endsAt", event.endsAt() == null ? null : event.endsAt().toString()).put("joined", joined));
-            if (joined && event.status() == Status.RUNNING) progress.add(progress(guildId, event, me));
+            // the hub's list carries no settings: the board needs them, so a running event the member plays is read in full
+            if (joined && event.status() == Status.RUNNING) progress.add(progress(guildId, events.full(event).orElse(event), me));
         }
         PointsRepository.Settings pointSettings = points.settings(guildId);
         DataObject own = pointSettings.enabled()
@@ -217,8 +225,8 @@ public class RuneSyncPanelService {
         boolean team = event.scoringMode() == ScoringMode.TEAM;
         String subject = team ? (me.teamId() == null ? null : "t:" + me.teamId()) : "u:" + me.userId();
         Standing mine = subject == null ? null
-                : eventService.standings(guildId, event.id()).stream().filter(s -> s.subject().equals(subject)).findFirst().orElse(null);
-        var objectives = eventService.objectives(event.id());
+                : events.standings(guildId, event.id()).stream().filter(s -> s.subject().equals(subject)).findFirst().orElse(null);
+        var objectives = events.objectives(event.id());
         int done = 0;
         for (var o : objectives) if (mine != null && mine.completions().getOrDefault(o.key(), 0) > 0) done++;
         DataObject out = DataObject.empty().put("eventId", Long.toString(event.id())).put("name", event.name()).put("team", team)

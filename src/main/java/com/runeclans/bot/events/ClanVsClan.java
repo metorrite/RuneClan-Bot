@@ -26,6 +26,8 @@ public final class ClanVsClan {
     public static final String KEY = "clan-vs-clan";
     public static final String GAME = "cvcGame";
     public static final String TEAMS = "cvcTeams";
+    /** Bot-side only (never sent to the hub): each clan's local team id by its hub clan id, filled from the hub's {@code cvcTeams} by {@code HubEvents}. */
+    public static final String TEAMS_HUB = "cvcTeamsHub";
     public static final List<String> GAMES = List.of(BingoTemplate.KEY, CompetitionTemplate.KEY, BossNightTemplate.KEY, ScavengerHuntTemplate.KEY);
     public static final int DEFAULT_TOP_N = 10;
     public static final int MAX_TOP_N = 100;
@@ -117,6 +119,19 @@ public final class ClanVsClan {
             for (String key : t.keys()) teams.put(Long.parseLong(key), t.getLong(key));
         } catch (RuntimeException e) {
             // unreadable: no teams known, they are made again
+        }
+        return teams;
+    }
+
+    /** Each participating clan's local team id by hub clan id ({@link #TEAMS_HUB}); empty for an event the hub didn't send. */
+    public static Map<String, Long> hubTeams(DataObject config) {
+        Map<String, Long> teams = new LinkedHashMap<>();
+        if (config == null || !config.hasKey(TEAMS_HUB) || config.isNull(TEAMS_HUB)) return teams;
+        try {
+            DataObject t = config.getObject(TEAMS_HUB);
+            for (String key : t.keys()) teams.put(key, t.getLong(key));
+        } catch (RuntimeException e) {
+            // unreadable: none known
         }
         return teams;
     }

@@ -157,6 +157,17 @@ public final class EventQuickCreate {
         return new Plan(input, kind.label + " · " + about + " · " + days + (days == 1 ? " day" : " days"));
     }
 
+    /**
+     * The plain standard answers of a quick-create kind's template (no server defaults), as an {@link EventInput}: what {@code HubEvents.createEvent} compares a
+     * plan with so it sends the hub only what was really chosen. Empty for a template this command doesn't make.
+     */
+    public static java.util.Optional<EventInput> standardInput(String templateKey, Instant now) {
+        for (Kind kind : Kind.values()) {
+            if (kind.template.equals(templateKey)) return java.util.Optional.of(EventOptions.toInput(EventOptions.normalize(EventOptions.standard(templateFor(kind), now))));
+        }
+        return java.util.Optional.empty();
+    }
+
     /** The template of a kind, for its options. The templates keep no state, so one made here is as good as the one the bot holds. */
     private static EventTemplate templateFor(Kind kind) {
         return switch (kind) {
