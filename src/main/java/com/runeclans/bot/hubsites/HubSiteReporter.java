@@ -24,7 +24,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
@@ -255,19 +258,33 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
         lane.execute(() -> reports.changed(guildId, ids));
     }
 
-    /** Every holder of the role, loaded from Discord (the member cache holds only online members); null when Discord couldn't say. */
-    private List<Long> holders(long guildId, long roleId) {
+    /**
+     * Every holder of each role, from ONE member load of the server (the member cache holds only online members, and Discord answers one
+     * member-list request per server every 30 seconds, so a load per role timed out for all but the first); null when Discord couldn't say.
+     */
+    private Map<Long, List<Long>> holders(long guildId, Set<Long> roleIds) {
         JDA current = jda;
         Guild guild = current == null ? null : Shards.guild(current, guildId);
-        Role role = guild == null ? null : guild.getRoleById(roleId);
-        if (role == null) return guild == null ? null : List.of(); // a mapped role deleted in Discord has no holders
+        if (guild == null) return null;
+        Map<Long, List<Long>> out = new LinkedHashMap<>();
+        Set<Long> live = new java.util.HashSet<>();
+        for (long id : roleIds) {
+            out.put(id, new ArrayList<>()); // a mapped role deleted in Discord has no holders
+            if (guild.getRoleById(id) != null) live.add(id);
+        }
+        if (live.isEmpty()) return out;
         try {
-            List<Member> members = guild.findMembersWithRoles(role).setTimeout(30, TimeUnit.SECONDS).get();
-            List<Long> ids = new ArrayList<>(members.size());
-            for (Member m : members) ids.add(m.getIdLong());
-            return ids;
+            List<Member> members = guild.findMembers(m -> m.getRoles().stream().anyMatch(r -> live.contains(r.getIdLong())))
+                    .setTimeout(30, TimeUnit.SECONDS).get();
+            for (Member m : members) {
+                for (Role r : m.getRoles()) {
+                    List<Long> list = out.get(r.getIdLong());
+                    if (list != null) list.add(m.getIdLong());
+                }
+            }
+            return out;
         } catch (RuntimeException e) {
-            log.warn("Couldn't load a mapped role's holders: {}", e.getClass().getSimpleName());
+            log.warn("Couldn't load a server's members for its mapped roles: {}", e.getClass().getSimpleName());
             return null;
         }
     }
