@@ -2,8 +2,10 @@ package com.runeclans.bot.hubsites;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -13,6 +15,9 @@ import java.util.function.Function;
  * Who holds the roles a site's rules follow, reported to the hub (T-505, D-13): only roles the hub's {@code role-mappings} name, one
  * {@code PUT /v1/guilds/{guildId}/role-members/{roleId}} per role with every holder. Member role changes are gathered for a few seconds
  * so a burst (a role panel, a bulk edit) still sends one report per role. Discord ids go only to the hub, never to the log.
+ * <p>Discord answers only one member-list request per server every 30 seconds and silently drops the rest, so the holders of every role
+ * due in a server come from ONE member load: asking once per role left all but the first role of each server unreported, and the
+ * hub then counted the clan's chosen editor roles as unreported (T-963 fallback) for everyone.
  */
 final class RoleReports {
     /** How long role changes are gathered before the report goes out. */
@@ -31,14 +36,17 @@ final class RoleReports {
     record Key(long guildId, long roleId) {}
 
     private final Function<Long, Optional<Set<Long>>> mappedRoles;
-    /** Every holder of a role in a server, or null when Discord couldn't say (nothing is sent then: never a wrong "nobody"). */
-    private final BiFunction<Long, Long, List<Long>> holders;
+    /**
+     * Every holder of each of the roles in a server, from one member load: role id to holders (a role deleted in Discord maps to no
+     * holders), or null when Discord couldn't say (nothing is sent then: never a wrong "nobody").
+     */
+    private final BiFunction<Long, Set<Long>, Map<Long, List<Long>>> holders;
     private final Sender sender;
     private final Timer timer;
     private final Set<Key> pending = new LinkedHashSet<>();
     private boolean scheduled;
 
-    RoleReports(Function<Long, Optional<Set<Long>>> mappedRoles, BiFunction<Long, Long, List<Long>> holders, Sender sender, Timer timer) {
+    RoleReports(Function<Long, Optional<Set<Long>>> mappedRoles, BiFunction<Long, Set<Long>, Map<Long, List<Long>>> holders, Sender sender, Timer timer) {
         this.mappedRoles = mappedRoles;
         this.holders = holders;
         this.sender = sender;
@@ -61,9 +69,7 @@ final class RoleReports {
 
     /** Reports every mapped role of {@code guildId} now (on start). Returns how many roles were reported. */
     int all(long guildId) {
-        int sent = 0;
-        for (long role : mappedRoles.apply(guildId).orElse(Set.of())) if (report(new Key(guildId, role))) sent++;
-        return sent;
+        return report(guildId, mappedRoles.apply(guildId).orElse(Set.of()));
     }
 
     /** Sends the gathered roles, one report each. Returns how many were sent. */
@@ -74,15 +80,25 @@ final class RoleReports {
             pending.clear();
             scheduled = false;
         }
+        Map<Long, Set<Long>> byGuild = new LinkedHashMap<>();
+        for (Key key : due) byGuild.computeIfAbsent(key.guildId(), g -> new LinkedHashSet<>()).add(key.roleId());
         int sent = 0;
-        for (Key key : due) if (report(key)) sent++;
+        for (Map.Entry<Long, Set<Long>> e : byGuild.entrySet()) sent += report(e.getKey(), e.getValue());
         return sent;
     }
 
-    private boolean report(Key key) {
-        List<Long> who = holders.apply(key.guildId(), key.roleId());
-        if (who == null) return false;
-        sender.send(key.guildId(), key.roleId(), who);
-        return true;
+    /** One member load for the server, then one report per role. Returns how many roles were reported. */
+    private int report(long guildId, Set<Long> roleIds) {
+        if (roleIds.isEmpty()) return 0;
+        Map<Long, List<Long>> loaded = holders.apply(guildId, Set.copyOf(roleIds));
+        if (loaded == null) return 0;
+        int sent = 0;
+        for (long role : roleIds) {
+            List<Long> who = loaded.get(role);
+            if (who == null) continue;
+            sender.send(guildId, role, who);
+            sent++;
+        }
+        return sent;
     }
 }
