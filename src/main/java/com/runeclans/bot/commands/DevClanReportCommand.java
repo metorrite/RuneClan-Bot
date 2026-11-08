@@ -15,12 +15,11 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /**
- * Dev-only: the Clan Report's "Send Now" without opening the Tracking panel — recomputes points and
- * promotion eligibility (the same job {@code ClanPointsScheduler} fires at 00:10 UTC) and posts the
+ * Dev-only: the Clan Report's "Send Now" without opening the Tracking panel — reads the hub's points and
+ * promotion flags (the same job {@code ClanPointsScheduler} fires at 01:30 UTC) and posts the
  * report to the channels configured for {@link TrackingGroup#CLAN_REPORT}. It's a thin wrapper over
  * {@link TrackingSendNowService#sendGroupNow}, so it can't drift from what the panel button does, and
- * says why when nothing was posted. Safe to repeat — point awards are idempotent per day/week. Reads
- * and writes whichever database this instance is connected to. {@code @Test} (with
+ * says why when nothing was posted. Safe to repeat — the bot awards nothing (the hub does). {@code @Test} (with
  * {@link CommandScope#GUILD}) keeps this out of production's command list entirely, and
  * {@link BotConfig#getLiveEnvironment()} is checked again at runtime as a second layer, same pattern
  * as {@code DevTogglePostingCommand}.

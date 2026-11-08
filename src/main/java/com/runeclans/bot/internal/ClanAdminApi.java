@@ -361,7 +361,7 @@ public class ClanAdminApi {
 
         java.util.Map<Long, Long> thresholds = new java.util.LinkedHashMap<>();
         for (long[] update : updates) thresholds.put(update[0], update[1]);
-        if (!points.save(guild.getIdLong(), actor.getIdLong(), daily, visit, cap, thresholds)) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
+        if (points.save(guild.getIdLong(), actor.getIdLong(), daily, visit, cap, thresholds) == null) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
         log.info("Dashboard: {} updated clan points settings and {} rank threshold(s)", actor.getId(), updates.size());
         return clanPoints(guild);
     }
