@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,7 +46,7 @@ class RankCongratsJobTest {
         String line = "• @everyone (Someone): Corporal\n";
         String text = line.repeat(RankAdvisorRules.DISCORD_MAX / line.length() * 2 + 5);
         int parts = RankAdvisorRules.chunks(text, RankAdvisorRules.DISCORD_MAX).size();
-        DataObject result = new RankCongratsJob().run(jda, new DiscordJob(5L, RankCongratsJob.KIND, GUILD, 0L, null,
+        DataObject result = new RankCongratsJob(mock(SiteCockpitStore.class)).run(jda, new DiscordJob(5L, RankCongratsJob.KIND, GUILD, 0L, null,
                 RankCongratsJob.payload(20L, text), DiscordJob.State.RUNNING, 1, 0, null, null, null, null, null));
 
         assertEquals("40", result.getString("messageId"));
@@ -54,5 +55,44 @@ class RankCongratsJobTest {
         verify(action, times(parts)).setAllowedMentions(EnumSet.noneOf(Message.MentionType.class));
         verify(action, never()).mentionRoles(any(long[].class));
         verify(action, never()).mentionUsers(any(long[].class));
+    }
+
+    @Test
+    void theHubsWeekNamesTheLinkedMembersInThisServer() {
+        Guild guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
+        SiteCockpitStore cockpit = mock(SiteCockpitStore.class);
+        long linked = Long.parseLong("9".repeat(18));
+        when(cockpit.links(GUILD)).thenReturn(Map.of("zezima", linked));
+        net.dv8tion.jda.api.entities.Member member = mock(net.dv8tion.jda.api.entities.Member.class);
+        when(member.getEffectiveName()).thenReturn("Zez");
+        when(guild.getMemberById(linked)).thenReturn(member);
+        DataObject payload = DataObject.fromJson("""
+                {"channelId": 20, "text": "Well done!\\n• Zezima: Corporal\\n• Bob: Sergeant", "template": "Well done!\\n{list}",
+                 "promoted": [{"rsnKey": "zezima", "rsn": "Zezima", "from": "Recruit", "to": "Corporal"}, {"rsn": "Bob", "from": "Corporal", "to": "Sergeant"},
+                              {"rsn": "", "to": "Corporal"}]}""");
+        RankCongratsJob job = new RankCongratsJob(cockpit);
+        assertEquals("Well done!\n• @Zez (Zezima): Corporal\n• Bob: Sergeant", job.textFor(guild, payload));
+
+        when(cockpit.links(GUILD)).thenThrow(new RuntimeException("database away"));
+        assertEquals("Well done!\n• Zezima: Corporal\n• Bob: Sergeant", job.textFor(guild, payload), "no links: the hub's own text");
+        assertEquals("plain", job.textFor(guild, RankCongratsJob.payload(20L, "plain")), "the bot's own payload is posted as it is");
+    }
+
+    @Test
+    void anUnreadableHubListPostsTheHubsTextAndANameNeverPingsEveryone() {
+        Guild guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
+        SiteCockpitStore cockpit = mock(SiteCockpitStore.class);
+        long linked = Long.parseLong("9".repeat(18));
+        when(cockpit.links(GUILD)).thenReturn(Map.of("zezima", linked));
+        net.dv8tion.jda.api.entities.Member member = mock(net.dv8tion.jda.api.entities.Member.class);
+        when(member.getEffectiveName()).thenReturn("@everyone");
+        when(guild.getMemberById(linked)).thenReturn(member);
+        RankCongratsJob job = new RankCongratsJob(cockpit);
+        DataObject bad = DataObject.fromJson("{\"text\": \"hub text\", \"template\": \"{list}\", \"promoted\": [1, \"x\"]}");
+        assertEquals("hub text", job.textFor(guild, bad), "an unreadable list: the hub's text");
+        DataObject named = DataObject.fromJson("{\"text\": \"hub text\", \"template\": \"{list}\", \"promoted\": [{\"rsnKey\": \"zezima\", \"rsn\": \"Zezima\", \"to\": \"Corporal\"}]}");
+        assertEquals("• @@\u200beveryone (Zezima): Corporal", job.textFor(guild, named));
     }
 }
