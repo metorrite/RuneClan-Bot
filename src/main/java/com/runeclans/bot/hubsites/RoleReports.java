@@ -22,6 +22,8 @@ import java.util.function.Function;
 final class RoleReports {
     /** How long role changes are gathered before the report goes out. */
     static final Duration DEBOUNCE = Duration.ofSeconds(5);
+    /** After a member load Discord didn't answer (likely its one-per-30-seconds limit), the changed roles are tried again this much later. */
+    static final Duration RETRY = Duration.ofSeconds(35);
 
     /** Runs {@code task} once after {@code delay}. */
     interface Timer {
@@ -69,7 +71,7 @@ final class RoleReports {
 
     /** Reports every mapped role of {@code guildId} now (on start). Returns how many roles were reported. */
     int all(long guildId) {
-        return report(guildId, mappedRoles.apply(guildId).orElse(Set.of()));
+        return Math.max(0, report(guildId, mappedRoles.apply(guildId).orElse(Set.of())));
     }
 
     /** Sends the gathered roles, one report each. Returns how many were sent. */
@@ -83,15 +85,47 @@ final class RoleReports {
         Map<Long, Set<Long>> byGuild = new LinkedHashMap<>();
         for (Key key : due) byGuild.computeIfAbsent(key.guildId(), g -> new LinkedHashSet<>()).add(key.roleId());
         int sent = 0;
-        for (Map.Entry<Long, Set<Long>> e : byGuild.entrySet()) sent += report(e.getKey(), e.getValue());
+        Set<Key> failed = new LinkedHashSet<>();
+        for (Map.Entry<Long, Set<Long>> e : byGuild.entrySet()) {
+            int n = report(e.getKey(), e.getValue());
+            if (n < 0) for (long role : e.getValue()) failed.add(new Key(e.getKey(), role));
+            else sent += n;
+        }
+        if (!failed.isEmpty()) retry(failed);
         return sent;
     }
 
-    /** One member load for the server, then one report per role. Returns how many roles were reported. */
+    /** Puts roles whose load failed back in the queue, tried once more after {@link #RETRY} (a newer change joins that wait). */
+    private void retry(Set<Key> keys) {
+        boolean schedule = false;
+        synchronized (this) {
+            pending.addAll(keys);
+            if (!scheduled) {
+                scheduled = true;
+                schedule = true;
+            }
+        }
+        if (schedule) timer.after(RETRY, this::retriedFlush);
+    }
+
+    /** A retry's flush: what fails again waits for the next change or the regular refresh, so a server Discord won't answer can't loop. */
+    private void retriedFlush() {
+        List<Key> due;
+        synchronized (this) {
+            due = List.copyOf(pending);
+            pending.clear();
+            scheduled = false;
+        }
+        Map<Long, Set<Long>> byGuild = new LinkedHashMap<>();
+        for (Key key : due) byGuild.computeIfAbsent(key.guildId(), g -> new LinkedHashSet<>()).add(key.roleId());
+        for (Map.Entry<Long, Set<Long>> e : byGuild.entrySet()) report(e.getKey(), e.getValue());
+    }
+
+    /** One member load for the server, then one report per role. Returns how many roles were reported, or -1 when the load failed. */
     private int report(long guildId, Set<Long> roleIds) {
         if (roleIds.isEmpty()) return 0;
         Map<Long, List<Long>> loaded = holders.apply(guildId, Set.copyOf(roleIds));
-        if (loaded == null) return 0;
+        if (loaded == null) return -1;
         int sent = 0;
         for (long role : roleIds) {
             List<Long> who = loaded.get(role);

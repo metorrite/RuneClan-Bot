@@ -92,6 +92,56 @@ class RoleReportsTest {
     }
 
     @Test
+    void aRoleMissingFromTheLoadIsSkippedAndTheOthersStillSend() {
+        RoleReports reports = new RoleReports(g -> Optional.of(Set.of(MAPPED, OTHER_MAPPED)), (g, roles) -> Map.of(MAPPED, List.of(MEMBER)),
+                (g, r, who) -> sent.add(g + "/" + r + "=" + who), (delay, task) -> timers.add(task));
+        assertEquals(1, reports.all(GUILD));
+        assertEquals(List.of(GUILD + "/" + MAPPED + "=[" + MEMBER + "]"), sent);
+    }
+
+    @Test
+    void aBurstOverTwoServersLoadsEachOnce() {
+        long other = Long.parseLong("3".repeat(18));
+        RoleReports reports = reports(List.of(MEMBER));
+        reports.changed(GUILD, List.of(MAPPED, OTHER_MAPPED));
+        reports.changed(other, List.of(MAPPED));
+        timers.get(0).run();
+        assertEquals(3, sent.size());
+        assertEquals(2, loads);
+    }
+
+    @Test
+    void aFailedLoadAfterAChangeIsTriedOnceMoreLater() {
+        List<Map<Long, List<Long>>> answers = new ArrayList<>(java.util.Arrays.asList(null, null, null));
+        RoleReports reports = new RoleReports(g -> Optional.of(Set.of(MAPPED)), (g, roles) -> {
+                    loads++;
+                    return answers.isEmpty() ? null : answers.remove(0);
+                }, (g, r, who) -> sent.add(g + "/" + r + "=" + who), (delay, task) -> {
+                    delays.add(delay);
+                    timers.add(task);
+                });
+        reports.changed(GUILD, List.of(MAPPED));
+        timers.get(0).run();
+        assertEquals(2, timers.size(), "the failed role waits again");
+        assertEquals(RoleReports.RETRY, delays.get(1));
+        timers.get(1).run();
+        assertEquals(2, timers.size(), "a second failure doesn't loop");
+        assertEquals(List.of(), sent);
+        assertEquals(2, loads);
+    }
+
+    @Test
+    void aRetriedLoadThatWorksSends() {
+        List<Map<Long, List<Long>>> answers = new ArrayList<>(java.util.Arrays.asList(null, Map.of(MAPPED, List.of(MEMBER))));
+        RoleReports reports = new RoleReports(g -> Optional.of(Set.of(MAPPED)), (g, roles) -> answers.remove(0),
+                (g, r, who) -> sent.add(g + "/" + r + "=" + who), (delay, task) -> timers.add(task));
+        reports.changed(GUILD, List.of(MAPPED));
+        timers.get(0).run();
+        timers.get(1).run();
+        assertEquals(List.of(GUILD + "/" + MAPPED + "=[" + MEMBER + "]"), sent);
+    }
+
+    @Test
     void holdersDiscordCouldNotLoadAreNotReportedAsNobody() {
         RoleReports reports = reports(null);
         reports.changed(GUILD, List.of(MAPPED));
