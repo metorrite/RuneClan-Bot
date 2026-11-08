@@ -87,10 +87,12 @@ public class FeatureStatusApi implements AdminRouteExtension {
     private final ClanProfileRepository clanProfiles;
     private final DashboardAccess access;
     private final BotOwners owners;
+    private final com.runeclans.bot.runescape.ClanPointsRepository clanPoints;
 
     public FeatureStatusApi(FeatureStatusRepository repository, GuildSettingsService settings, PermissionGroupService groups, HubService hub,
                             AutomodRepository automod, BrandingRepository branding, CheckupAdminApi checkup, ClanProfileRepository clanProfiles,
-                            DashboardAccess access, BotOwners owners) {
+                            DashboardAccess access, BotOwners owners, com.runeclans.bot.runescape.ClanPointsRepository clanPoints) {
+        this.clanPoints = clanPoints;
         this.repository = repository;
         this.settings = settings;
         this.groups = groups;
@@ -134,6 +136,12 @@ public class FeatureStatusApi implements AdminRouteExtension {
         for (String clanTab : List.of("/clan/members", "/clan/attention", "/clan/promotions")) on.put(clanTab, s.clanEnabled());
         on.put("/clan/role-sync", s.clanEnabled() && s.verifiedClanRoleId() != null);
         on.put("/event-tools/discord-events", sharedEventAhead(guild));
+        // clan points are the hub's (T-978): on once any amount is set; no dot while the hub can't say
+        net.dv8tion.jda.api.utils.data.DataObject points = clanPoints.known(guildId);
+        if (points != null) {
+            var amounts = com.runeclans.bot.runescape.ClanPointsRepository.settingsOf(points);
+            on.put("/clan/clan-points", amounts.dailyMembershipPoints() > 0 || amounts.citadelVisitPoints() > 0 || amounts.citadelCapPoints() > 0);
+        }
 
         FeatureStatusRepository.Facts facts = repository.read(guildId);
         if (facts != null) {

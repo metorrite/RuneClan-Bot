@@ -49,13 +49,15 @@ class SiteRankStoreDatabaseTest {
     private static final long OWNER = Long.parseLong("5".repeat(18));
     private static ConnectionSupplier supplier;
     private static SiteRankStore store;
+    private static com.runeclans.bot.runescape.ClanPointsRepository points;
     private static ClanMemberRepository roster;
 
     @BeforeAll
     static void connect() throws Exception {
         supplier = LocalDatabase.supplier();
         RuneScapeDatabaseInitializer schema = new RuneScapeDatabaseInitializer(supplier);
-        store = new SiteRankStore(supplier, schema);
+        points = org.mockito.Mockito.mock(com.runeclans.bot.runescape.ClanPointsRepository.class);
+        store = new SiteRankStore(supplier, schema, points);
         roster = new ClanMemberRepository(supplier, schema);
     }
 
@@ -99,7 +101,9 @@ class SiteRankStoreDatabaseTest {
     @Test
     void pointsAndTheStaffJoinDateAreRead() throws Exception {
         roster.upsert(G, "Zezima", "Recruit", 1_000, 0);
-        sql("INSERT INTO younglings.clan_member_points (guild_id, rsn, total_points) VALUES (" + G + ", 'zezima', 42)");
+        // the points are the hub's (T-978)
+        org.mockito.Mockito.when(points.totals(G)).thenReturn(java.util.Map.of("zezima",
+                new com.runeclans.bot.runescape.ClanPointsRepository.MemberPointsRow("Zezima", 42, false, null)));
         sql("UPDATE younglings.clan_member SET clan_joined_at = DATE '2020-01-02' WHERE guild_id = " + G);
         SiteRankStore.Row row = only("Zezima");
         assertEquals(42, row.points());

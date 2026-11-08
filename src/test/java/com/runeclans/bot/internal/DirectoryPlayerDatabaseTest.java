@@ -86,7 +86,7 @@ class DirectoryPlayerDatabaseTest {
         new CofferDatabaseInitializer(db);
         stats = new SiteStatsRepository(db, initializer).withStats(HUB.backends());
         links = new PlayerLinkRepository(db, initializer).withStats(HUB.backends());
-        points = new ClanPointsRepository(db, initializer);
+        points = new ClanPointsRepository(mock(com.runeclans.bot.runeclans.RuneClansHubClient.class));
         memberProfiles = new MemberProfileRepository(db);
         WeeklyDigestRepository digest = new WeeklyDigestRepository(db, initializer);
         GuildSettingsService settings = mock(GuildSettingsService.class);

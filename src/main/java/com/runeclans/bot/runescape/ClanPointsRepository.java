@@ -1,315 +1,254 @@
 package com.runeclans.bot.runescape;
 
-import io.github.freya022.botcommands.api.core.db.ConnectionSupplier;
+import com.runeclans.bot.runeclans.RuneClansHubClient;
+import net.dv8tion.jda.api.utils.data.DataArray;
+import net.dv8tion.jda.api.utils.data.DataObject;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Backs the clan points/promotion system (see {@code com.runeclans.bot.tracking.ClanPointsService}):
- * the per-guild rank ladder and its point thresholds, the daily/Citadel point values, the permanent
- * award ledger, and each member's running total and promotion-needed flag.
+ * Clan points (see {@code com.runeclans.bot.tracking.ClanPointsService}), kept on the RuneClans hub since T-978: the rank ladder and its
+ * point thresholds, the daily/Citadel point values, each member's running total and promotion-needed flag. The hub awards the points after
+ * its daily roster fetch; this reads them ({@code GET /v1/guilds/{guildId}/points}, kept a minute) and sends the Discord panel's changes
+ * ({@code PUT .../points}, {@code POST .../points/promoted}), and the award history ({@code .../points/awards}, {@code .../points/earned})
+ * for the site members list, the recaps and the leaderboard race. The bot's old {@code clan_rank_config} / {@code clan_points_*} tables are
+ * left as they were for T-980 to copy; nothing in the bot reads them. Reads are tried once (no retry sleeps: Discord and the website wait on
+ * them), and a server the hub has no clan for is remembered for a minute so it doesn't cost a call each time. With no answer from the hub,
+ * the ladder is the standard one with no thresholds and nobody is flagged; {@link #known} tells "unknown" from "not set".
  */
 @BService
 public class ClanPointsRepository {
-    private static final Logger log = LoggerFactory.getLogger(ClanPointsRepository.class);
-
     // The standard Jagex clan rank titles, lowest to highest — confirmed against the wiki's own Clan
     // Chat rank table (runescape.wiki/w/RuneScape:Clan_Chat#Ranks), which is also where TrackingIconCatalog's
-    // rank icons (images/ranks/<order>.png) come from ("{RankName}_clan_rank.png", "Deputy Owner"
-    // itself is "Deputy_owner_clan_rank.png" — lowercase "owner"). 12 tiers, not the 11 first guessed
-    // here — "Overseer" sits between Coordinator and Deputy Owner and was missed originally. Used only
-    // to seed a guild's clan_rank_config the first time it's read empty; every tier's name and
-    // point_threshold are admin-editable afterward (a clan can rename any tier), so this list is never
-    // consulted again once a guild has rows.
+    // rank icons (images/ranks/<order>.png) come from. 12 tiers; index = rank_order.
     public static final List<String> STANDARD_RANK_NAMES = List.of(
             "Recruit", "Corporal", "Sergeant", "Lieutenant", "Captain", "General",
             "Admin", "Organiser", "Coordinator", "Overseer", "Deputy Owner", "Owner");
 
-    private final ConnectionSupplier connectionSupplier;
+    private static final Duration KEEP = Duration.ofMinutes(1);
 
-    public ClanPointsRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer) {
-        this.connectionSupplier = connectionSupplier;
+    private final RuneClansHubClient hub;
+    /** Servers the hub answered 404/409 for (no site, or a site with no clan), until when. */
+    private final java.util.Map<Long, java.time.Instant> noClan = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public ClanPointsRepository(RuneClansHubClient hub) {
+        this.hub = hub;
     }
 
+    /** One tier of the ladder; {@code id} is its {@code rankOrder} (the hub's rank id). */
     public record RankConfigRow(long id, long guildId, String rankName, int rankOrder, long pointThreshold) {}
-
-    /**
-     * Ordered lowest to highest. Seeds {@link #STANDARD_RANK_NAMES} on first call for a guild that has
-     * none yet, all thresholds starting at 0. If a guild's row count doesn't match
-     * {@link #STANDARD_RANK_NAMES}'s current size, it was seeded under an earlier (wrong-tier-count)
-     * version of that list — safe to wipe and reseed fresh rather than trying to patch individual rows
-     * in place, since a threshold only ever defaults to 0 until an admin sets real values, and that's
-     * all any earlier seed could have had this soon after the feature shipped.
-     */
-    public List<RankConfigRow> getRanksOrdered(long guildId) {
-        List<RankConfigRow> existing = queryRanks(guildId);
-        if (existing.size() == STANDARD_RANK_NAMES.size()) return existing;
-
-        if (!existing.isEmpty()) {
-            log.info("Guild {}'s clan_rank_config has {} row(s), expected {} — reseeding from the current standard rank list.",
-                    guildId, existing.size(), STANDARD_RANK_NAMES.size());
-            deleteAllRanks(guildId);
-        }
-        seedStandardRanks(guildId);
-        return queryRanks(guildId);
-    }
-
-    private void deleteAllRanks(long guildId) {
-        String sql = "DELETE FROM younglings.clan_rank_config WHERE guild_id = ?";
-
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            statement.executeUpdate();
-
-        } catch (SQLException e) {
-            log.error("Failed to clear clan rank config for guild {}", guildId, e);
-            throw new RuntimeException("Failed to clear clan rank config", e);
-        }
-    }
-
-    private List<RankConfigRow> queryRanks(long guildId) {
-        String sql = "SELECT id, guild_id, rank_name, rank_order, point_threshold FROM younglings.clan_rank_config WHERE guild_id = ? ORDER BY rank_order";
-
-        List<RankConfigRow> results = new ArrayList<>();
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            try (ResultSet rs = statement.executeQuery()) {
-                while (rs.next()) {
-                    results.add(new RankConfigRow(rs.getLong("id"), rs.getLong("guild_id"), rs.getString("rank_name"),
-                            rs.getInt("rank_order"), rs.getLong("point_threshold")));
-                }
-            }
-            return results;
-
-        } catch (SQLException e) {
-            log.error("Failed to get clan rank config for guild {}", guildId, e);
-            throw new RuntimeException("Failed to get clan rank config", e);
-        }
-    }
-
-    private void seedStandardRanks(long guildId) {
-        String sql = """
-                INSERT INTO younglings.clan_rank_config (guild_id, rank_name, rank_order, point_threshold)
-                VALUES (?, ?, ?, 0)
-                ON CONFLICT (guild_id, rank_order) DO NOTHING
-                """;
-
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            for (int order = 0; order < STANDARD_RANK_NAMES.size(); order++) {
-                statement.setLong(1, guildId);
-                statement.setString(2, STANDARD_RANK_NAMES.get(order));
-                statement.setInt(3, order);
-                statement.addBatch();
-            }
-            statement.executeBatch();
-
-        } catch (SQLException e) {
-            log.error("Failed to seed standard clan ranks for guild {}", guildId, e);
-            throw new RuntimeException("Failed to seed standard clan ranks", e);
-        }
-    }
-
-    public void setRankThreshold(long guildId, long rankConfigId, long pointThreshold) {
-        String sql = "UPDATE younglings.clan_rank_config SET point_threshold = ? WHERE id = ? AND guild_id = ?";
-
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, pointThreshold);
-            statement.setLong(2, rankConfigId);
-            statement.setLong(3, guildId);
-            statement.executeUpdate();
-
-        } catch (SQLException e) {
-            log.error("Failed to set rank threshold for guild {} rank {}", guildId, rankConfigId, e);
-            throw new RuntimeException("Failed to set rank threshold", e);
-        }
-    }
 
     public record PointsSettings(long dailyMembershipPoints, long citadelVisitPoints, long citadelCapPoints) {}
 
-    /** All-zero defaults if this guild has never set anything — nothing is awarded until an admin configures at least one value above 0. */
-    public PointsSettings getSettings(long guildId) {
-        String sql = "SELECT daily_membership_points, citadel_visit_points, citadel_cap_points FROM younglings.clan_points_settings WHERE guild_id = ?";
+    public record MemberPointsRow(String rsn, long totalPoints, boolean promotionNeeded, LocalDate promotionNeededSince) {}
 
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            try (ResultSet rs = statement.executeQuery()) {
-                if (rs.next()) {
-                    return new PointsSettings(rs.getLong("daily_membership_points"), rs.getLong("citadel_visit_points"), rs.getLong("citadel_cap_points"));
-                }
-                return new PointsSettings(0, 0, 0);
-            }
-
-        } catch (SQLException e) {
-            log.error("Failed to get clan points settings for guild {}", guildId, e);
-            throw new RuntimeException("Failed to get clan points settings", e);
-        }
+    /** The settings, ladder and members in one answer; null when the hub has none to give (down, or no clan for the server). */
+    public DataObject known(long guildId) {
+        return read(guildId);
     }
 
-    public void setSettings(long guildId, long dailyMembershipPoints, long citadelVisitPoints, long citadelCapPoints) {
-        String sql = """
-                INSERT INTO younglings.clan_points_settings (guild_id, daily_membership_points, citadel_visit_points, citadel_cap_points)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (guild_id) DO UPDATE SET
-                    daily_membership_points = EXCLUDED.daily_membership_points,
-                    citadel_visit_points = EXCLUDED.citadel_visit_points,
-                    citadel_cap_points = EXCLUDED.citadel_cap_points
-                """;
+    /** Ordered lowest to highest. */
+    public List<RankConfigRow> getRanksOrdered(long guildId) {
+        return ranksOf(guildId, read(guildId));
+    }
 
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            statement.setLong(2, dailyMembershipPoints);
-            statement.setLong(3, citadelVisitPoints);
-            statement.setLong(4, citadelCapPoints);
-            statement.executeUpdate();
-
-        } catch (SQLException e) {
-            log.error("Failed to set clan points settings for guild {}", guildId, e);
-            throw new RuntimeException("Failed to set clan points settings", e);
+    /** The ladder in a points answer (the read's or a save's), or the standard one. */
+    public static List<RankConfigRow> ranksOf(long guildId, DataObject json) {
+        List<RankConfigRow> out = new ArrayList<>();
+        if (json != null && json.hasKey("ranks")) {
+            DataArray ranks = json.getArray("ranks");
+            for (int i = 0; i < ranks.length(); i++) {
+                DataObject r = ranks.getObject(i);
+                int order = r.getInt("order", i);
+                out.add(new RankConfigRow(order, guildId, r.getString("name", STANDARD_RANK_NAMES.get(Math.min(order, STANDARD_RANK_NAMES.size() - 1))), order,
+                        r.getLong("threshold", 0)));
+            }
         }
+        if (out.size() == STANDARD_RANK_NAMES.size()) return out;
+        List<RankConfigRow> standard = new ArrayList<>();
+        for (int i = 0; i < STANDARD_RANK_NAMES.size(); i++) standard.add(new RankConfigRow(i, guildId, STANDARD_RANK_NAMES.get(i), i, 0));
+        return standard;
+    }
+
+    public PointsSettings getSettings(long guildId) {
+        return settingsOf(read(guildId));
+    }
+
+    /** The three amounts in a points answer, 0 when there is none. */
+    public static PointsSettings settingsOf(DataObject json) {
+        if (json == null) return new PointsSettings(0, 0, 0);
+        return new PointsSettings(json.getLong("dailyMembershipPoints", 0), json.getLong("citadelVisitPoints", 0), json.getLong("citadelCapPoints", 0));
     }
 
     /**
-     * Records one point award and adds it to the member's running total, unless this exact
-     * (guild, rsn, awardType, awardedForDate) combination was already awarded — safe to call every
-     * day for every member without ever double-crediting a re-run. Returns {@code true} if this call
-     * actually awarded something new.
+     * Saves the amounts given (a null amount is left as the hub has it, so a thresholds-only save never touches them) and the thresholds
+     * given ({@code rankOrder -> threshold}, any number) for {@code actorId}. The hub's answer after the save (settings and ladder), or null
+     * when the hub didn't take it (no clan site for the server, the hub down, or refused).
      */
-    public boolean awardPoints(long guildId, String rsn, String awardType, long points, LocalDate awardedForDate) {
-        String insertAward = """
-                INSERT INTO younglings.clan_points_award (guild_id, rsn, award_type, points, awarded_for_date)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (guild_id, LOWER(rsn), award_type, awarded_for_date) DO NOTHING
-                """;
-        String upsertTotal = """
-                INSERT INTO younglings.clan_member_points (guild_id, rsn, total_points)
-                VALUES (?, ?, ?)
-                ON CONFLICT (guild_id, LOWER(rsn)) DO UPDATE SET
-                    total_points = clan_member_points.total_points + EXCLUDED.total_points
-                """;
-
-        try (Connection connection = connectionSupplier.getConnection()) {
-            try (PreparedStatement statement = connection.prepareStatement(insertAward)) {
-                statement.setLong(1, guildId);
-                statement.setString(2, rsn);
-                statement.setString(3, awardType);
-                statement.setLong(4, points);
-                statement.setObject(5, awardedForDate);
-                if (statement.executeUpdate() == 0) return false; // already awarded — no-op
-            }
-
-            try (PreparedStatement statement = connection.prepareStatement(upsertTotal)) {
-                statement.setLong(1, guildId);
-                statement.setString(2, rsn);
-                statement.setLong(3, points);
-                statement.executeUpdate();
-            }
-            return true;
-
-        } catch (SQLException e) {
-            log.error("Failed to award '{}' points to '{}' in guild {}", awardType, rsn, guildId, e);
-            throw new RuntimeException("Failed to award points", e);
-        }
+    public DataObject save(long guildId, long actorId, Long daily, Long visit, Long cap, java.util.Map<Long, Long> thresholds) {
+        DataArray ranks = DataArray.empty();
+        thresholds.forEach((order, threshold) -> ranks.add(DataObject.empty().put("id", Long.toString(order)).put("threshold", threshold)));
+        DataObject body = DataObject.empty().put("actorId", Long.toString(actorId)).put("ranks", ranks);
+        if (daily != null) body.put("dailyMembershipPoints", daily);
+        if (visit != null) body.put("citadelVisitPoints", visit);
+        if (cap != null) body.put("citadelCapPoints", cap);
+        RuneClansHubClient.Answer a = hub.call("PUT", path(guildId), body.toString());
+        hub.forget(tag(guildId));
+        if (a != null && a.ok()) noClan.remove(guildId);
+        return a != null && a.ok() ? a.json() : null;
     }
 
-    public record MemberPointsRow(String rsn, long totalPoints, boolean promotionNeeded, LocalDate promotionNeededSince) {}
+    /** One award: what for, how many points, and the UTC day it is for (a Citadel award: its week's Wednesday). */
+    public record Award(String type, long points, LocalDate awardedFor) {}
+
+    /** Points earned in a window by one member (and, with {@code byDay}, on one day; else {@code day} is null). */
+    public record Earned(String rsn, LocalDate day, long points) {}
+
+    /** {@code rsn}'s awards, newest first (at most {@code limit}, up to 200); empty when the hub can't say. */
+    public List<Award> awards(long guildId, String rsn, int limit) {
+        DataObject json = readOnce(path(guildId) + "/awards?rsn=" + encode(rsn) + "&limit=" + Math.max(1, Math.min(limit, 200)), guildId);
+        List<Award> out = new ArrayList<>();
+        if (json == null || !json.hasKey("awards")) return out;
+        DataArray rows = json.getArray("awards");
+        for (int i = 0; i < rows.length(); i++) {
+            DataObject a = rows.getObject(i);
+            out.add(new Award(a.getString("type", ""), a.getLong("points", 0), LocalDate.parse(a.getString("awardedFor"))));
+        }
+        return out;
+    }
+
+    /**
+     * Points awarded for the UTC days in {@code [from, to)} ({@code to} null: up to today), per member, or per member and day; one member
+     * with {@code rsn}. Empty when the hub can't say.
+     */
+    public List<Earned> earned(long guildId, LocalDate from, LocalDate to, String rsn, boolean byDay) {
+        return earnedIfKnown(guildId, from, to, rsn, byDay).orElse(List.of());
+    }
+
+    /**
+     * {@link #earned}, but empty (not an empty list) when the hub didn't answer, so a caller that keeps what it reads (a season's close)
+     * can try again later instead of keeping zeros. A server the hub has no clan for has earned nothing: an empty list.
+     */
+    public java.util.Optional<List<Earned>> earnedIfKnown(long guildId, LocalDate from, LocalDate to, String rsn, boolean byDay) {
+        StringBuilder q = new StringBuilder(path(guildId)).append("/earned?from=").append(from);
+        if (to != null) q.append("&to=").append(to);
+        if (rsn != null) q.append("&rsn=").append(encode(rsn));
+        if (byDay) q.append("&by=day");
+        java.util.Optional<DataObject> got = readKnown(q.toString(), guildId);
+        if (got.isEmpty()) return java.util.Optional.empty();
+        DataObject json = got.get();
+        List<Earned> out = new ArrayList<>();
+        if (!json.hasKey("earned")) return java.util.Optional.of(out);
+        DataArray rows = json.getArray("earned");
+        for (int i = 0; i < rows.length(); i++) {
+            DataObject e = rows.getObject(i);
+            String day = e.getString("day", null);
+            out.add(new Earned(e.getString("rsn", ""), day == null ? null : LocalDate.parse(day), e.getLong("points", 0)));
+        }
+        return java.util.Optional.of(out);
+    }
+
+    private static String encode(String value) {
+        return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    /** The name key members are matched by (case, spaces and underscores folded as the hub does). */
+    public static String key(String rsn) {
+        return rsn == null ? "" : rsn.strip().replace('_', ' ').replace('\u00A0', ' ').replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** A rank's place on the standard ladder (the hub's ladder is always it), or -1 for a name that isn't on it. */
+    public static int standardOrder(String rank) {
+        if (rank == null) return -1;
+        for (int i = 0; i < STANDARD_RANK_NAMES.size(); i++) if (STANDARD_RANK_NAMES.get(i).equalsIgnoreCase(rank.strip())) return i;
+        return -1;
+    }
+
+    /** Every current member's total and flag by {@link #key}; empty when the hub can't say. */
+    public java.util.Map<String, MemberPointsRow> totals(long guildId) {
+        java.util.Map<String, MemberPointsRow> out = new java.util.HashMap<>();
+        for (MemberPointsRow row : members(guildId)) out.put(key(row.rsn()), row);
+        return out;
+    }
 
     public MemberPointsRow getMemberPoints(long guildId, String rsn) {
-        String sql = "SELECT rsn, total_points, promotion_needed, promotion_needed_since FROM younglings.clan_member_points WHERE guild_id = ? AND LOWER(rsn) = LOWER(?)";
-
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            statement.setString(2, rsn);
-            try (ResultSet rs = statement.executeQuery()) {
-                if (rs.next()) {
-                    return new MemberPointsRow(rs.getString("rsn"), rs.getLong("total_points"),
-                            rs.getBoolean("promotion_needed"), rs.getObject("promotion_needed_since", LocalDate.class));
-                }
-                return new MemberPointsRow(rsn, 0, false, null);
-            }
-
-        } catch (SQLException e) {
-            log.error("Failed to get member points for '{}' in guild {}", rsn, guildId, e);
-            throw new RuntimeException("Failed to get member points", e);
-        }
+        for (MemberPointsRow row : members(guildId)) if (row.rsn().equalsIgnoreCase(rsn)) return row;
+        return new MemberPointsRow(rsn, 0, false, null);
     }
 
     /** Every member currently flagged as needing a promotion — what the daily Clan Report is built from. */
     public List<MemberPointsRow> getAllNeedingPromotion(long guildId) {
-        String sql = "SELECT rsn, total_points, promotion_needed, promotion_needed_since FROM younglings.clan_member_points WHERE guild_id = ? AND promotion_needed = TRUE";
-
-        List<MemberPointsRow> results = new ArrayList<>();
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            try (ResultSet rs = statement.executeQuery()) {
-                while (rs.next()) {
-                    results.add(new MemberPointsRow(rs.getString("rsn"), rs.getLong("total_points"),
-                            rs.getBoolean("promotion_needed"), rs.getObject("promotion_needed_since", LocalDate.class)));
-                }
-            }
-            return results;
-
-        } catch (SQLException e) {
-            log.error("Failed to get members needing promotion for guild {}", guildId, e);
-            throw new RuntimeException("Failed to get members needing promotion", e);
-        }
+        return members(guildId).stream().filter(MemberPointsRow::promotionNeeded).toList();
     }
 
-    /**
-     * Sets whether {@code rsn} currently needs a promotion. {@code promotion_needed_since} is set to
-     * {@code today} the first time this flips to {@code true} and left alone while it stays true
-     * (so the report can show how long someone's been waiting), then cleared back to {@code NULL} the
-     * moment it flips to {@code false}.
-     */
-    public void setPromotionNeeded(long guildId, String rsn, boolean needed, LocalDate today) {
-        String sql = """
-                INSERT INTO younglings.clan_member_points (guild_id, rsn, total_points, promotion_needed, promotion_needed_since)
-                VALUES (?, ?, 0, ?, ?)
-                ON CONFLICT (guild_id, LOWER(rsn)) DO UPDATE SET
-                    promotion_needed = EXCLUDED.promotion_needed,
-                    promotion_needed_since = CASE
-                        WHEN EXCLUDED.promotion_needed AND clan_member_points.promotion_needed_since IS NULL THEN EXCLUDED.promotion_needed_since
-                        WHEN NOT EXCLUDED.promotion_needed THEN NULL
-                        ELSE clan_member_points.promotion_needed_since
-                    END
-                """;
+    /** An admin promoted {@code rsn} in game: the flag clears until the hub's next daily check. False when the hub didn't take it. */
+    public boolean markPromoted(long guildId, String rsn) {
+        RuneClansHubClient.Answer a = hub.call("POST", path(guildId) + "/promoted", DataObject.empty().put("rsn", rsn).toString());
+        hub.forget(tag(guildId));
+        return a != null && a.ok();
+    }
 
-        try (Connection connection = connectionSupplier.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-
-            statement.setLong(1, guildId);
-            statement.setString(2, rsn);
-            statement.setBoolean(3, needed);
-            statement.setObject(4, needed ? today : null);
-            statement.executeUpdate();
-
-        } catch (SQLException e) {
-            log.error("Failed to set promotion-needed for '{}' in guild {}", rsn, guildId, e);
-            throw new RuntimeException("Failed to set promotion-needed", e);
+    private List<MemberPointsRow> members(long guildId) {
+        DataObject json = read(guildId);
+        List<MemberPointsRow> out = new ArrayList<>();
+        if (json == null || !json.hasKey("members")) return out;
+        DataArray members = json.getArray("members");
+        for (int i = 0; i < members.length(); i++) {
+            DataObject m = members.getObject(i);
+            String since = m.isNull("promotionNeededSince") ? null : m.getString("promotionNeededSince", null);
+            out.add(new MemberPointsRow(m.getString("rsn", ""), m.getLong("totalPoints", 0), m.getBoolean("promotionNeeded", false),
+                    since == null ? null : LocalDate.parse(since)));
         }
+        return out;
+    }
+
+    private DataObject read(long guildId) {
+        return readOnce(path(guildId), guildId);
+    }
+
+    /** A cached {@code GET}, tried once; null when there is no answer to use (no clan for the server, or the hub didn't answer). */
+    private DataObject readOnce(String path, long guildId) {
+        java.util.Optional<DataObject> got = readKnown(path, guildId);
+        return got.isEmpty() || got.get() == NO_CLAN ? null : got.get();
+    }
+
+    /** What {@link #readKnown} answers for a server the hub has no clan for (compared by identity). */
+    private static final DataObject NO_CLAN = DataObject.empty();
+
+    /** After the hub doesn't answer, reads give up at once for this long, so one web request doesn't wait on it several times in a row. */
+    static final Duration QUIET = Duration.ofSeconds(30);
+    private volatile java.time.Instant hubQuietUntil = java.time.Instant.MIN;
+
+    /**
+     * A cached {@code GET}, tried once: the answer, {@link #NO_CLAN} when the hub says the server has no clan (404/409, remembered for a
+     * minute), or empty when the hub didn't answer.
+     */
+    private java.util.Optional<DataObject> readKnown(String path, long guildId) {
+        if (hub == null) return java.util.Optional.empty();
+        java.time.Instant until = noClan.get(guildId);
+        if (until != null && java.time.Instant.now().isBefore(until)) return java.util.Optional.of(NO_CLAN);
+        if (java.time.Instant.now().isBefore(hubQuietUntil)) return java.util.Optional.empty();
+        RuneClansHubClient.Read read = RuneClansHubClient.withoutRetries(() -> hub.read(path, KEEP, tag(guildId)));
+        if (read != null && read.answer() != null && (read.answer().status() == 404 || read.answer().status() == 409)) {
+            noClan.put(guildId, java.time.Instant.now().plus(KEEP));
+            return java.util.Optional.of(NO_CLAN);
+        }
+        if (read == null || read.answer() == null || !read.answer().ok() || read.answer().json() == null) {
+            if (read == null || read.answer() == null || read.answer().status() >= 500 || read.answer().status() == 429) hubQuietUntil = java.time.Instant.now().plus(QUIET);
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(read.answer().json());
+    }
+
+    private static String path(long guildId) {
+        return "/v1/guilds/" + guildId + "/points";
+    }
+
+    private static String tag(long guildId) {
+        return "points:" + guildId;
     }
 }

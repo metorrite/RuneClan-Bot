@@ -81,7 +81,8 @@ public class DirectoryPlayerRoutes implements DirectoryRouteModule {
 
             @Override
             public int maxRankOrder(long guildId) {
-                return points.getRanksOrdered(guildId).stream().mapToInt(RankConfigRow::rankOrder).max().orElse(0);
+                // the hub's ladder is always the standard one (T-978): no hub read needed
+                return com.runeclans.bot.runescape.ClanPointsRepository.STANDARD_RANK_NAMES.size() - 1;
             }
 
             @Override

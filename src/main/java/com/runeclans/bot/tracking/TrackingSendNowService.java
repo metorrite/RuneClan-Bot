@@ -173,10 +173,13 @@ public class TrackingSendNowService {
     private void recomputeAndSendClanReport(Guild guild, List<String> lines) {
         long guildId = guild.getIdLong();
         int listed = clanPointsService.runDailyPointsAndPromotionCheck(guild);
-        lines.add("Recomputed points and promotion eligibility.");
+        lines.add("Read points and promotion flags from RuneClans (awarded there after each day's roster check).");
 
+        if (clanPointsRepository.known(guildId) == null) {
+            lines.add("⚠️ RuneClans didn't answer for this server's clan points (or the server has no clan site), so the report may be empty.");
+        }
         ClanPointsRepository.PointsSettings settings = clanPointsRepository.getSettings(guildId);
-        if (settings.dailyMembershipPoints() == 0 && settings.citadelVisitPoints() == 0 && settings.citadelCapPoints() == 0) {
+        if (clanPointsRepository.known(guildId) != null && settings.dailyMembershipPoints() == 0 && settings.citadelVisitPoints() == 0 && settings.citadelCapPoints() == 0) {
             lines.add("⚠️ All three point values are 0, so no points are being awarded — set them in `/rsadmin` → Configure Points & Ranks.");
         }
 

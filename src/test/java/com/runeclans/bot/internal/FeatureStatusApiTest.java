@@ -68,7 +68,11 @@ class FeatureStatusApiTest {
         Mockito.when(checkup.findings(any(Guild.class), anyList())).thenReturn(List.of());
         access = Mockito.mock(DashboardAccess.class);
         owners = Mockito.mock(BotOwners.class);
-        api = new FeatureStatusApi(repository, settings, groups, hub, automod, branding, checkup, Mockito.mock(ClanProfileRepository.class), access, owners);
+        // clan points are the hub's (T-978): an answer with an amount set
+        com.runeclans.bot.runescape.ClanPointsRepository clanPoints = Mockito.mock(com.runeclans.bot.runescape.ClanPointsRepository.class);
+        Mockito.when(clanPoints.known(G)).thenReturn(DataObject.empty().put("dailyMembershipPoints", 5));
+        api = new FeatureStatusApi(repository, settings, groups, hub, automod, branding, checkup, Mockito.mock(ClanProfileRepository.class), access, owners,
+                clanPoints);
 
         guild = Mockito.mock(Guild.class);
         Mockito.when(guild.getIdLong()).thenReturn(G);
@@ -104,6 +108,7 @@ class FeatureStatusApiTest {
         DataObject features = features(DashboardAccess.Tier.ADMIN, true);
         assertEquals("on", features.getString("/setup/settings"));
         assertEquals("on", features.getString("/setup/commands"), "commands are on by default");
+        assertEquals("on", features.getString("/clan/clan-points"), "the hub says an amount is set (T-978)");
         assertEquals("off", features.getString("/setup/look"), "no custom name, nickname or avatar");
         assertEquals("off", features.getString("/mod/automod"));
         assertEquals("on", features.getString("/setup/guide"), "admins, clan, review channel, a feed and the welcome are all set");

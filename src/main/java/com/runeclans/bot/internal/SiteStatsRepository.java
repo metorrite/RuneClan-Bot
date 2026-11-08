@@ -42,10 +42,21 @@ public class SiteStatsRepository {
 
     /** The bot's instance. A factory, because the framework needs a service class to have exactly one constructor and tests use it. The bot's own tables answer until the hub polls. */
     @BService
-    public static SiteStatsRepository siteStatsRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer, StatsBackends backends) {
+    public static SiteStatsRepository siteStatsRepository(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer initializer, StatsBackends backends,
+                                                          com.runeclans.bot.runescape.ClanPointsRepository clanPoints) {
         SiteStatsRepository repository = new SiteStatsRepository(connectionSupplier, initializer);
         repository.stats = backends;
+        repository.clanPoints = clanPoints;
         return repository;
+    }
+
+    /** Clan points are the hub's (T-978): totals, flags and award history come from there. Null (tests without it): no points. */
+    private volatile com.runeclans.bot.runescape.ClanPointsRepository clanPoints;
+
+    /** Reads clan points through {@code points} (tests). */
+    public SiteStatsRepository withPoints(com.runeclans.bot.runescape.ClanPointsRepository points) {
+        this.clanPoints = points;
+        return this;
     }
 
     /** Reads from {@code backends} while the hub polls (tests). */
@@ -163,19 +174,21 @@ public class SiteStatsRepository {
         return out;
     }
 
-    /** The roster rows, without levels (those are the hub's). */
+    /** The roster rows, without levels (those are the hub's); points and flags are the hub's too, rank order the standard ladder's. */
     private List<MemberRow> membersFromRoster(long guildId) {
+        Map<String, com.runeclans.bot.runescape.ClanPointsRepository.MemberPointsRow> points = clanPoints == null ? Map.of() : clanPoints.totals(guildId);
         return query("site members", """
-                SELECT m.rsn, m.clan_rank, COALESCE(rc.rank_order, -1) AS rank_order, m.total_xp, m.kills, m.clan_joined_at,
-                       m.first_seen, COALESCE(p.total_points, 0) AS points, COALESCE(p.promotion_needed, FALSE) AS promotion_needed,
+                SELECT m.rsn, m.clan_rank, m.total_xp, m.kills, m.clan_joined_at, m.first_seen,
                        EXISTS (SELECT 1 FROM younglings.player_link l WHERE l.guild_id = m.guild_id AND LOWER(l.rsn) = LOWER(m.rsn)) AS verified
                 FROM younglings.clan_member m
-                LEFT JOIN younglings.clan_rank_config rc ON rc.guild_id = m.guild_id AND LOWER(rc.rank_name) = LOWER(m.clan_rank)
-                LEFT JOIN younglings.clan_member_points p ON p.guild_id = m.guild_id AND LOWER(p.rsn) = LOWER(m.rsn)
                 WHERE m.guild_id = ? AND m.active
-                """, rs -> new MemberRow(rs.getString("rsn"), rs.getString("clan_rank"), rs.getInt("rank_order"), rs.getLong("total_xp"),
-                rs.getLong("kills"), rs.getObject("clan_joined_at", LocalDate.class), rs.getObject("first_seen", OffsetDateTime.class),
-                rs.getLong("points"), rs.getBoolean("promotion_needed"), rs.getBoolean("verified"), null, null, null), guildId);
+                """, rs -> {
+            String rsn = rs.getString("rsn");
+            var p = points.get(com.runeclans.bot.runescape.ClanPointsRepository.key(rsn));
+            return new MemberRow(rsn, rs.getString("clan_rank"), com.runeclans.bot.runescape.ClanPointsRepository.standardOrder(rs.getString("clan_rank")), rs.getLong("total_xp"),
+                    rs.getLong("kills"), rs.getObject("clan_joined_at", LocalDate.class), rs.getObject("first_seen", OffsetDateTime.class),
+                    p == null ? 0 : p.totalPoints(), p != null && p.promotionNeeded(), rs.getBoolean("verified"), null, null, null);
+        }, guildId);
     }
 
     /**
@@ -210,12 +223,10 @@ public class SiteStatsRepository {
         return stats.backend().cappersBetween(guildId, from, to, limit);
     }
 
-    /** A member's clan-point awards, newest first. */
+    /** A member's clan-point awards, newest first (the hub's, T-978). */
     public List<Award> awards(long guildId, String rsn, int limit) {
-        return query("point awards", """
-                SELECT award_type, points, awarded_for_date FROM younglings.clan_points_award
-                WHERE guild_id = ? AND LOWER(rsn) = LOWER(?) ORDER BY awarded_for_date DESC, id DESC LIMIT ?
-                """, rs -> new Award(rs.getString("award_type"), rs.getLong("points"), rs.getObject("awarded_for_date", LocalDate.class)), guildId, rsn, limit);
+        if (clanPoints == null) return List.of();
+        return clanPoints.awards(guildId, rsn, limit).stream().map(a -> new Award(a.type(), a.points(), a.awardedFor())).toList();
     }
 
     // ---------- one member's coffer ----------
@@ -257,23 +268,31 @@ public class SiteStatsRepository {
         return stats.backend().activitiesBetween(guildId, rsn, from, to);
     }
 
-    /** Clan points awarded inside the window, per member (or just one). */
+    /** Clan points awarded for the UTC days inside the window, per member (or just one); the hub's (T-978). */
     public List<PointsEarned> pointsBetween(long guildId, String rsn, OffsetDateTime from, OffsetDateTime to) {
-        return query("points in window", """
-                SELECT a.rsn, SUM(a.points) AS points FROM younglings.clan_points_award a
-                WHERE a.guild_id = ? AND (?::text IS NULL OR LOWER(a.rsn) = LOWER(?))
-                  AND a.awarded_for_date >= (?::timestamptz AT TIME ZONE 'UTC')::date AND a.awarded_for_date < (?::timestamptz AT TIME ZONE 'UTC')::date
-                GROUP BY a.rsn
-                """, rs -> new PointsEarned(rs.getString("rsn"), rs.getLong("points")), guildId, rsn, rsn, from, to);
+        if (clanPoints == null) return List.of();
+        LocalDate start = from.atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDate(), end = to.atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDate();
+        if (!end.isAfter(start)) return List.of();
+        return clanPoints.earned(guildId, start, end, rsn, false).stream().map(e -> new PointsEarned(e.rsn(), e.points())).toList();
     }
 
-    /** Clan points awarded per member per day from {@code from} (a UTC date) on, for the leaderboard race's month of clan points (T-710). */
+    /**
+     * {@link #pointsBetween}, but throws when the hub didn't answer, for a caller that keeps what it reads (a season's close, which is
+     * then tried again on its next run instead of keeping zeros).
+     */
+    public List<PointsEarned> pointsBetweenOrThrow(long guildId, String rsn, OffsetDateTime from, OffsetDateTime to) {
+        if (clanPoints == null) return List.of();
+        LocalDate start = from.atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDate(), end = to.atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDate();
+        if (!end.isAfter(start)) return List.of();
+        return clanPoints.earnedIfKnown(guildId, start, end, rsn, false)
+                .orElseThrow(() -> new IllegalStateException("RuneClans didn't answer for the clan points of server " + guildId))
+                .stream().map(e -> new PointsEarned(e.rsn(), e.points())).toList();
+    }
+
+    /** Clan points awarded per member per day from {@code from} (a UTC date) on, for the leaderboard race's month of clan points (T-710); the hub's. */
     public List<PointsDay> pointsByDay(long guildId, LocalDate from) {
-        return query("points per day", """
-                SELECT a.rsn, a.awarded_for_date, SUM(a.points) AS points FROM younglings.clan_points_award a
-                WHERE a.guild_id = ? AND a.awarded_for_date >= ?
-                GROUP BY a.rsn, a.awarded_for_date
-                """, rs -> new PointsDay(rs.getString("rsn"), rs.getObject("awarded_for_date", LocalDate.class), rs.getLong("points")), guildId, from);
+        if (clanPoints == null) return List.of();
+        return clanPoints.earned(guildId, from, null, null, true).stream().map(e -> new PointsDay(e.rsn(), e.day(), e.points())).toList();
     }
 
     /** A member's total level at the start and end of the window ({@code null} if they have no snapshot there). */

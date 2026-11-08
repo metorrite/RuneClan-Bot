@@ -36,9 +36,12 @@ public class SiteRankStore {
     private static final Logger log = LoggerFactory.getLogger(SiteRankStore.class);
 
     private final ConnectionSupplier connectionSupplier;
+    /** Clan points are the hub's (T-978). */
+    private final com.runeclans.bot.runescape.ClanPointsRepository clanPoints;
 
-    public SiteRankStore(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer runescape) {
+    public SiteRankStore(ConnectionSupplier connectionSupplier, RuneScapeDatabaseInitializer runescape, com.runeclans.bot.runescape.ClanPointsRepository clanPoints) {
         this.connectionSupplier = connectionSupplier;
+        this.clanPoints = clanPoints;
         SchemaBootstrapper.run(connectionSupplier, log, "rank-up advisor", List.of(
                 "CREATE SCHEMA IF NOT EXISTS younglings;",
                 """
@@ -155,14 +158,13 @@ public class SiteRankStore {
     /** A roster member's facts before the caps (which come from the Citadel grid). */
     public record Row(String rsn, String rank, Long xpGained, OffsetDateTime rankSince, OffsetDateTime joined, long points) {}
 
-    /** Every active roster member with their XP since their current rank (null before the bot has a starting point) and clan points. */
+    /** Every active roster member with their XP since their current rank (null before the bot has a starting point) and clan points (the hub's; 0 when it can't say). */
     public List<Row> roster(long guildId) {
+        Map<String, com.runeclans.bot.runescape.ClanPointsRepository.MemberPointsRow> points = clanPoints.totals(guildId);
         String sql = """
                 SELECT m.rsn, m.clan_rank, m.first_seen, m.clan_joined_at, m.rank_since,
-                       CASE WHEN m.rank_xp IS NULL THEN NULL ELSE GREATEST(m.total_xp - m.rank_xp, 0) END AS xp_gained,
-                       COALESCE(p.total_points, 0) AS points
+                       CASE WHEN m.rank_xp IS NULL THEN NULL ELSE GREATEST(m.total_xp - m.rank_xp, 0) END AS xp_gained
                 FROM younglings.clan_member m
-                LEFT JOIN younglings.clan_member_points p ON p.guild_id = m.guild_id AND LOWER(p.rsn) = LOWER(m.rsn)
                 WHERE m.guild_id = ? AND m.active
                 """;
         try (Connection c = connection(); PreparedStatement s = c.prepareStatement(sql)) {
@@ -172,8 +174,9 @@ public class SiteRankStore {
                 while (rs.next()) {
                     LocalDate joinedDay = rs.getObject("clan_joined_at", LocalDate.class);
                     OffsetDateTime joined = joinedDay != null ? joinedDay.atStartOfDay().atOffset(ZoneOffset.UTC) : rs.getObject("first_seen", OffsetDateTime.class);
+                    var p = points.get(com.runeclans.bot.runescape.ClanPointsRepository.key(rs.getString("rsn")));
                     out.add(new Row(rs.getString("rsn"), rs.getString("clan_rank"), longOrNull(rs, "xp_gained"), rs.getObject("rank_since", OffsetDateTime.class),
-                            joined, rs.getLong("points")));
+                            joined, p == null ? 0 : p.totalPoints()));
                 }
             }
             return out;
