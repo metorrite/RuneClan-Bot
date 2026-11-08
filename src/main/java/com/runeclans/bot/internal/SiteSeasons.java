@@ -100,6 +100,14 @@ public class SiteSeasons {
 
     /** Each current member's XP gained, clan points and event wins inside the season, members hidden from the rankings left out. */
     List<Input> inputs(long guildId, Season season, OffsetDateTime now) {
+        return inputs(guildId, season, now, false);
+    }
+
+    /**
+     * {@link #inputs}; {@code keeping} (a close, whose standings are kept for good) throws when the hub didn't answer for the clan points
+     * (T-978), so the close is tried again on the next run instead of freezing everyone at 0 points.
+     */
+    List<Input> inputs(long guildId, Season season, OffsetDateTime now, boolean keeping) {
         OffsetDateTime to = now.isBefore(season.to()) ? now : season.to();
         Set<String> hidden = profiles.hiddenRsns(guildId, true);
         Map<String, Input> byKey = new LinkedHashMap<>();
@@ -110,7 +118,7 @@ public class SiteSeasons {
         for (SiteStatsRepository.Gain g : stats.xpGainsBetween(guildId, season.from(), to)) {
             byKey.computeIfPresent(g.rsn().toLowerCase(Locale.ROOT), (k, in) -> new Input(in.rsn(), Math.max(0, g.xp()), in.points(), in.wins()));
         }
-        for (SiteStatsRepository.PointsEarned p : stats.pointsBetween(guildId, null, season.from(), to)) {
+        for (SiteStatsRepository.PointsEarned p : keeping ? stats.pointsBetweenOrThrow(guildId, null, season.from(), to) : stats.pointsBetween(guildId, null, season.from(), to)) {
             byKey.computeIfPresent(p.rsn().toLowerCase(Locale.ROOT), (k, in) -> new Input(in.rsn(), in.xp(), Math.max(0, p.points()), in.wins()));
         }
         for (Map.Entry<String, Integer> w : wins(guildId, season.from(), to).entrySet()) {
@@ -198,7 +206,7 @@ public class SiteSeasons {
     /** Closes one season for one server; true when this call was the one that closed it (and so may post about it). */
     boolean close(JDA jda, long guildId, Season season, Settings settings, OffsetDateTime now) {
         if (store.finalOf(guildId, season.token()).isPresent()) return false;
-        List<Row> rows = SeasonRules.standings(inputs(guildId, season, now), settings.weights());
+        List<Row> rows = SeasonRules.standings(inputs(guildId, season, now, true), settings.weights());
         boolean fresh = store.finish(guildId, season.token(), settings.weights(), rows);
         if (!fresh) return false;
         log.info("Clan seasons: closed {} for server {} ({} members scored)", season.token(), guildId, rows.size());

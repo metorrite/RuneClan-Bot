@@ -74,10 +74,23 @@ public class ClanPointsInteractionListener extends ListenerAdapter {
             switch (parts[0]) {
                 case "clanpoints_open" -> event.deferReply(true).queue(hook -> showPanel(event, guild.getIdLong()), failure -> {});
                 case "clanpoints_main" -> event.deferEdit().queue(hook -> showPanel(event, guild.getIdLong()), failure -> {});
-                case "clanpoints_edit_values" -> event.replyModal(buildValuesModal(numbers(parts.length > 1 ? parts[1] : ""))).queue();
+                case "clanpoints_edit_values" -> {
+                    List<Long> carried = numbers(parts.length > 1 ? parts[1] : "");
+                    if (!complete(carried, 3)) {
+                        Containers.replyEphemeral(event, Containers.WARNING, STALE_PANEL);
+                        return;
+                    }
+                    event.replyModal(buildValuesModal(carried)).queue();
+                }
                 case "clanpoints_edit_ranks" -> {
                     String[] page = (parts.length > 1 ? parts[1] : "0").split(":", 2);
-                    event.replyModal(buildRanksModal(Integer.parseInt(page[0]), numbers(page.length > 1 ? page[1] : ""))).queue();
+                    int at = Integer.parseInt(page[0]);
+                    List<Long> carried = numbers(page.length > 1 ? page[1] : "");
+                    if (!complete(carried, pageOf(ladder(0), at).size())) {
+                        Containers.replyEphemeral(event, Containers.WARNING, STALE_PANEL);
+                        return;
+                    }
+                    event.replyModal(buildRanksModal(at, carried)).queue();
                 }
             }
         } catch (Exception e) {
@@ -119,6 +132,14 @@ public class ClanPointsInteractionListener extends ListenerAdapter {
             log.error("Could not draw the clan points panel", e);
             Containers.replyError(event);
         }
+    }
+
+    /** Said when an edit button doesn't carry the values it would edit (a panel from before T-978, or a damaged id). */
+    static final String STALE_PANEL = "This panel is out of date. Open Configure Points & Ranks again.";
+
+    /** True when {@code carried} holds exactly {@code size} numbers, none missing. */
+    static boolean complete(List<Long> carried, int size) {
+        return carried.size() == size && carried.stream().allMatch(java.util.Objects::nonNull);
     }
 
     /** The numbers a panel button carries ("5,3,20"); missing or bad ones are null. */
@@ -247,7 +268,10 @@ public class ClanPointsInteractionListener extends ListenerAdapter {
                 "\n**Points per Citadel visit:** " + settings.citadelVisitPoints() +
                 "\n**Points per Citadel cap:** " + settings.citadelCapPoints()));
         if (json == null) {
-            children.add(TextDisplay.of("⚠️ RuneClans didn't answer, or this server has no clan site yet, so these may not be the saved values. Try again in a moment."));
+            // unknown values are never offered for editing: a save would write these zeros back over the real ones
+            children.add(TextDisplay.of("⚠️ RuneClans didn't answer, or this server has no clan site yet, so the saved values can't be shown or edited right now."));
+            children.add(ActionRow.of(Button.secondary("clanpoints_main:_", "Try Again")));
+            return Containers.card(Containers.PRIMARY, children);
         }
         children.add(ActionRow.of(Button.secondary("clanpoints_edit_values:" + settings.dailyMembershipPoints() + "," + settings.citadelVisitPoints() + ","
                 + settings.citadelCapPoints(), "Edit Point Values")));

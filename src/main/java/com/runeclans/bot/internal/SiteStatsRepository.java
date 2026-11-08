@@ -276,6 +276,19 @@ public class SiteStatsRepository {
         return clanPoints.earned(guildId, start, end, rsn, false).stream().map(e -> new PointsEarned(e.rsn(), e.points())).toList();
     }
 
+    /**
+     * {@link #pointsBetween}, but throws when the hub didn't answer, for a caller that keeps what it reads (a season's close, which is
+     * then tried again on its next run instead of keeping zeros).
+     */
+    public List<PointsEarned> pointsBetweenOrThrow(long guildId, String rsn, OffsetDateTime from, OffsetDateTime to) {
+        if (clanPoints == null) return List.of();
+        LocalDate start = from.atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDate(), end = to.atZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDate();
+        if (!end.isAfter(start)) return List.of();
+        return clanPoints.earnedIfKnown(guildId, start, end, rsn, false)
+                .orElseThrow(() -> new IllegalStateException("RuneClans didn't answer for the clan points of server " + guildId))
+                .stream().map(e -> new PointsEarned(e.rsn(), e.points())).toList();
+    }
+
     /** Clan points awarded per member per day from {@code from} (a UTC date) on, for the leaderboard race's month of clan points (T-710); the hub's. */
     public List<PointsDay> pointsByDay(long guildId, LocalDate from) {
         if (clanPoints == null) return List.of();

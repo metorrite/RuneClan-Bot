@@ -82,4 +82,20 @@ class ClanPointsRepositoryTest {
         assertEquals(-1, ClanPointsRepository.standardOrder("Friend"));
         assertEquals("ace two", ClanPointsRepository.key("Ace_Two"));
     }
+
+    @Test
+    void aSilentHubIsUnknownNotZeroAndIsNotAskedAgainAtOnce() {
+        RuneClansHubClient hub = mock(RuneClansHubClient.class);
+        LocalDate from = LocalDate.of(2026, 7, 1), to = LocalDate.of(2026, 10, 1);
+        when(hub.read(anyString(), any(Duration.class), any(String[].class))).thenReturn(null); // unreachable
+        ClanPointsRepository points = new ClanPointsRepository(hub);
+        assertTrue(points.earnedIfKnown(GUILD, from, to, null, false).isEmpty(), "unknown, so a season close can try again");
+        assertTrue(points.earned(GUILD, from, to, null, false).isEmpty());
+        assertNull(points.known(GUILD));
+        verify(hub, times(1)).read(anyString(), any(Duration.class), any(String[].class));
+
+        RuneClansHubClient noClan = mock(RuneClansHubClient.class);
+        when(noClan.read(anyString(), any(Duration.class), any(String[].class))).thenReturn(answer(409, DataObject.empty()));
+        assertEquals(java.util.Optional.of(List.of()), new ClanPointsRepository(noClan).earnedIfKnown(GUILD, from, to, null, false), "no clan: nothing earned");
+    }
 }

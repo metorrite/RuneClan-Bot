@@ -328,9 +328,12 @@ public class ClanAdminApi {
     // ---------- clan points and rank thresholds ----------
 
     DataObject clanPoints(Guild guild) {
-        var settings = points.getSettings(guild.getIdLong());
+        // the hub's (T-978): with no answer, say so (503) rather than show zeros the page could save back
+        DataObject known = points.known(guild.getIdLong());
+        if (known == null) throw new ApiError(503, Text.of(guild, "dashboard.clan_points_didn_t_load"));
+        var settings = ClanPointsRepository.settingsOf(known);
         DataArray ranks = DataArray.empty();
-        for (RankConfigRow rank : points.getRanksOrdered(guild.getIdLong())) {
+        for (RankConfigRow rank : ClanPointsRepository.ranksOf(guild.getIdLong(), known)) {
             ranks.add(DataObject.empty().put("id", Long.toString(rank.id())).put("name", rank.rankName()).put("order", rank.rankOrder()).put("threshold", rank.pointThreshold()));
         }
         return DataObject.empty().put("dailyMembershipPoints", settings.dailyMembershipPoints()).put("citadelVisitPoints", settings.citadelVisitPoints())
@@ -338,11 +341,12 @@ public class ClanAdminApi {
     }
 
     DataObject saveClanPoints(Guild guild, Member actor, DataObject body) {
-        long daily = pointsValue(body, "dailyMembershipPoints");
-        long visit = pointsValue(body, "citadelVisitPoints");
-        long cap = pointsValue(body, "citadelCapPoints");
+        // only the amounts the body names are sent: one left out (or null) stays as the hub has it, never 0
+        Long daily = givenPoints(body, "dailyMembershipPoints");
+        Long visit = givenPoints(body, "citadelVisitPoints");
+        Long cap = givenPoints(body, "citadelCapPoints");
 
-        List<RankConfigRow> existing = points.getRanksOrdered(guild.getIdLong());
+        List<RankConfigRow> existing = ClanPointsRepository.ranksOf(guild.getIdLong(), null); // the standard ladder: no hub read
         List<long[]> updates = new ArrayList<>();
         if (!body.isNull("ranks")) {
             DataArray ranks = body.getArray("ranks");
@@ -364,6 +368,10 @@ public class ClanAdminApi {
         if (points.save(guild.getIdLong(), actor.getIdLong(), daily, visit, cap, thresholds) == null) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
         log.info("Dashboard: {} updated clan points settings and {} rank threshold(s)", actor.getId(), updates.size());
         return clanPoints(guild);
+    }
+
+    private static Long givenPoints(DataObject json, String key) {
+        return !json.hasKey(key) || json.isNull(key) ? null : pointsValue(json, key);
     }
 
     private static long pointsValue(DataObject json, String key) {

@@ -126,20 +126,30 @@ public class ClanPointsRepository {
      * with {@code rsn}. Empty when the hub can't say.
      */
     public List<Earned> earned(long guildId, LocalDate from, LocalDate to, String rsn, boolean byDay) {
+        return earnedIfKnown(guildId, from, to, rsn, byDay).orElse(List.of());
+    }
+
+    /**
+     * {@link #earned}, but empty (not an empty list) when the hub didn't answer, so a caller that keeps what it reads (a season's close)
+     * can try again later instead of keeping zeros. A server the hub has no clan for has earned nothing: an empty list.
+     */
+    public java.util.Optional<List<Earned>> earnedIfKnown(long guildId, LocalDate from, LocalDate to, String rsn, boolean byDay) {
         StringBuilder q = new StringBuilder(path(guildId)).append("/earned?from=").append(from);
         if (to != null) q.append("&to=").append(to);
         if (rsn != null) q.append("&rsn=").append(encode(rsn));
         if (byDay) q.append("&by=day");
-        DataObject json = readOnce(q.toString(), guildId);
+        java.util.Optional<DataObject> got = readKnown(q.toString(), guildId);
+        if (got.isEmpty()) return java.util.Optional.empty();
+        DataObject json = got.get();
         List<Earned> out = new ArrayList<>();
-        if (json == null || !json.hasKey("earned")) return out;
+        if (!json.hasKey("earned")) return java.util.Optional.of(out);
         DataArray rows = json.getArray("earned");
         for (int i = 0; i < rows.length(); i++) {
             DataObject e = rows.getObject(i);
             String day = e.getString("day", null);
             out.add(new Earned(e.getString("rsn", ""), day == null ? null : LocalDate.parse(day), e.getLong("points", 0)));
         }
-        return out;
+        return java.util.Optional.of(out);
     }
 
     private static String encode(String value) {
@@ -200,17 +210,38 @@ public class ClanPointsRepository {
         return readOnce(path(guildId), guildId);
     }
 
-    /** A cached {@code GET}, tried once; a 404/409 (no clan for the server) is remembered for a minute. */
+    /** A cached {@code GET}, tried once; null when there is no answer to use (no clan for the server, or the hub didn't answer). */
     private DataObject readOnce(String path, long guildId) {
-        if (hub == null) return null;
+        java.util.Optional<DataObject> got = readKnown(path, guildId);
+        return got.isEmpty() || got.get() == NO_CLAN ? null : got.get();
+    }
+
+    /** What {@link #readKnown} answers for a server the hub has no clan for (compared by identity). */
+    private static final DataObject NO_CLAN = DataObject.empty();
+
+    /** After the hub doesn't answer, reads give up at once for this long, so one web request doesn't wait on it several times in a row. */
+    static final Duration QUIET = Duration.ofSeconds(30);
+    private volatile java.time.Instant hubQuietUntil = java.time.Instant.MIN;
+
+    /**
+     * A cached {@code GET}, tried once: the answer, {@link #NO_CLAN} when the hub says the server has no clan (404/409, remembered for a
+     * minute), or empty when the hub didn't answer.
+     */
+    private java.util.Optional<DataObject> readKnown(String path, long guildId) {
+        if (hub == null) return java.util.Optional.empty();
         java.time.Instant until = noClan.get(guildId);
-        if (until != null && java.time.Instant.now().isBefore(until)) return null;
+        if (until != null && java.time.Instant.now().isBefore(until)) return java.util.Optional.of(NO_CLAN);
+        if (java.time.Instant.now().isBefore(hubQuietUntil)) return java.util.Optional.empty();
         RuneClansHubClient.Read read = RuneClansHubClient.withoutRetries(() -> hub.read(path, KEEP, tag(guildId)));
         if (read != null && read.answer() != null && (read.answer().status() == 404 || read.answer().status() == 409)) {
             noClan.put(guildId, java.time.Instant.now().plus(KEEP));
-            return null;
+            return java.util.Optional.of(NO_CLAN);
         }
-        return read == null || read.answer() == null || !read.answer().ok() ? null : read.answer().json();
+        if (read == null || read.answer() == null || !read.answer().ok() || read.answer().json() == null) {
+            if (read == null || read.answer() == null || read.answer().status() >= 500 || read.answer().status() == 429) hubQuietUntil = java.time.Instant.now().plus(QUIET);
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(read.answer().json());
     }
 
     private static String path(long guildId) {
