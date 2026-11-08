@@ -55,16 +55,17 @@ public class RankCongratsJob implements DiscordJobHandler {
     String textFor(Guild guild, DataObject payload) {
         String fallback = payload.getString("text", "");
         if (!payload.hasKey("promoted") || payload.isNull("promoted")) return fallback;
-        List<RankAdvisorRules.Promoted> promoted = promotedOf(payload);
-        if (promoted.isEmpty()) return fallback;
+        List<RankAdvisorRules.Promoted> promoted;
         Map<String, String> names = new HashMap<>();
         try {
+            promoted = promotedOf(payload);
+            if (promoted.isEmpty()) return fallback;
             cockpit.links(guild.getIdLong()).forEach((key, id) -> {
                 net.dv8tion.jda.api.entities.Member m = guild.getMemberById(id);
                 if (m != null) names.put(key, m.getEffectiveName());
             });
         } catch (RuntimeException e) {
-            return fallback; // the names are a nicety: the hub's text says the same with RuneScape names
+            return fallback; // an unreadable list, or no links: the hub's text says the same with RuneScape names
         }
         String text = RankAdvisorRules.weeklyText(payload.getString("template", ""), RankAdvisorRules.withNames(promoted, names));
         return text.isBlank() ? fallback : text;

@@ -78,4 +78,21 @@ class RankCongratsJobTest {
         assertEquals("Well done!\n• Zezima: Corporal\n• Bob: Sergeant", job.textFor(guild, payload), "no links: the hub's own text");
         assertEquals("plain", job.textFor(guild, RankCongratsJob.payload(20L, "plain")), "the bot's own payload is posted as it is");
     }
+
+    @Test
+    void anUnreadableHubListPostsTheHubsTextAndANameNeverPingsEveryone() {
+        Guild guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
+        SiteCockpitStore cockpit = mock(SiteCockpitStore.class);
+        long linked = Long.parseLong("9".repeat(18));
+        when(cockpit.links(GUILD)).thenReturn(Map.of("zezima", linked));
+        net.dv8tion.jda.api.entities.Member member = mock(net.dv8tion.jda.api.entities.Member.class);
+        when(member.getEffectiveName()).thenReturn("@everyone");
+        when(guild.getMemberById(linked)).thenReturn(member);
+        RankCongratsJob job = new RankCongratsJob(cockpit);
+        DataObject bad = DataObject.fromJson("{\"text\": \"hub text\", \"template\": \"{list}\", \"promoted\": [1, \"x\"]}");
+        assertEquals("hub text", job.textFor(guild, bad), "an unreadable list: the hub's text");
+        DataObject named = DataObject.fromJson("{\"text\": \"hub text\", \"template\": \"{list}\", \"promoted\": [{\"rsnKey\": \"zezima\", \"rsn\": \"Zezima\", \"to\": \"Corporal\"}]}");
+        assertEquals("• @@\u200beveryone (Zezima): Corporal", job.textFor(guild, named));
+    }
 }

@@ -113,6 +113,19 @@ public class DiscordJobRepository {
         }
     }
 
+    /** Whether any job (in any state, until the sweep drops finished ones) has this dedupe key: for posts that must never go out twice. */
+    public boolean known(String dedupe) {
+        try (Connection c = connectionSupplier.getConnection();
+             PreparedStatement s = c.prepareStatement("SELECT 1 FROM younglings.discord_job WHERE dedupe_key = ? LIMIT 1")) {
+            s.setString(1, dedupe);
+            try (ResultSet rs = s.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not look up a job key", e);
+        }
+    }
+
     public Optional<DiscordJob> get(long id) {
         try (Connection c = connectionSupplier.getConnection();
              PreparedStatement s = c.prepareStatement("SELECT " + COLUMNS + " FROM younglings.discord_job WHERE id = ?")) {

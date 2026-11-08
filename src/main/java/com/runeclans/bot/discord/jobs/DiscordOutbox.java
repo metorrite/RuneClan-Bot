@@ -152,6 +152,11 @@ public class DiscordOutbox {
         return job;
     }
 
+    /** Whether a job with this dedupe key was ever queued (any state, until the sweep drops finished ones). */
+    public boolean known(String dedupe) {
+        return repository.known(dedupe);
+    }
+
     /** The jobs with these ids that this person asked for (about this server, when given). */
     public List<DiscordJob> find(Collection<Long> ids, Long guildId, long actorId) {
         return repository.find(ids, guildId, actorId);

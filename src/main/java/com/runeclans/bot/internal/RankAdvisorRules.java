@@ -386,8 +386,9 @@ public final class RankAdvisorRules {
         String t = template == null || template.isBlank() ? DEFAULT_CONGRATS : template;
         String list = String.join("\n", promoted.stream().map(RankAdvisorRules::congratsLine).toList());
         String count = Integer.toString(promoted.size());
-        String out = t.contains("{list}") ? t.replace("{list}", list) : t + "\n" + list;
-        return out.replace("{count}", count);
+        // {count} first, so a member's name that happens to contain "{count}" is left as it is
+        String withCount = t.replace("{count}", count);
+        return withCount.contains("{list}") ? withCount.replace("{list}", list) : withCount + "\n" + list;
     }
 
     /** The message cut into Discord-sized posts, at line ends where it can be (a single over-long line is cut where it must). */

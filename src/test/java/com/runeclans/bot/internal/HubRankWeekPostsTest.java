@@ -6,6 +6,8 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -20,6 +22,13 @@ import static org.mockito.Mockito.when;
 class HubRankWeekPostsTest {
     private static final String GUILD = "4".repeat(18);
     private static final String CHANNEL = "5".repeat(18);
+    private static final java.time.Clock DAY_AFTER = java.time.Clock.fixed(java.time.Instant.parse("2026-11-12T12:00:00Z"), java.time.ZoneOffset.UTC);
+
+    private static HubRankWeekPosts posts(DiscordOutbox outbox, TrackingPostingToggle posting) {
+        HubRankWeekPosts posts = new HubRankWeekPosts(outbox, posting);
+        posts.clock = DAY_AFTER;
+        return posts;
+    }
 
     private static DataObject entry(String guild, String channel, String text) {
         DataObject data = DataObject.empty().put("siteId", "s").put("guildId", guild).put("channelId", channel).put("weekStart", "2026-11-11")
@@ -39,13 +48,27 @@ class HubRankWeekPostsTest {
         assertNull(HubRankWeekPosts.plan(entry("x", CHANNEL, "t")), "no server");
         assertNull(HubRankWeekPosts.plan(entry(GUILD, CHANNEL, " ")), "no text");
         assertNull(HubRankWeekPosts.plan(DataObject.empty()));
+        java.time.Instant weekStart = java.time.Instant.parse("2026-11-11T00:00:00Z");
+        assertFalse(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(8))));
+        assertTrue(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(10))), "a replay long after the week posts nothing");
+    }
+
+    @Test
+    void aReplayedEntryPostsOnceEvenAfterTheFirstJobFinished() {
+        DiscordOutbox outbox = mock(DiscordOutbox.class);
+        TrackingPostingToggle posting = mock(TrackingPostingToggle.class);
+        when(posting.isEnabled()).thenReturn(true);
+        String key = "rankweek:" + GUILD + ":2026-11-11";
+        when(outbox.known(key)).thenReturn(true);
+        posts(outbox, posting).onHubFeed(HubRankWeekPosts.KIND, entry(GUILD, CHANNEL, "t"));
+        verify(outbox, never()).enqueue(anyString(), anyLong(), anyLong(), anyString(), any());
     }
 
     @Test
     void nothingIsQueuedWhilePostingIsOffOrForOtherKinds() {
         DiscordOutbox outbox = mock(DiscordOutbox.class);
         TrackingPostingToggle posting = mock(TrackingPostingToggle.class);
-        HubRankWeekPosts posts = new HubRankWeekPosts(outbox, posting);
+        HubRankWeekPosts posts = posts(outbox, posting);
         posts.onHubFeed("site.updated", entry(GUILD, CHANNEL, "t"));
         when(posting.isEnabled()).thenReturn(false);
         posts.onHubFeed(HubRankWeekPosts.KIND, entry(GUILD, CHANNEL, "t"));
