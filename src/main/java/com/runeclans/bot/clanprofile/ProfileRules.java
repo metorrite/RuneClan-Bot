@@ -30,6 +30,8 @@ public final class ProfileRules {
             "about", "www", "login", "logout", "dashboard", "settings", "docs", "faq", "install", "privacy", "terms", "clans", "directory", "jonnybot",
             // the bot's own face (bot.runeclans.com since the RuneClan Bot rebrand; jonnybot. redirects there)
             "bot",
+            // the website's own pages under /clans/<slug> (the clan list's browse view)
+            "browse",
             // the platform's subdomains (T-290)
             "link", "hub", "auth", "mail", "email", "smtp", "status", "cdn", "assets", "static", "img", "images", "media", "dev", "staging", "beta",
             "test", "preview", "app", "apps", "help", "support", "blog", "news", "shop", "store", "builder", "manage", "plugins", "account", "accounts",

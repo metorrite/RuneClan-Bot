@@ -45,7 +45,7 @@ class ProfileRulesTest {
     void thePlatformsOwnSubdomainsAreReserved() {
         // a clan's address is its website's subdomain (T-290), so the site's own hosts can never be one
         for (String name : new String[] {"www", "api", "admin", "link", "dashboard", "hub", "auth", "mail", "status", "docs", "cdn", "assets", "static", "dev",
-                "staging", "beta", "bot", "jonnybot"}) {
+                "staging", "beta", "bot", "browse", "jonnybot"}) {
             assertNotNull(ProfileRules.slugProblem(name), name + " should be reserved");
         }
         assertNull(ProfileRules.slugProblem("green-angels"));
