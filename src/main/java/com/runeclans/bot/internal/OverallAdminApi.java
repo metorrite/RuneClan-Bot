@@ -2,12 +2,9 @@ package com.runeclans.bot.internal;
 
 import com.runeclans.bot.discord.Shards;
 import com.sun.net.httpserver.HttpExchange;
-import com.runeclans.bot.access.OverallAdminRepository;
 import com.runeclans.bot.access.OverallAdmins;
-import com.runeclans.bot.clansite.SiteRoleGuard;
 import com.runeclans.bot.config.BotConfig;
 import com.runeclans.bot.internal.TicketAdminApi.ApiError;
-import com.runeclans.bot.notice.BotOwners;
 import com.runeclans.bot.premium.PremiumAccessRepository;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.JDA;
@@ -24,7 +21,6 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Locale;
-import java.util.TreeSet;
 import java.util.function.Supplier;
 
 /**
@@ -35,9 +31,7 @@ import java.util.function.Supplier;
  * audit log.
  * <ul>
  *   <li>{@code GET overall/whoami}: 200 always, {@code {overallAdmin, builtIn}}</li>
- *   <li>{@code GET overall/admins}: {@code {builtIn: [{userId}], admins: [{userId, note, addedBy, addedAt}], canManage}}</li>
- *   <li>{@code PUT overall/admins/{userId}} {@code {note?}} and {@code DELETE overall/admins/{userId}}: built-in admins only; a built-in admin
- *   can't be added or removed; answers the list</li>
+ *   <li>The admin list itself lives on the RuneClans hub (T-981): the website reads and changes it there, and {@link OverallAdmins} reads it.</li>
  *   <li>{@code GET overall/premium}: {@code {grants: [{id, kind, targetId, startsAt, endsAt, note, grantedBy, grantedAt, active}], enforced: false}};
  *   {@code POST overall/premium} {@code {kind: "site"|"user", targetId, startsAt?, endsAt?, note?}} (dates {@code YYYY-MM-DD}, UTC) and
  *   {@code DELETE overall/premium/{id}}: answer the list. Structure only: nothing reads these grants ({@link PremiumAccessRepository})</li>
@@ -52,29 +46,24 @@ public class OverallAdminApi {
     static final String PREFIX = "/internal/admin/overall";
     private static final String ACTOR_HEADER = "X-Actor-Id";
     static final int MAX_NOTE = 120;
-    static final int MAX_ADMINS = 100;
     static final int MAX_GRANTS = 1000;
 
     private final OverallAdmins admins;
-    private final BotOwners owners;
     private final PremiumAccessRepository premium;
     private final SiteOwnerAdminApi sites;
     private final SiteBuilderBetaAdminApi beta;
     private final OverallOpsRoutes ops;
-    private final SiteRoleGuard siteRoles;
     private final AdminToolsStore auditStore;
     private final BotConfig config;
     private final RateLimiter writes = new RateLimiter(20, 1_000);
 
-    public OverallAdminApi(OverallAdmins admins, BotOwners owners, PremiumAccessRepository premium, SiteOwnerAdminApi sites, SiteBuilderBetaAdminApi beta,
-                           OverallOpsRoutes ops, SiteRoleGuard siteRoles, AdminToolsStore auditStore, BotConfig config) {
+    public OverallAdminApi(OverallAdmins admins, PremiumAccessRepository premium, SiteOwnerAdminApi sites, SiteBuilderBetaAdminApi beta,
+                           OverallOpsRoutes ops, AdminToolsStore auditStore, BotConfig config) {
         this.admins = admins;
-        this.owners = owners;
         this.premium = premium;
         this.sites = sites;
         this.beta = beta;
         this.ops = ops;
-        this.siteRoles = siteRoles;
         this.auditStore = auditStore;
         this.config = config;
     }
@@ -129,7 +118,6 @@ public class OverallAdminApi {
         if (parts.length == 0) return null;
         String[] rest = Arrays.copyOfRange(parts, 1, parts.length);
         return switch (parts[0]) {
-            case "admins" -> adminsRoute(jda, actor, method, rest, body);
             case "premium" -> premiumRoute(actor, method, rest, body);
             case SiteOwnerAdminApi.ROOT -> {
                 Guild home = home(jda);
@@ -139,42 +127,6 @@ public class OverallAdminApi {
             case OverallOpsRoutes.HEALTH, OverallOpsRoutes.RUNESYNC, OverallOpsRoutes.PREMIUM_GUILDS, OverallOpsRoutes.RSNLINK -> ops.route(jda, actor, home(jda), method, parts, body);
             default -> null;
         };
-    }
-
-    // ---------- overall admins ----------
-
-    private DataObject adminsRoute(JDA jda, long actor, String method, String[] rest, Supplier<DataObject> body) {
-        if (rest.length == 0) {
-            AdminRouteExtension.requireMethod(method, "GET");
-            return adminsJson(jda, actor);
-        }
-        if (rest.length != 1) return null;
-        if (!admins.isBuiltIn(jda, actor)) throw new ApiError(403, "Only the built-in RuneClan Admin can add or remove admins.");
-        long userId = userId(rest[0]);
-        if (admins.isBuiltIn(jda, userId)) throw new ApiError(400, "That person is a built-in admin: they are always an admin and can't be added or removed.");
-        if (method.equals("PUT")) {
-            String note = note(body.get().getString("note", ""));
-            boolean listed = admins.list().stream().anyMatch(e -> e.userId() == userId);
-            if (!listed && admins.list().size() >= MAX_ADMINS) throw new ApiError(400, "The admin list is full. Remove someone first.");
-            admins.put(userId, note, actor);
-        } else {
-            AdminRouteExtension.requireMethod(method, "DELETE");
-            if (!admins.remove(userId, actor)) throw new ApiError(404, "That person isn't a RuneClan Admin.");
-        }
-        // their site roles change with this, everywhere
-        siteRoles.forgetAll();
-        return adminsJson(jda, actor);
-    }
-
-    DataObject adminsJson(JDA jda, long actor) {
-        DataArray builtIn = DataArray.empty();
-        for (long id : new TreeSet<>(owners.known(jda))) builtIn.add(DataObject.empty().put("userId", Long.toString(id)));
-        DataArray added = DataArray.empty();
-        for (OverallAdminRepository.Entry e : admins.list()) {
-            added.add(DataObject.empty().put("userId", Long.toString(e.userId())).put("note", e.note()).put("addedBy", Long.toString(e.addedBy()))
-                    .put("addedAt", e.addedAt().toString()));
-        }
-        return DataObject.empty().put("builtIn", builtIn).put("admins", added).put("canManage", admins.isBuiltIn(jda, actor));
     }
 
     // ---------- premium access (structure only) ----------

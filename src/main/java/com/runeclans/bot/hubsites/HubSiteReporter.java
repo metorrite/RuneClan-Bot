@@ -54,6 +54,8 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
     private final CapabilityReports capabilities;
     /** When to declare: every shard's ready (as before T-817), and once when the panel moves clan sites to the hub while the bot runs. */
     private final Declarer declarer;
+    /** Every mapped role reported again every {@link #REFRESH_HOURS} (T-963). */
+    private final RoleRefresh refresh;
 
     public HubSiteReporter(HubSites sites, RuneClansHubClient hub) {
         this.sites = sites;
@@ -64,6 +66,75 @@ public class HubSiteReporter extends ListenerAdapter implements BotListener, Hub
         // the Switches panel can move clan sites to the hub while the bot runs (T-817): declare then, not only on start
         this.declarer = new Declarer(sites::readsHub, () -> jda != null, this::declareAll);
         lane.scheduleWithFixedDelay(declarer::tick, 30, 30, TimeUnit.SECONDS);
+        // the hub counts a role report for a day, and while a clan's chosen roles go unreported it falls back to the RuneScape rank (T-963):
+        // report every mapped role again well inside that day, so the fallback only comes when the bot is really gone
+        this.refresh = new RoleRefresh(() -> jda != null && sites.readsHub(), () -> Shards.guilds(jda).stream().map(Guild::getIdLong).toList(),
+                reports::all, (delay, task) -> lane.schedule(task, delay.toMillis(), TimeUnit.MILLISECONDS));
+        lane.scheduleWithFixedDelay(refresh::run, REFRESH_HOURS, REFRESH_HOURS, TimeUnit.HOURS);
+    }
+
+    /** How often every mapped role is reported again; well inside the hub's one-day report life. */
+    static final long REFRESH_HOURS = 6;
+
+    /**
+     * Reports every mapped role in every server again, while the bot reads sites from the hub. One server at a time, each its own task on the
+     * lane a moment after the last, so role-change reports and declares queued meanwhile aren't held up behind the whole pass. Nothing it
+     * runs can throw out: a repeating task that throws stops repeating, and the clans' roles would then quietly go stale.
+     */
+    static final class RoleRefresh {
+        /** The pause between two servers. */
+        static final java.time.Duration GAP = java.time.Duration.ofSeconds(1);
+
+        private final java.util.function.BooleanSupplier on;
+        private final java.util.function.Supplier<List<Long>> guilds;
+        private final java.util.function.LongToIntFunction report;
+        private final RoleReports.Timer later;
+        private final java.util.concurrent.atomic.AtomicBoolean running = new java.util.concurrent.atomic.AtomicBoolean();
+
+        RoleRefresh(java.util.function.BooleanSupplier on, java.util.function.Supplier<List<Long>> guilds, java.util.function.LongToIntFunction report,
+                RoleReports.Timer later) {
+            this.on = on;
+            this.guilds = guilds;
+            this.report = report;
+            this.later = later;
+        }
+
+        /** Starts a pass, unless one is still going. */
+        void run() {
+            try {
+                if (!on.getAsBoolean() || !running.compareAndSet(false, true)) return;
+                List<Long> ids = List.copyOf(guilds.get());
+                next(ids, 0, 0);
+            } catch (RuntimeException e) {
+                running.set(false);
+                log.warn("Hub role refresh couldn't start: {}", e.getClass().getSimpleName());
+            }
+        }
+
+        private void next(List<Long> ids, int index, int roles) {
+            if (index >= ids.size()) {
+                running.set(false);
+                log.info("RuneClans hub: reported {} mapped role(s) again", roles);
+                return;
+            }
+            int sent = roles;
+            try {
+                if (on.getAsBoolean()) sent += report.applyAsInt(ids.get(index));
+            } catch (RuntimeException e) {
+                log.warn("Hub role refresh for a server failed: {}", e.getClass().getSimpleName());
+            }
+            int total = sent;
+            try {
+                later.after(GAP, () -> next(ids, index + 1, total));
+            } catch (RuntimeException e) {
+                running.set(false);
+                log.warn("Hub role refresh stopped early: {}", e.getClass().getSimpleName());
+            }
+        }
+
+        boolean running() {
+            return running.get();
+        }
     }
 
     @Override

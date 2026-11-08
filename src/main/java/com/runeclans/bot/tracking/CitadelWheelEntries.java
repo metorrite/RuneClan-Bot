@@ -64,7 +64,7 @@ public class CitadelWheelEntries {
 
         Map<String, String> rankByRsn = new HashMap<>();
         for (var member : clanMembers.getAll(guildId, true)) rankByRsn.put(member.rsn().toLowerCase(Locale.ROOT), member.clanRank());
-        var predicate = WheelEligibility.atLeast(ranks.getRanksOrdered(guildId).stream().map(ClanPointsRepository.RankConfigRow::rankName).toList(), ADMIN_RANK);
+        var predicate = WheelEligibility.atLeast(ClanPointsRepository.STANDARD_RANK_NAMES, ADMIN_RANK); // the hub's ladder is always the standard one (T-978)
 
         List<WheelEligibility.Link> accountLinks = links.getAllLinks(guildId).stream().map(l -> new WheelEligibility.Link(l.rsn(), l.discordUserId())).toList();
         long dataDone = System.nanoTime();

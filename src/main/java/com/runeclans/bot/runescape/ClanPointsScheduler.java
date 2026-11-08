@@ -20,10 +20,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Once a day, at 00:10 UTC — 10 minutes after {@link ClanSyncScheduler}'s own 00:00 UTC run, so
- * every member's {@code clan_rank} is already freshly synced before the promotion check reads it —
- * runs {@link ClanPointsService#runDailyPointsAndPromotionCheck}, which awards points and sends the
- * Clan Report for every guild with a clan configured.
+ * Once a day, at 01:30 UTC, sends the Clan Report ({@link ClanPointsService#runDailyPointsAndPromotionCheck}) for every guild with a
+ * clan configured. The points and promotion flags are the RuneClans hub's (T-978): it awards them after its own daily roster fetch of
+ * each clan, which lands somewhere in 00:00-00:59 UTC (a failed fetch is tried again 15 minutes later), so the report waits until
+ * 01:30 to read today's flags rather than yesterday's.
  * <p>
  * Same JDA-ready + {@code scheduleAtFixedRate} pattern as {@link ClanSyncScheduler}/{@code WeeklyDigestScheduler},
  * and same {@link BotConfig#getRunescapeAutoPollEnabled()} gate as every other scheduler here.
@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit;
 public class ClanPointsScheduler {
     private static final Logger log = LoggerFactory.getLogger(ClanPointsScheduler.class);
 
-    private static final LocalTime RUN_TIME_UTC = LocalTime.of(0, 10);
+    private static final LocalTime RUN_TIME_UTC = LocalTime.of(1, 30);
     private static final Duration INTERVAL = Duration.ofDays(1);
 
     private final ClanPointsService clanPointsService;
@@ -54,12 +54,12 @@ public class ClanPointsScheduler {
         }
 
         JDA jda = event.getJda();
-        Duration initialDelay = durationUntilNext0010Utc();
+        Duration initialDelay = durationUntilNextRun();
         log.info("Clan points scheduler starting: first run in {}, then every {}.", initialDelay, INTERVAL);
         executor.scheduleAtFixedRate(() -> runForAllGuilds(jda), initialDelay.toSeconds(), INTERVAL.toSeconds(), TimeUnit.SECONDS);
     }
 
-    private static Duration durationUntilNext0010Utc() {
+    private static Duration durationUntilNextRun() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime candidate = now.toLocalDate().atTime(RUN_TIME_UTC).atOffset(ZoneOffset.UTC);
         if (!candidate.isAfter(now)) candidate = candidate.plusDays(1);

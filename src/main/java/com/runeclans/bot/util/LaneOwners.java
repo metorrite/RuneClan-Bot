@@ -30,6 +30,7 @@ public final class LaneOwners {
             Map.entry("message-log-purge", Owner.API),
             Map.entry("clan-site-cleanup", Owner.API),
             Map.entry("clan-site-race", Owner.API), // the leaderboard race's hub reads (T-710), for the website's overview
+            Map.entry("overall-admins", Owner.API), // T-981: re-reads the RuneClan Admin list from the hub in the background
             Map.entry("address-change-scheduler", Owner.API),
             Map.entry("quick-groups", Owner.API),
             Map.entry("hub-tracked", Owner.GATEWAY), // the names the hub should poll, from the servers the bot is in (T-851)

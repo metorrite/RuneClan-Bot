@@ -12,7 +12,8 @@ import java.util.Locale;
  * Moved: the site builder ({@code clan-site/...}: the site, layout, versions, publishing, roles, address, take-down), the clan profile,
  * the recruiting post, alliances, site pictures ({@code site-pictures}, {@code images/site/...}) and the owner's site tools
  * ({@code owner-sites/...}, also under {@code overall/}). Not moved: {@code clan-site/connections} (the Discord channel picks stay bot
- * mappings, {@link SiteChannelMappings}), {@code clan-site/clan-name} (the server's clan name, a bot setting) and
+ * mappings, {@link SiteChannelMappings}), {@code clan-site/clan-name} (the server's clan name, a bot setting), {@code clan-site/member-options}
+ * (whether members may change their nickname and name colour through the bot: a Discord setting only the bot can act on, T-976) and
  * {@code clan-profile/verify} (verification is never edited on the hub's profile routes).
  */
 public final class SitesMoved {
@@ -31,7 +32,7 @@ public final class SitesMoved {
         String[] parts = route.isEmpty() ? new String[0] : route.split("/");
         if (parts.length == 0) return false;
         return switch (parts[0]) {
-            case "clan-site" -> parts.length < 2 || !(parts[1].equals("connections") || parts[1].equals("clan-name"));
+            case "clan-site" -> parts.length < 2 || !(parts[1].equals("connections") || parts[1].equals("clan-name") || parts[1].equals("member-options"));
             case "clan-profile" -> parts.length == 1;
             case "clan-recruiting", "alliances", "site-pictures", "owner-sites" -> true;
             case "images" -> parts.length >= 2 && parts[1].equals("site");

@@ -135,7 +135,9 @@ class SiteSeasonsDatabaseTest {
 
         when(stats.members(G)).thenReturn(List.of(member("Skiller"), member("Pointy"), member("Victor"), member("Quiet")));
         when(stats.xpGainsBetween(eq(G), any(), any())).thenReturn(List.of(new Gain("Skiller", 50_000_000), new Gain("Quiet", 0)));
-        when(stats.pointsBetween(eq(G), eq(null), any(), any())).thenReturn(List.of(new PointsEarned("Pointy", 400)));
+        // the close keeps what it reads, so it asks for the points strictly (T-978); the first try finds the hub silent
+        when(stats.pointsBetweenOrThrow(eq(G), eq(null), any(), any())).thenThrow(new IllegalStateException("hub down"))
+                .thenReturn(List.of(new PointsEarned("Pointy", 400)));
 
         // a team event that finished inside the season, won by Victor's team; and one that finished after it
         sql("INSERT INTO younglings.event (guild_id, template, name, status, created_by, ends_at) VALUES (" + G + ", 'custom', 'Bingo', 'DONE', 1, '2026-09-20T00:00:00Z')");
@@ -150,8 +152,10 @@ class SiteSeasonsDatabaseTest {
         sql("INSERT INTO younglings.player_link (guild_id, discord_user_id, rsn, verification_method) VALUES (" + G + ", " + TEAMMATE + ", 'NotInClan', 'TEST')");
         sql("INSERT INTO younglings.clan_member (guild_id, rsn, clan_rank, active) VALUES (" + G + ", 'Victor', 'Recruit', TRUE)");
 
-        assertEquals(1, seasons.closeFinished(null, now));
-        assertEquals(0, seasons.closeFinished(null, now.plusMinutes(30)), "the next tick closes nothing");
+        assertEquals(0, seasons.closeFinished(null, now), "the hub didn't answer for the points: nothing is kept yet");
+        assertTrue(store.finalOf(G, "2026-q3").isEmpty(), "no season frozen at 0 points");
+        assertEquals(1, seasons.closeFinished(null, now.plusMinutes(30)), "the next tick closes it");
+        assertEquals(0, seasons.closeFinished(null, now.plusMinutes(60)), "the next tick closes nothing");
 
         List<Row> kept = store.standings(G, "2026-q3", 10);
         assertEquals(3, kept.size(), "the member with nothing isn't listed");

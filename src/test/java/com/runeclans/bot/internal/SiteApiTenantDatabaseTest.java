@@ -111,7 +111,7 @@ class SiteApiTenantDatabaseTest {
         stats = new SiteStatsRepository(db, initializer).withStats(HUB.backends());
         links = new PlayerLinkRepository(db, initializer).withStats(HUB.backends());
         digest = new WeeklyDigestRepository(db, initializer).withStats(HUB.backends());
-        points = new ClanPointsRepository(db, initializer);
+        points = new ClanPointsRepository(mock(com.runeclans.bot.runeclans.RuneClansHubClient.class));
         profiles = new MemberProfileRepository(db);
         community = new CommunitySettings(db, com.runeclans.bot.testsupport.SiteMappings.off(db));
         catalog = new WikiCatalog();
@@ -183,6 +183,7 @@ class SiteApiTenantDatabaseTest {
     @AfterEach
     void cleanUp() throws Exception {
         if (db == null) return;
+        stats.withPoints(null);
         for (String table : List.of("clan_member", "player_link", "member_profile", "coffer_donation", "clan_roster_event", "signup", "poll", "member_privacy_default",
                 "member_recap_seen", "clan_points_award")) {
             sql("DELETE FROM younglings." + table + " WHERE guild_id IN (?, ?)", GUILD_A, GUILD_B);
@@ -342,9 +343,15 @@ class SiteApiTenantDatabaseTest {
         String former = "T710Former";
         String alt = "T710AltName";
         sql("INSERT INTO younglings.clan_member (guild_id, rsn, clan_rank, active) VALUES (?, ?, 'Recruit', FALSE)", GUILD_A, former);
-        for (String rsn : List.of(SHOWN, HIDDEN, former, alt)) {
-            sql("INSERT INTO younglings.clan_points_award (guild_id, rsn, award_type, points, awarded_for_date) VALUES (?, ?, 'T710', 25, CURRENT_DATE - 1)", GUILD_A, rsn);
-        }
+        // clan points are the hub's (T-978): 25 each yesterday
+        ClanPointsRepository history = mock(ClanPointsRepository.class);
+        java.time.LocalDate yesterday = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(1);
+        when(history.earned(org.mockito.ArgumentMatchers.eq(GUILD_A), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean())).thenAnswer(inv -> {
+            boolean byDay = inv.getArgument(4);
+            return List.of(SHOWN, HIDDEN, former, alt).stream().map(rsn -> new ClanPointsRepository.Earned(rsn, byDay ? yesterday : null, 25)).toList();
+        });
+        stats.withPoints(history);
         var racing = org.mockito.ArgumentCaptor.<java.util.function.Predicate<String>>captor();
         when(feed.xpRace(org.mockito.ArgumentMatchers.eq(GUILD_A), racing.capture())).thenReturn(null);
 

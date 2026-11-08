@@ -106,7 +106,7 @@ public class FeatureStatusRepository {
         // the bingo pool and skill of the week are the hub's (T-941): no bot table to read, so their tabs get no dot
         // no profile row reads as UNLISTED (ClanProfile.empty), so the tab is on until someone makes it private
         FLAGS.put("/clan/clan-profile", "COALESCE((SELECT t.visibility FROM younglings.clan_profile t WHERE t.guild_id = g.id), 'UNLISTED') <> 'PRIVATE'");
-        exists("/clan/clan-points", "clan_points_settings", "(t.daily_membership_points > 0 OR t.citadel_visit_points > 0 OR t.citadel_cap_points > 0)");
+        // clan points are the hub's (T-978): FeatureStatusApi asks it
         enabled("/runescape/anniversaries", "anniversary_config");
         exists("/runescape/pvm-help", "ticket_panel", "t.help_kind <> 'NONE'");
         exists("/runescape/alliances", "alliance_member", "t.status = 'ACTIVE'");

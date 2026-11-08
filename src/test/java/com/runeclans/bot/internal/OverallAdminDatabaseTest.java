@@ -4,7 +4,6 @@ import com.runeclans.bot.access.AccessArea;
 import com.runeclans.bot.access.AccessGrantRepository;
 import com.runeclans.bot.access.AccessGrantService;
 import com.runeclans.bot.access.GateSource;
-import com.runeclans.bot.access.OverallAdminRepository;
 import com.runeclans.bot.access.OverallAdmins;
 import com.runeclans.bot.beta.BetaDatabaseInitializer;
 import com.runeclans.bot.beta.BetaGuildRepository;
@@ -86,6 +85,9 @@ class OverallAdminDatabaseTest {
     private static AccessGrantRepository grants;
     private static AccessGrantService grantService;
     private static BotlessSiteRepository botless;
+    private static OverallAdmins overall;
+    /** The hub's added admins, as the fake hub answers them. */
+    private static final Set<Long> HUB_ADDED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final HttpClient http = HttpClient.newHttpClient();
 
     @BeforeAll
@@ -111,7 +113,8 @@ class OverallAdminDatabaseTest {
         when(owners.isOwner(any(), anyLong())).thenReturn(false);
         when(owners.isOwner(any(), eq(BUILT_IN))).thenReturn(true);
         when(owners.known(any())).thenReturn(Set.of(BUILT_IN));
-        OverallAdmins overall = new OverallAdmins(new OverallAdminRepository(db), owners);
+        // the hub keeps the added admins (T-981): a fake hub list the tests change
+        overall = OverallAdmins.of(() -> new OverallAdmins.HubList(Set.of(), Set.copyOf(HUB_ADDED)), owners);
         SiteRoleGuard roles = new SiteRoleGuard(new SiteRoleRepository(db), mock(DashboardAccess.class), settings, mock(PlayerLinkService.class), overall);
         ClanSiteAdminApi clanSite = new ClanSiteAdminApi(sites, layouts, siteService, profiles, owners, mock(Premium.class), roles,
                 mock(SiteDiscordService.class), mock(SiteAddressRoutes.class), mock(SiteMemberOptionsAdminApi.class), mock(SiteMembersAdmin.class), mock(SiteInviteRoutes.class));
@@ -122,8 +125,8 @@ class OverallAdminDatabaseTest {
         BotlessAdminApi botlessAdmin = new BotlessAdminApi(clanSite, new ClanProfileAdminApi(new ClanProfileRepository(db), profiles),
                 new SitePictureAdminApi(images, mock(Premium.class), roles), new ImageAdminApi(images), mock(AdminOpsApi.class), audit, roles, botless, settings,
                 grantService, owners, mock(ClanSyncScheduler.class));
-        OverallAdminApi overallApi = new OverallAdminApi(overall, owners, new PremiumAccessRepository(db), mock(SiteOwnerAdminApi.class),
-                new SiteBuilderBetaAdminApi(grants, grantService, owners), mock(OverallOpsRoutes.class), roles, audit, config);
+        OverallAdminApi overallApi = new OverallAdminApi(overall, new PremiumAccessRepository(db), mock(SiteOwnerAdminApi.class),
+                new SiteBuilderBetaAdminApi(grants, grantService, owners), mock(OverallOpsRoutes.class), audit, config);
         InternalApiServer server = new InternalApiServer(config, mock(TicketAdminApi.class), mock(SiteApi.class), mock(DirectoryApi.class), mock(PluginApi.class),
                 mock(MemberApi.class), images, mock(com.runeclans.bot.tracking.CitadelWinners.class), mock(FormsPublicApi.class), List.of(), botlessAdmin,
                 mock(com.runeclans.bot.discord.jobs.DiscordOutbox.class), overallApi, com.runeclans.bot.hubsites.HubSites.off());
@@ -153,7 +156,7 @@ class OverallAdminDatabaseTest {
             }
             long[] people = {BUILT_IN, ADDED, SITE_OWNER, SITE_ADMIN, STAFFER, STRANGER};
             for (long id : people) {
-                for (String sql : new String[]{"DELETE FROM younglings.overall_admin WHERE user_id = ?", "DELETE FROM younglings.access_grant WHERE user_id = ?",
+                for (String sql : new String[]{"DELETE FROM younglings.access_grant WHERE user_id = ?",
                         "DELETE FROM younglings.premium_access_grant WHERE target_id = ?"}) {
                     try (PreparedStatement s = c.prepareStatement(sql)) {
                         s.setLong(1, id);
@@ -166,6 +169,8 @@ class OverallAdminDatabaseTest {
                 s.executeUpdate();
             }
         }
+        HUB_ADDED.clear();
+        if (overall != null) overall.forget();
         if (grantService != null) grantService.listChanged();
         if (botless != null) botless.remove(SITE);
     }
@@ -204,55 +209,47 @@ class OverallAdminDatabaseTest {
         return new Answer(response.statusCode(), text == null || text.isBlank() ? DataObject.empty() : DataObject.fromJson(text));
     }
 
+    /** A built-in admin adds {@code id} on the website: the hub's list changes, and the bot reads it again. */
+    private static void hubAdds(long id) {
+        HUB_ADDED.add(id);
+        overall.forget();
+    }
+
+    private static void hubRemoves(long id) {
+        HUB_ADDED.remove(id);
+        overall.forget();
+    }
+
     @Test
-    void theBuiltInAdminIsAlwaysAnAdminAndCanNotBeAddedOrRemoved() throws Exception {
+    void theBuiltInAdminIsAlwaysAnAdmin() throws Exception {
         Answer who = overall("GET", "whoami", null, BUILT_IN);
         assertEquals(200, who.status());
         assertTrue(who.body().getBoolean("overallAdmin"));
         assertTrue(who.body().getBoolean("builtIn"));
-        Answer list = overall("GET", "admins", null, BUILT_IN);
-        assertEquals(Long.toString(BUILT_IN), list.body().getArray("builtIn").getObject(0).getString("userId"));
-        assertTrue(list.body().getBoolean("canManage"));
-        assertEquals(400, overall("DELETE", "admins/" + BUILT_IN, null, BUILT_IN).status(), "a built-in admin can't be removed");
-        assertEquals(400, overall("PUT", "admins/" + BUILT_IN, "{}", BUILT_IN).status());
 
         Answer stranger = overall("GET", "whoami", null, STRANGER);
         assertEquals(200, stranger.status(), "whoami answers everyone");
         assertFalse(stranger.body().getBoolean("overallAdmin"));
-        assertEquals(403, overall("GET", "admins", null, STRANGER).status());
         assertEquals(403, overall("GET", "premium", null, STRANGER).status());
         assertEquals(403, overall("GET", "beta-testers", null, STRANGER).status());
+        assertEquals(404, overall("GET", "admins", null, BUILT_IN).status(), "the list itself lives on the hub (T-981)");
     }
 
     @Test
-    void theBuiltInAdminAddsAndRemovesAdminsByUserIdWithWhoAndWhen() throws Exception {
-        Answer added = overall("PUT", "admins/" + ADDED, "{\"note\":\"support lead\"}", BUILT_IN);
-        assertEquals(200, added.status(), added.body().toString());
-        DataObject entry = added.body().getArray("admins").getObject(0);
-        assertEquals(Long.toString(ADDED), entry.getString("userId"));
-        assertEquals("support lead", entry.getString("note"));
-        assertEquals(Long.toString(BUILT_IN), entry.getString("addedBy"));
-        assertFalse(entry.getString("addedAt").isBlank());
-
+    void anAdminAddedOnTheHubIsAnAdminHereUntilRemoved() throws Exception {
+        hubAdds(ADDED);
         Answer who = overall("GET", "whoami", null, ADDED);
         assertTrue(who.body().getBoolean("overallAdmin"));
         assertFalse(who.body().getBoolean("builtIn"));
-        Answer seen = overall("GET", "admins", null, ADDED);
-        assertEquals(200, seen.status(), "every overall admin sees the list");
-        assertFalse(seen.body().getBoolean("canManage"));
-        assertEquals(403, overall("PUT", "admins/" + STRANGER, "{}", ADDED).status(), "only the built-in admin adds");
-        assertEquals(403, overall("DELETE", "admins/" + ADDED, null, ADDED).status(), "nor removes");
         assertEquals(200, overall("GET", "beta-testers", null, ADDED).status(), "the beta list is the panel's, for every overall admin");
-        assertEquals(400, overall("PUT", "admins/12345", "{}", BUILT_IN).status(), "a Discord user id only");
 
-        assertEquals(200, overall("DELETE", "admins/" + ADDED, null, BUILT_IN).status());
-        assertFalse(overall("GET", "whoami", null, ADDED).body().getBoolean("overallAdmin"), "a removal takes effect on the next request");
-        assertEquals(404, overall("DELETE", "admins/" + ADDED, null, BUILT_IN).status());
+        hubRemoves(ADDED);
+        assertFalse(overall("GET", "whoami", null, ADDED).body().getBoolean("overallAdmin"), "a removal takes effect once the list is read again");
     }
 
     @Test
     void premiumGrantsAreKeptWithDatesButNotEnforced() throws Exception {
-        overall("PUT", "admins/" + ADDED, "{}", BUILT_IN);
+        hubAdds(ADDED);
         Answer granted = overall("POST", "premium", "{\"kind\":\"site\",\"targetId\":\"" + SITE + "\",\"startsAt\":\"2026-01-01\",\"endsAt\":\"2099-01-01\",\"note\":\"n5\"}", ADDED);
         assertEquals(200, granted.status(), granted.body().toString());
         assertFalse(granted.body().getBoolean("enforced"));
@@ -271,7 +268,7 @@ class OverallAdminDatabaseTest {
     void anOverallAdminOpensAnotherClansSiteAdminAndChangesItsPermissions() throws Exception {
         // a stranger with the same facts (not the server's owner or admin, not on the beta list) is refused
         assertEquals(403, site("GET", "clan-site/roles", null, STRANGER, false, null).status());
-        overall("PUT", "admins/" + ADDED, "{}", BUILT_IN);
+        hubAdds(ADDED);
         Answer roles = site("GET", "clan-site/roles", null, ADDED, false, null);
         assertEquals(200, roles.status(), roles.body().toString());
         assertEquals("owner", roles.body().getObject("you").getString("role"));
@@ -280,7 +277,7 @@ class OverallAdminDatabaseTest {
         assertEquals(200, access.status(), access.body().toString());
         assertEquals(Long.toString(SITE_ADMIN), access.body().getObject("adminAccess").getArray("userIds").getString(0));
 
-        overall("DELETE", "admins/" + ADDED, null, BUILT_IN);
+        hubRemoves(ADDED);
         assertEquals(403, site("GET", "clan-site/roles", null, ADDED, false, null).status(), "removed: back to a stranger");
     }
 
