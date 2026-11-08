@@ -84,7 +84,7 @@ Paths are under `src/main/java/com/runeclans/bot/`. "TTL" means the entry expire
 | RuneMetrics daily tally | `runescape/polling/RuneMetricsBudget` | global counter | M2: follows M1 |
 | Hiscores read log and view cache | `rsnlink/verify/XpVerifier.globalReads`, `cache` | global budget | M8: One owner |
 | RuneLink abuse limits | `rsnlink/LinkService` (6 `SharedWindowLimiter`s, 3 `WindowLimiter`s), `rsnlink/LinkDm` (2 `SharedWindowLimiter`s) | security limit | M7: the code, start and DM limits are in Postgres (`SharedWindowLimiter`, `rate_window`), done; token, alias and web-account route limits per process |
-| Website button and API limits | `internal/RateLimiter` used by `FormsPublicApi`, `TicketAdminApi`, `DirectorySite*Routes`, `WebUserStateRoutes`, `SiteMembersAdmin`, `AppealsPublicApi`, `MemberApi`, `SiteViewerRoutes`, `DiscordJobRoutes`, `ClanSiteAdminApi`, `OverallAdminApi`, `PluginApi`, `LinkedRolesApi`, `BotlessAdminApi` | anti-mashing | Per process is fine (N replicas allow N times the burst; the website and Discord have their own limits) |
+| Website button and API limits | `internal/RateLimiter` used by `FormsPublicApi`, `TicketAdminApi`, `DirectorySite*Routes`, `SiteMembersAdmin`, `AppealsPublicApi`, `MemberApi`, `SiteViewerRoutes`, `DiscordJobRoutes`, `ClanSiteAdminApi`, `OverallAdminApi`, `PluginApi`, `LinkedRolesApi`, `BotlessAdminApi` | anti-mashing | Per process is fine (N replicas allow N times the burst; the website and Discord have their own limits) |
 | Plugin ingest limits | `internal/PluginApi` (`ingestLimit`, `accountLimit`, `runeSyncLimit`) | anti-flood | Per process is fine; revisit if plugin traffic grows (hub owns ingest long term) |
 | Message cooldowns | `chatlevel/ChatLevelListener.lastEarned`, `highlight/HighlightListener.lastSent`, `autoreply/AutoReplyListener.lastAnswered`, `commands/customtag/TagCommand.lastUsed`, `commands/recap/WrappedCommand.lastUse`, `suggestion/SuggestionService.lastSubmitted`, `tempvoice/TempVoiceService.lastCreate`, `commandchannel/CommandChannelListener.lastNoticeAt`, `servertag/ServerTagListener.recent`, `honeypot/HoneypotListener.recent` | per-server event dedupe | Per shard set is fine (events for a server arrive on its shard only) |
 | Automod histories, role-rule chain guard | `automod/AutomodListener.histories`, `rolerules/RoleRuleService.hops`, `recent` | per-server event state | Per shard set is fine |
@@ -208,6 +208,7 @@ has more than one replica).
 | `runemetrics-clock-check` | `runescape/RuneMetricsClockCheck` | api |
 | `clan-sync-scheduler` | `runescape/ClanSyncScheduler` | api (roster fetch); role sync results go through the outbox |
 | `hub-tracked` | `runescape/HubTrackedList` | gateway (posts the `/rsn` names and unregistered-clan members of the servers it is in to the hub's tracked list once an hour, T-851) |
+| `overall-admins` | `access/OverallAdmins` | api (re-reads the hub's RuneClan Admin list in the background when the 30 s cache is stale, T-981) |
 | `clan-points-scheduler` | `runescape/ClanPointsScheduler` | api |
 | `weekly-digest-scheduler` | `runescape/WeeklyDigestScheduler` | gateway (own shards) |
 | `rsnlink-verify`, `rsnlink-retention` | `rsnlink/bridge/RsnLinkModule` | api |
