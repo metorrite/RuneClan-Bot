@@ -69,6 +69,9 @@ class SitesMovedTest {
         assertFalse(SitesMoved.movedWrite("POST", A + "clan-site/connections/connect"));
         assertFalse(SitesMoved.movedWrite("PUT", A + "clan-site/clan-name"), "the server's clan name is a bot setting");
         assertFalse(SitesMoved.movedWrite("PUT", A + "clan-site/member-options"), "nickname and colour changes are the bot's Discord actions (T-976)");
+        assertFalse(SitesMoved.movedWrite("PUT", A + "clan-site/seasons/settings"), "the hub has no seasons route yet (B-84)");
+        assertFalse(SitesMoved.movedWrite("PUT", A + "overall/clan-site/seasons/settings/"), "B-84, overall prefix and trailing slash");
+        assertFalse(SitesMoved.movedWrite("POST", A + "clan-site/seasons"), "B-84");
         assertFalse(SitesMoved.movedWrite("POST", A + "clan-profile/verify"), "verification isn't a profile edit");
         assertFalse(SitesMoved.movedWrite("PUT", A + "images/embed/banner"), "pictures that aren't the site's");
         assertFalse(SitesMoved.movedWrite("PUT", A + "selfroles"));
