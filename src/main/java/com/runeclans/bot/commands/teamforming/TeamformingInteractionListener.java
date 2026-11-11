@@ -127,8 +127,12 @@ public class TeamformingInteractionListener extends ListenerAdapter {
     private void showResult(ButtonInteractionEvent event, TeamformingService.BatchResult result) {
         List<MessageTopLevelComponent> components = new ArrayList<>();
 
+        if (!result.refused().isEmpty()) {
+            components.add(TextDisplay.of("The bot can't hand out " + result.refused().stream().map(r -> "@" + r.getName()).collect(java.util.stream.Collectors.joining(", "))
+                    + ": ask a server admin to check " + (result.refused().size() == 1 ? "that role." : "those roles.")));
+        }
         if (result.isEmpty()) {
-            components.add(TextDisplay.of("No changes were made — your tags already matched your selections."));
+            if (result.refused().isEmpty()) components.add(TextDisplay.of("No changes were made — your tags already matched your selections."));
         } else {
             if (!result.added().isEmpty()) {
                 components.add(Container.of(TextDisplay.of("Added roles:\n" + mentionsGroupedByBoss(result.added())))

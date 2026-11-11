@@ -87,6 +87,11 @@ final class ServerProfile {
     static DataObject setColorRole(DiscordOutbox outbox, Guild guild, Member member, DataObject body) {
         String colorKey = body.isNull("color") ? null : body.getString("color");
         if (colorKey != null && !ColorRoleCatalog.isValidKey(colorKey)) throw new Refused(400, "Unknown color: " + colorKey);
+        if (colorKey != null) {
+            // B-03: an existing "Color: <x>" role is reused, so it must pass the same bar as every other role the bot hands out
+            String refusal = existingColorRoleRefusal(guild, colorKey);
+            if (refusal != null) throw new Refused(403, "That colour can't be picked here. " + refusal);
+        }
         DiscordJob job = outbox.enqueue(COLOR_ROLE_JOB, guild.getIdLong(), member.getIdLong(), "color-role:" + guild.getIdLong() + ":" + member.getIdLong(),
                 DataObject.empty().put("userId", Long.toString(member.getIdLong())).put("color", colorKey));
         return DataObject.empty().put("colorRole", colorKey).put("job", job.ticket());
@@ -101,7 +106,8 @@ final class ServerProfile {
     static void applyColorRole(Guild guild, Member member, String colorKey) {
         List<Role> toRemove = new ArrayList<>();
         for (Role role : member.getRoles()) {
-            if (ColorRoleCatalog.isColorRoleName(role.getName()) && (colorKey == null || !role.getName().equalsIgnoreCase(ColorRoleCatalog.roleName(colorKey)))) {
+            if (ColorRoleCatalog.isColorRoleName(role.getName()) && (colorKey == null || !role.getName().equalsIgnoreCase(ColorRoleCatalog.roleName(colorKey)))
+                    && MemberApi.safeToAssign(guild, role)) {
                 toRemove.add(role);
             }
         }
@@ -113,10 +119,21 @@ final class ServerProfile {
         if (!toAdd.isEmpty() || !toRemove.isEmpty()) DiscordJobs.send(guild.modifyMemberRoles(member, toAdd, toRemove));
     }
 
+    /** Why the server's existing role for {@code colorKey} can't be handed out, or null (also when there is none yet: a new one is made safe). */
+    static String existingColorRoleRefusal(Guild guild, String colorKey) {
+        List<Role> existing = guild.getRolesByName(ColorRoleCatalog.roleName(colorKey), true);
+        return existing.isEmpty() ? null : MemberApi.handOutRefusal(guild, existing.getFirst());
+    }
+
     private static Role ensureColorRole(Guild guild, String colorKey) {
         String roleName = ColorRoleCatalog.roleName(colorKey);
         List<Role> existing = guild.getRolesByName(roleName, true);
-        if (!existing.isEmpty()) return existing.getFirst();
+        if (!existing.isEmpty()) {
+            // checked again here: the role may have been moved or given permissions since the change was queued
+            String refusal = MemberApi.handOutRefusal(guild, existing.getFirst());
+            if (refusal != null) throw new DiscordJobs.Refused(refusal);
+            return existing.getFirst();
+        }
         return DiscordJobs.send(guild.createRole()
                 .setName(roleName)
                 .setColor(ColorRoleCatalog.colorFor(colorKey))

@@ -176,10 +176,9 @@ public class ServerSetupAdminApi {
             problems.add(label + ": that role doesn't exist in this server.");
         } else if (role.isPublicRole()) {
             problems.add(label + ": @everyone can't be used here.");
-        } else if (handedOut && role.isManaged()) {
-            problems.add(label + ": @" + role.getName() + " is managed by an integration, so the bot can't give it to anyone.");
-        } else if (handedOut && !guild.getSelfMember().canInteract(role)) {
-            problems.add(label + ": the bot can't give @" + role.getName() + " out. Move the bot's own role above it in Server Settings > Roles.");
+        } else if (handedOut && !MemberApi.safeToAssign(guild, role)) {
+            // the same bar as every other role the bot hands out (B-55): no managed, higher, powerful or staff-group role
+            problems.add(label + ": " + MemberApi.handOutRefusal(guild, role));
         }
     }
 

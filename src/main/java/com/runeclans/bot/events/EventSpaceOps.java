@@ -1,5 +1,6 @@
 package com.runeclans.bot.events;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.events.EventRepository.Event;
@@ -613,6 +614,12 @@ public class EventSpaceOps {
         int failed = 0;
         for (Map.Entry<String, Set<Long>> e : changes.add().entrySet()) {
             Role role = roles.get(e.getKey());
+            if (role != null && !MemberApi.safeToAssign(guild, role)) {
+                // the bot made this role, but an admin may since have given it powers or put it in a staff group (B-03)
+                failed += e.getValue().size();
+                log.warn("Not giving event {} role {}: {}", event.id(), role.getName(), MemberApi.handOutRefusal(guild, role));
+                continue;
+            }
             for (long userId : e.getValue()) {
                 Member member = guild.getMemberById(userId);
                 if (member != null && member.getRoles().contains(role)) {
