@@ -117,7 +117,7 @@ public class AutoroleAdminApi implements AdminRouteExtension {
         for (long id : ids) {
             Role role = guild.getRoleById(id);
             if (role == null) problems.add(who + ": a chosen role doesn't exist in this server.");
-            else if (!MemberApi.safeToAssign(guild, role)) problems.add(who + ": @" + role.getName() + " can't be handed out (it is managed by an integration, sits above the bot's role, or has powerful permissions).");
+            else if (!MemberApi.safeToAssign(guild, role)) problems.add(who + ": " + MemberApi.handOutRefusal(guild, role));
         }
         return new ArrayList<>(ids);
     }

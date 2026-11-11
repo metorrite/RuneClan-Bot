@@ -4,15 +4,20 @@ import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
 import com.runeclans.bot.runescape.ClanVerificationService;
 import com.runeclans.bot.runescape.PlayerLinkService;
+import com.runeclans.bot.permission.PermissionGroup;
+import com.runeclans.bot.permission.RoleSafetyTesting;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.SelfMember;
 import net.dv8tion.jda.api.utils.data.DataObject;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,6 +66,8 @@ class ServerSetupAdminApiTest {
         when(role.getName()).thenReturn("Role" + id);
         when(guild.getRoleById(id)).thenReturn(role);
         when(self.canInteract(role)).thenReturn(interactable);
+        when(role.getIdLong()).thenReturn(id);
+        when(role.getPermissions()).thenReturn(EnumSet.noneOf(Permission.class));
         return role;
     }
 
@@ -138,6 +145,35 @@ class ServerSetupAdminApiTest {
         assertEquals(400, thrown.status);
         assertTrue(thrown.problems.getFirst().contains("Move the bot's own role above"));
         verify(settings, never()).updateVerificationRoleSettings(anyLong(), any(), any(), any());
+    }
+
+    @AfterEach
+    void forgetGroups() {
+        RoleSafetyTesting.uninstall();
+    }
+
+    @Test
+    void aVerificationRoleWithAdministratorIsRefused() {
+        Role role = role(500, false, true);
+        when(role.getPermissions()).thenReturn(EnumSet.of(Permission.ADMINISTRATOR));
+
+        var thrown = assertThrows(TicketAdminApi.ApiError.class, () ->
+                api.save(guild, actor, DataObject.fromJson("{\"verifiedClanRoleId\": \"500\"}")));
+
+        assertTrue(thrown.problems.getFirst().contains("powerful permissions"), thrown.problems.getFirst());
+        verify(settings, never()).updateVerificationRoleSettings(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void aVerificationRoleThatWouldMakeMembersBotStaffIsRefused() {
+        role(500, false, true);
+        RoleSafetyTesting.install(List.of(new PermissionGroup(1, GUILD, PermissionGroup.DEVELOPER, "Developer", true, false, List.of(500L))));
+
+        var thrown = assertThrows(TicketAdminApi.ApiError.class, () ->
+                api.save(guild, actor, DataObject.fromJson("{\"onboardingRoleId\": \"500\"}")));
+
+        assertTrue(thrown.problems.getFirst().contains("Developer rights"), thrown.problems.getFirst());
+        verify(settings, never()).updateOnboardingRole(anyLong(), any());
     }
 
     @Test

@@ -89,6 +89,7 @@ class RoleSyncBackfillTest {
         SelfMember self = mock(SelfMember.class);
         when(guild.getSelfMember()).thenReturn(self);
         when(self.canInteract(any(Member.class))).thenReturn(true);
+        when(self.canInteract(any(Role.class))).thenReturn(true); // ordinary roles the bot may hand out (MemberApi.safeToAssign)
         member = role(MEMBER);
         guest = role(GUEST);
         unverified = role(UNVERIFIED);
@@ -101,6 +102,7 @@ class RoleSyncBackfillTest {
     private Role role(long id) {
         Role r = mock(Role.class);
         when(r.getIdLong()).thenReturn(id);
+        when(r.getPermissions()).thenReturn(java.util.EnumSet.noneOf(net.dv8tion.jda.api.Permission.class));
         return r;
     }
 

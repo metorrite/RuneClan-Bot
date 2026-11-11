@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.components.separator.Separator;
 import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
 import net.dv8tion.jda.api.components.thumbnail.Thumbnail;
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.branding.BrandingService;
 import com.runeclans.bot.config.BotConfig;
 import net.dv8tion.jda.api.entities.Guild;
@@ -295,6 +296,9 @@ public class TeamformingService {
             guild.getRolesByName(monthlyMass.roleName(), true).stream().findFirst().ifPresent(toRemove::add);
         }
 
+        // an existing role with the option's name is reused, so it must pass the shared hand-out check (B-03)
+        toAdd.removeIf(role -> !MemberApi.safeToAssign(guild, role));
+        toRemove.removeIf(role -> !MemberApi.safeToAssign(guild, role));
         if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
             guild.modifyMemberRoles(member, toAdd, toRemove).complete();
         }

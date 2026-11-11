@@ -1,5 +1,6 @@
 package com.runeclans.bot.runescape;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
 import com.runeclans.bot.jobs.JobRepository;
@@ -192,7 +193,7 @@ public class RoleSyncBackfill {
                 if (!mine) break;
                 try {
                     Member member = guild.retrieveMemberById(entry.userId()).complete();
-                    List<Role> add = entry.add().stream().map(guild::getRoleById).filter(r -> r != null).toList();
+                    List<Role> add = entry.add().stream().map(guild::getRoleById).filter(r -> r != null && MemberApi.safeToAssign(guild, r)).toList();
                     List<Role> remove = entry.remove().stream().map(guild::getRoleById).filter(r -> r != null).toList();
                     if (guild.getSelfMember().canInteract(member)) {
                         guild.modifyMemberRoles(member, add, remove).reason("Clan role fix by " + actorId).complete();

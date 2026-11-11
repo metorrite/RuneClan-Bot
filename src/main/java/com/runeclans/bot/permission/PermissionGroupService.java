@@ -4,6 +4,8 @@ import com.runeclans.bot.cachebus.CacheBus;
 import com.runeclans.bot.cachebus.CacheInvalidator;
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
+import io.github.freya022.botcommands.api.core.annotations.BEventListener;
+import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
@@ -65,6 +67,15 @@ public class PermissionGroupService implements CacheInvalidator {
     public PermissionGroupService(PermissionGroupRepository repository, GuildSettingsService legacySettings) {
         this.repository = repository;
         this.legacySettings = legacySettings;
+    }
+
+    /**
+     * Lets {@code MemberApi.safeToAssign} see this server's groups ({@link RoleSafety}), so no path hands out a role that makes its holder
+     * bot staff. Done when the bot connects rather than in the constructor, so tests that build this service never leak it into others.
+     */
+    @BEventListener
+    public void onJdaReady(InjectedJDAEvent event) {
+        RoleSafety.install(this::groups);
     }
 
     // ---------- reading ----------

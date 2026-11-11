@@ -2,6 +2,7 @@ package com.runeclans.bot.runescape;
 
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
+import com.runeclans.bot.internal.MemberApi;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Role;
@@ -92,7 +93,13 @@ public class VerificationRoleSyncService {
             plan.missing().forEach(id -> log.warn("Configured verification role {} not found in guild {}", id, guild.getIdLong()));
             if (plan.add().isEmpty() && plan.remove().isEmpty()) return;
 
-            List<Role> add = plan.add().stream().map(guild::getRoleById).toList();
+            // B-55: a saved role may since have been given powers or moved; never hand out one that fails the shared check
+            List<Role> add = plan.add().stream().map(guild::getRoleById).filter(role -> {
+                if (MemberApi.safeToAssign(guild, role)) return true;
+                log.warn("Not giving verification role {} in guild {}: {}", role.getIdLong(), guild.getIdLong(), MemberApi.handOutRefusal(guild, role));
+                return false;
+            }).toList();
+            if (add.isEmpty() && plan.remove().isEmpty()) return;
             List<Role> remove = plan.remove().stream().map(guild::getRoleById).toList();
             log.info("Updating roles for user {} ({}): add {}, remove {}", discordUserId, why, plan.add(), plan.remove());
             guild.modifyMemberRoles(member, add, remove).queue(success -> {},

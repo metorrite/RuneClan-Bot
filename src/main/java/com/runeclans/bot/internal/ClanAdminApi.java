@@ -1,5 +1,6 @@
 package com.runeclans.bot.internal;
 
+import com.runeclans.bot.permission.RoleSafety;
 import com.runeclans.bot.configure.GuildSettingsService;
 import com.runeclans.bot.configure.WebsiteLink;
 import com.runeclans.bot.discord.jobs.DiscordJob;
@@ -284,7 +285,8 @@ public class ClanAdminApi {
             Role role = guild.getRoleById(configured.roleId());
             array.add(DataObject.empty().put("roleId", Long.toString(configured.roleId())).put("name", role == null ? null : role.getName())
                     .put("label", configured.label()).put("description", configured.description())
-                    .put("safe", role != null && MemberApi.safeToAssign(guild, role)));
+                    .put("safe", role != null && MemberApi.safeToAssign(guild, role))
+                    .put("why", role == null ? null : MemberApi.handOutRefusal(guild, role)));
         }
         return DataObject.empty().put("roles", array);
     }
@@ -309,6 +311,8 @@ public class ClanAdminApi {
             if (role == null) throw new ApiError(400, Text.of(guild, "dashboard.a_chosen_role_no_longer_exists"));
             if (!MemberApi.safeToAssign(guild, role)) {
                 var dangerous = MemberApi.dangerousIn(role.getPermissions());
+                String staff = RoleSafety.staffGroupGiven(guild, role);
+                if (dangerous.isEmpty() && staff != null) throw new ApiError(400, Text.of(guild, "dashboard.not_self_assignable_staff", role.getName(), staff));
                 throw new ApiError(400, dangerous.isEmpty()
                         ? Text.of(guild, "dashboard.not_self_assignable_managed", role.getName())
                         : Text.of(guild, dangerous.size() > 1 ? "dashboard.not_self_assignable_powerful_more" : "dashboard.not_self_assignable_powerful",

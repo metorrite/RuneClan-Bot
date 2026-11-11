@@ -245,7 +245,7 @@ public class FormsAdminApi implements AdminRouteExtension {
         if (form.roleId() != null) {
             Role role = guild.getRoleById(form.roleId());
             if (role == null) problems.add("Choose a role from this server.");
-            else if (!MemberApi.safeToAssign(guild, role)) problems.add("The bot cannot hand out @" + role.getName() + ": it is above the bot's own role or carries powerful permissions.");
+            else if (!MemberApi.safeToAssign(guild, role)) problems.add(MemberApi.handOutRefusal(guild, role));
         }
         return problems;
     }

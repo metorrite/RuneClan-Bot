@@ -1,5 +1,6 @@
 package com.runeclans.bot.commands.configure;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.announcement.AnnouncementRepository;
 import com.runeclans.bot.commands.embed.EmbedService;
 import com.runeclans.bot.configure.WebsiteLink;
@@ -156,6 +157,11 @@ public class ConfigureInteractionListener extends ListenerAdapter {
             if (!ROLE_SELECT_IDS.contains(action)) return;
 
             Long selected = roleIdOrNull(event.getValues().getFirst());
+            String refusal = handOutRefusal(guild, selected);
+            if (refusal != null) {
+                Containers.replyEphemeral(event, Containers.WARNING, refusal);
+                return;
+            }
             GuildSettings current = settingsService.getEffective(guild.getIdLong());
 
             switch (action) {
@@ -173,6 +179,16 @@ public class ConfigureInteractionListener extends ListenerAdapter {
             log.error("Unhandled exception in configure select interaction '{}'", id, e);
             Containers.replyError(event);
         }
+    }
+
+    /**
+     * Why the bot won't hand out the chosen verification or onboarding role, or null (also for no role or a role id the server lacks, which
+     * the panel already handles). The same check as the dashboard's Setup page and every other role the bot gives (B-55).
+     */
+    private static String handOutRefusal(Guild guild, Long roleId) {
+        if (roleId == null) return null;
+        Role role = guild.getRoleById(roleId);
+        return role == null || MemberApi.safeToAssign(guild, role) ? null : MemberApi.handOutRefusal(guild, role);
     }
 
     private static List<Long> selectedRoleIds(EntitySelectInteractionEvent event) {
@@ -285,6 +301,11 @@ public class ConfigureInteractionListener extends ListenerAdapter {
             return;
         }
 
+        String refusal = handOutRefusal(guild, roleId);
+        if (refusal != null) {
+            Containers.replyEphemeral(event, Containers.WARNING, refusal);
+            return;
+        }
         GuildSettings current = settingsService.getEffective(guild.getIdLong());
         switch (targetField) {
             case "verified_clan_role" -> settingsService.updateVerificationRoleSettings(
