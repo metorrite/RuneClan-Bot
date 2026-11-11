@@ -59,7 +59,22 @@ class AutoroleServiceTest {
 
         service.onJoin(member);
 
-        verify(guild).modifyMemberRoles(member, List.of(), List.of(guest));
+        verify(guild).removeRoleFromMember(member, guest);
+        verify(guild, never()).modifyMemberRoles(any(Member.class), anyCollection(), anyCollection());
+    }
+
+    @Test
+    void eachRoleIsGivenOnItsOwnSoAKeptRoleGivenOnTheSameJoinIsNotOverwritten() {
+        Role member1 = role(20L, true);
+        Role member2 = role(21L, true);
+        when(member.getRoles()).thenReturn(List.of());
+        when(repository.get(GUILD)).thenReturn(new AutoroleConfig(GUILD, true, 0, List.of(20L, 21L), List.of(), List.of(), List.of()));
+
+        service.onJoin(member);
+
+        verify(guild).addRoleToMember(member, member1);
+        verify(guild).addRoleToMember(member, member2);
+        verify(guild, never()).modifyMemberRoles(any(Member.class), anyCollection(), anyCollection());
     }
 
     @Test
@@ -71,7 +86,7 @@ class AutoroleServiceTest {
 
         service.onJoin(member);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), anyCollection(), anyCollection());
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
     }
 
     @Test
@@ -82,6 +97,6 @@ class AutoroleServiceTest {
 
         service.onJoin(member);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), anyCollection(), anyCollection());
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
     }
 }

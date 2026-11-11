@@ -99,6 +99,7 @@ public class RoleKeepService {
 
     /** A member joined: give back what is remembered for them and any timed role still running. */
     public void onJoin(Member member) {
+        if (AutoPostRouter.skipSweep("kept roles on join")) return; // gives roles in the real server: only the live bot does that (T-187, B-82)
         Guild guild = member.getGuild();
         long guildId = guild.getIdLong();
         Set<Long> remembered = new HashSet<>();
@@ -114,7 +115,12 @@ public class RoleKeepService {
         repository.forgetSticky(guildId, member.getIdLong());
         if (give.isEmpty() || !guild.getSelfMember().canInteract(member)) return;
         log.info("Giving {} kept role(s) back to {} in guild {}", give.size(), member.getId(), guildId);
-        guild.modifyMemberRoles(member, give, List.of()).reason("Roles kept from before they left").queue(ok -> {}, e -> log.warn("Could not give kept roles back to {}: {}", member.getId(), e.getMessage()));
+        // one request per role, never modifyMemberRoles: that sends the whole role list from the cached member and would overwrite (or be
+        // overwritten by) the autoroles AutoroleService gives on the same join (B-89)
+        for (Role role : give) {
+            guild.addRoleToMember(member, role).reason("Roles kept from before they left")
+                    .queue(ok -> {}, e -> log.warn("Could not give kept role {} back to {}: {}", role.getId(), member.getId(), e.getMessage()));
+        }
     }
 
     // ---------- the things a person sets ----------

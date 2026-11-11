@@ -1,5 +1,6 @@
 package com.runeclans.bot.chatlevel;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.internal.MemberApi;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -106,7 +107,7 @@ public class ChatLevelListener extends ListenerAdapter implements BotListener {
             if (total < 0) return;
             int before = ChatLevels.levelOf(total - amount);
             int after = ChatLevels.levelOf(total);
-            if (after > before) {
+            if (after > before && !AutoPostRouter.skipSweep("chat level-ups")) { // posts and gives roles in the real server: only the live bot does that (T-187, B-82)
                 if (config.announce()) announce(guild, member, message, after, config);
                 giveRoles(guild, member, after, config);
             }

@@ -40,6 +40,12 @@ import java.util.List;
 @BService
 public class SignupInteractionListener extends ListenerAdapter {
     private static final Logger log = LoggerFactory.getLogger(SignupInteractionListener.class);
+    /**
+     * The /dev signups bulk-close buttons. They carry a ':' like every other signup button, because {@link #onButtonInteraction} ignores
+     * ids without one (before, these buttons were silently dropped and Discord said the interaction failed).
+     */
+    public static final String DEV_CLOSE_ALL = "signup_dev_close_all:ask", DEV_CLOSE_ALL_CONFIRM = "signup_dev_close_all:confirm",
+            DEV_CLOSE_ALL_CANCEL = "signup_dev_close_all:cancel";
     private final SignupService signupService;
     private final BotConfig botConfig;
     private final AdminRoleFilter adminRoleFilter;
@@ -91,7 +97,7 @@ public class SignupInteractionListener extends ListenerAdapter {
             handleBuilderButton(event, id);
             return;
         }
-        if (id.startsWith("signup_dev_close_all")) {
+        if (id.startsWith("signup_dev_close_all:")) {
             handleDevCloseAll(event, id);
             return;
         }
@@ -589,22 +595,22 @@ public class SignupInteractionListener extends ListenerAdapter {
         }
 
         switch (id) {
-            case "signup_dev_close_all" -> {
+            case DEV_CLOSE_ALL -> {
                 Container confirm = Containers.card(Containers.DANGER,
                         TextDisplay.of("Are you sure? This closes **every active signup on every server** the bot is in."),
                         ActionRow.of(
-                                Button.danger("signup_dev_close_all_confirm", "Yes, close everything"),
-                                Button.secondary("signup_dev_close_all_cancel", "Cancel")
+                                Button.danger(DEV_CLOSE_ALL_CONFIRM, "Yes, close everything"),
+                                Button.secondary(DEV_CLOSE_ALL_CANCEL, "Cancel")
                         ));
                 event.replyComponents(List.of(confirm)).useComponentsV2(true).setEphemeral(true).queue();
             }
 
-            case "signup_dev_close_all_confirm" -> {
+            case DEV_CLOSE_ALL_CONFIRM -> {
                 int count = signupService.closeAllActiveSignups(event.getJDA());
                 Containers.edit(event, Containers.SUCCESS, Text.of(event, "signup.closed_signup_across_all_servers", count));
             }
 
-            case "signup_dev_close_all_cancel" -> Containers.editThenDelete(event, Containers.WARNING, Duration.ofSeconds(3), Text.of(event, "signup.cancelled"));
+            case DEV_CLOSE_ALL_CANCEL -> Containers.editThenDelete(event, Containers.WARNING, Duration.ofSeconds(3), Text.of(event, "signup.cancelled"));
         }
     }
 

@@ -85,7 +85,7 @@ public class SignupDevCommand {
                 TextDisplay.of("# Active Signups (all servers)"),
                 Separator.createDivider(Separator.Spacing.SMALL),
                 TextDisplay.of(sb.toString()),
-                ActionRow.of(Button.danger("signup_dev_close_all", "Close ALL Active Signups")));
+                ActionRow.of(Button.danger(SignupInteractionListener.DEV_CLOSE_ALL, "Close ALL Active Signups")));
 
         event.replyComponents(List.of(container)).useComponentsV2(true).setEphemeral(true).queue();
     }

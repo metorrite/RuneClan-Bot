@@ -1,5 +1,6 @@
 package com.runeclans.bot.goodbye;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.welcome.WelcomeTemplate;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
@@ -82,6 +83,7 @@ public class GoodbyeService {
     /** A real leave: posts this server's goodbye if it is switched on. Never throws; a failure is logged. */
     public void onLeave(Guild guild, User user) {
         if (user.isBot()) return;
+        if (AutoPostRouter.skipSweep("goodbye")) return; // posts in the real server: only the live bot does that (T-187, B-82)
         GoodbyeConfig config = repository.get(guild.getIdLong());
         if (!config.enabled() || config.channelId() == null) return;
 

@@ -56,22 +56,36 @@ class DevListenersOwnerOnlyTest {
         when(adminRoleFilter.isAuthorized(any(), any())).thenReturn(true); // a server admin, but not the bot's owner
     }
 
-    // Today the listener drops these ids before the handler (it only handles ids with a ':'), so the buttons do nothing at all;
-    // the owner check in handleDevCloseAll is what keeps them closed if they are ever wired up. This pins that no id reaches the close.
-    @ParameterizedTest
-    @ValueSource(strings = {"signup_dev_close_all", "signup_dev_close_all_confirm", "signup_dev_close_all:x", "signup_dev_close_all_confirm:x"})
-    void aServerAdminWhoIsNotTheOwnerCannotCloseEverySignup(String buttonId) {
-        SignupService signups = mock(SignupService.class);
-        SignupInteractionListener listener = new SignupInteractionListener(signups, config, adminRoleFilter, mock(HubService.class), devAccess);
+    private ButtonInteractionEvent press(String buttonId, long userId) {
         ButtonInteractionEvent event = mock(ButtonInteractionEvent.class, RETURNS_DEEP_STUBS);
         when(event.getGuild()).thenReturn(mock(Guild.class));
         when(event.getJDA()).thenReturn(jda);
         when(event.getComponentId()).thenReturn(buttonId);
-        when(event.getUser().getIdLong()).thenReturn(MEMBER);
+        when(event.getUser().getIdLong()).thenReturn(userId);
+        return event;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {SignupInteractionListener.DEV_CLOSE_ALL, SignupInteractionListener.DEV_CLOSE_ALL_CONFIRM})
+    void aServerAdminWhoIsNotTheOwnerCannotCloseEverySignup(String buttonId) {
+        SignupService signups = mock(SignupService.class);
+        SignupInteractionListener listener = new SignupInteractionListener(signups, config, adminRoleFilter, mock(HubService.class), devAccess);
+        ButtonInteractionEvent event = press(buttonId, MEMBER);
 
         listener.onButtonInteraction(event);
 
         verify(signups, never()).closeAllActiveSignups(any());
+        verify(event).replyComponents(anyList()); // told why, not left on "interaction failed"
+    }
+
+    @Test
+    void theOwnersConfirmReallyClosesEverySignup() {
+        SignupService signups = mock(SignupService.class);
+        SignupInteractionListener listener = new SignupInteractionListener(signups, config, adminRoleFilter, mock(HubService.class), devAccess);
+
+        listener.onButtonInteraction(press(SignupInteractionListener.DEV_CLOSE_ALL_CONFIRM, OWNER));
+
+        verify(signups).closeAllActiveSignups(jda);
     }
 
     @Test
