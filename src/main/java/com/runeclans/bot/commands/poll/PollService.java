@@ -196,6 +196,16 @@ public class PollService {
         log.info("Created poll {} '{}' in guild {}", pollId, session.title(), session.guildId());
     }
 
+    /**
+     * Whether the poll is certainly closed or gone, read from the store. Unlike {@link #getSessionById}, a failed read throws instead of
+     * looking like a closed poll, so a caller that would otherwise make a new poll never does so on a hiccup.
+     */
+    public boolean isClosed(long pollId) {
+        if (activePollsById.containsKey(pollId)) return false;
+        PollSession stored = pollRepository.getPollById(pollId);
+        return stored == null || !"ACTIVE".equalsIgnoreCase(stored.status());
+    }
+
     /** Closes a poll whose message Discord never took, and forgets it here. A failed close is only logged: the post's error matters more. */
     public void discard(long pollId) {
         try {

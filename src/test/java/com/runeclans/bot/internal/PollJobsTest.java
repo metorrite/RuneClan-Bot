@@ -92,7 +92,7 @@ class PollJobsTest {
 
     /** An earlier try stored poll 42 and it is still open, not yet posted. */
     private void keptPollIsOpen() {
-        when(polls.getSessionById(42L)).thenReturn(new com.runeclans.bot.commands.poll.PollSession(42L, GUILD, CHANNEL, null, "Raid?", false, false, "ACTIVE", ACTOR));
+        when(polls.isClosed(42L)).thenReturn(false);
     }
 
     private void neverStored() {
@@ -271,6 +271,7 @@ class PollJobsTest {
     @Test
     void aKeptPollThatWasClosedIsReplacedByAFreshOne() {
         GuildMessageChannel channel = postable();
+        when(polls.isClosed(42L)).thenReturn(true);
         Message message = mock(Message.class);
         when(message.getId()).thenReturn("80");
         when(polls.storePoll(any(), any(), anyString(), anyBoolean(), anyBoolean(), any(), anyLong(), any())).thenReturn(43L);
@@ -280,5 +281,16 @@ class PollJobsTest {
 
         assertEquals("43", result.getString("pollId"), "a Retry after a refusal makes a new poll instead of refusing every time");
         verify(polls).postStored(eq(43L), eq(channel), any(), eq(true));
+    }
+
+    @Test
+    void aKeptPollThatCantBeReadIsNeverReplaced() {
+        postable();
+        when(polls.isClosed(42L)).thenThrow(new IllegalStateException("database hiccup"));
+
+        assertThrows(IllegalStateException.class, () -> jobs.run(jda, job(payload(null).put(PollJobs.POLL_ID, "42"), 1)));
+
+        neverStored();
+        verify(polls, never()).postStored(anyLong(), any(), any(), anyBoolean());
     }
 }

@@ -85,8 +85,9 @@ public class PollJobs implements DiscordJobHandler {
         for (int i = 0; i < labels.length(); i++) options.add(labels.getString(i));
         Instant closesAt = p.isNull("closesAt") ? null : Instant.parse(p.getString("closesAt"));
 
-        // a kept poll that is closed (refused on an earlier run, then sent again with Retry) is not posted: this run starts afresh
-        if (kept != null && polls.getSessionById(Long.parseLong(kept)) == null) kept = null;
+        // a kept poll that is closed (refused on an earlier run, then sent again with Retry) is not posted: this run starts afresh. A failed
+        // read throws (the job fails as unclear) rather than counting as closed, so a poll that may be live is never posted a second time
+        if (kept != null && polls.isClosed(Long.parseLong(kept))) kept = null;
         long pollId;
         if (kept != null) {
             pollId = Long.parseLong(kept);

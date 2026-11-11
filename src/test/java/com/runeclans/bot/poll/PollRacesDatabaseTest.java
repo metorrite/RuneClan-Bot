@@ -26,6 +26,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -228,5 +230,18 @@ class PollRacesDatabaseTest {
         } catch (java.sql.SQLException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void aPollIsClosedOnlyWhenTheStoreSaysSo() {
+        PollService service = new PollService(polls);
+        long pollId = service.storePoll(guild(), channel(), "Raid night?", false, false, List.of("Yes", "No"), OWNER, null);
+        assertFalse(service.isClosed(pollId));
+        service.discard(pollId);
+        assertTrue(service.isClosed(pollId));
+
+        PollStore broken = Mockito.spy(polls);
+        Mockito.doThrow(new RuntimeException("database hiccup")).when(broken).getPollById(Mockito.anyLong());
+        assertThrows(RuntimeException.class, () -> new PollService(broken).isClosed(pollId), "a failed read is never taken for a closed poll");
     }
 }
