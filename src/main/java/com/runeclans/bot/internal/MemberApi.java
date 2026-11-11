@@ -488,7 +488,10 @@ public class MemberApi {
         return DataObject.empty().put("polls", array);
     }
 
-    /** A member starts a poll from the website: same rules and limits as /poll, posted in the channel an admin chose for member polls. */
+    /**
+     * A member starts a poll from the website: same rules and limits as /poll, posted in the channel an admin chose for member polls. The
+     * post is queued ({@link PollJobs}), so the answer never waits on Discord and carries the job the page follows.
+     */
     private DataObject createPoll(Guild guild, long userId, DataObject body) {
         Member member = memberOf(guild, userId);
         if (!memberAccess.isMemberTier(guild, member)) throw new Rejected(403, "Starting a poll is for verified clan members.");
@@ -515,10 +518,12 @@ public class MemberApi {
 
         if (pollService.activePollsOwnedBy(guild.getIdLong(), userId).size() >= 3) throw new Rejected(409, "You already have 3 polls running — end one first.");
 
-        long pollId = pollService.createPoll(guild, channel, title, body.getBoolean("anonymous", false), body.getBoolean("multiple", false), options, userId);
-        if (hours != null) community.scheduleClose(pollId, java.time.OffsetDateTime.now().plusHours(hours));
-        cache.invalidate("polls");
-        return DataObject.empty().put("created", true).put("channel", channel.getName());
+        // a website-triggered Discord write: the outbox stores and posts it (the same job as a dashboard poll), and keeps no open poll if
+        // Discord refuses; the page follows the job. The end time is fixed now, not when the bot gets to the post.
+        java.time.Instant closesAt = hours == null ? null : java.time.Instant.now().plus(java.time.Duration.ofHours(hours));
+        DiscordJob job = outbox.enqueue(PollJobs.CREATE, guild.getIdLong(), userId, null, PollJobs.createPayload(channel.getIdLong(), title,
+                body.getBoolean("anonymous", false), body.getBoolean("multiple", false), options, closesAt));
+        return DataObject.empty().put("created", true).put("queued", true).put("channel", channel.getName()).put("job", job.ticket());
     }
 
     /** What the member has put into and got out of the clan coffer: their donations (matched by their linked RuneScape names), balance and giveaways. */

@@ -76,6 +76,11 @@ public final class DiscordJobs {
         return cached != null ? cached : send(guild.retrieveMemberById(userId));
     }
 
+    /** Whether a {@link RetryLater} from this try of {@code job} ends it as failed: it has already waited as often as a job may. */
+    public static boolean lastWait(DiscordJob job) {
+        return job.waits() >= MAX_RATE_LIMIT_WAITS;
+    }
+
     static RetryLater rateLimited(Duration wait) {
         long seconds = Math.max(1, (wait.toMillis() + 999) / 1000);
         return new RetryLater(wait, "Discord asked the bot to wait " + seconds + " s; it will try again by itself.");

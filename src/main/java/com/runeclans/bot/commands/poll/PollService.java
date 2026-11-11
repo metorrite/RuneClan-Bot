@@ -96,22 +96,55 @@ public class PollService {
     public long createPollPosted(Guild guild, GuildMessageChannel channel, String title, boolean anonymous, boolean multipleVotes,
                                  List<String> optionLabels, long createdByUserId, java.time.Instant closesAt,
                                  java.util.function.Function<net.dv8tion.jda.api.requests.RestAction<Message>, Message> send) {
-        Stored stored = store(guild, channel, title, anonymous, multipleVotes, optionLabels, createdByUserId, closesAt);
-        long pollId = stored.session().pollId();
+        long pollId = storePoll(guild, channel, title, anonymous, multipleVotes, optionLabels, createdByUserId, closesAt);
+        postStored(pollId, channel, send, false);
+        return pollId;
+    }
+
+    /**
+     * The first half of {@link #createPollPosted}: stores the poll (open, no message yet) and answers its id, for a caller that posts it with
+     * {@link #postStored}, possibly over several tries.
+     */
+    public long storePoll(Guild guild, GuildMessageChannel channel, String title, boolean anonymous, boolean multipleVotes,
+                          List<String> optionLabels, long createdByUserId, java.time.Instant closesAt) {
+        return store(guild, channel, title, anonymous, multipleVotes, optionLabels, createdByUserId, closesAt).session().pollId();
+    }
+
+    /**
+     * Posts a poll {@link #storePoll} stored, the way {@link #createPollPosted} does. With {@code keepWhenLater}, a "not now" before sending
+     * ({@link com.runeclans.bot.discord.jobs.DiscordJobs.RetryLater}, a rate limit) keeps the poll for the next try instead of closing it, so
+     * a post that has to wait never leaves one closed empty poll per wait. A poll that is no longer open (closed after an earlier refusal, or
+     * ended) is never posted.
+     */
+    public Message postStored(long pollId, GuildMessageChannel channel,
+                              java.util.function.Function<net.dv8tion.jda.api.requests.RestAction<Message>, Message> send, boolean keepWhenLater) {
+        PollSession session = getSessionById(pollId);
+        if (session == null || !"ACTIVE".equalsIgnoreCase(session.status())) {
+            throw new com.runeclans.bot.discord.jobs.DiscordJobs.Refused("That poll was closed before it could be posted.");
+        }
+        if (session.messageId() != null) {
+            throw new com.runeclans.bot.discord.jobs.DiscordJobs.Refused("That poll is already posted.");
+        }
+        Stored stored = new Stored(session, getOptions(pollId));
         Message message;
         try {
             message = send.apply(post(channel, stored));
         } catch (RuntimeException e) {
-            if (certainlyNotPosted(e)) discard(pollId);
-            else log.warn("Poll {} '{}' may or may not have been posted in channel {}; it stays open", pollId, title, channel.getIdLong(), e);
+            if (keepWhenLater && e instanceof com.runeclans.bot.discord.jobs.DiscordJobs.RetryLater) {
+                log.debug("Poll {} '{}' waits to be posted: {}", pollId, session.title(), e.getMessage());
+            } else if (certainlyNotPosted(e)) {
+                discard(pollId);
+            } else {
+                log.warn("Poll {} '{}' may or may not have been posted in channel {}; it stays open", pollId, session.title(), channel.getIdLong(), e);
+            }
             throw e;
         }
         try {
-            posted(stored.session(), message);
+            posted(session, message);
         } catch (RuntimeException e) {
             log.warn("Poll {} was posted as message {} but its message id couldn't be saved", pollId, message.getIdLong(), e);
         }
-        return pollId;
+        return message;
     }
 
     /**
@@ -163,8 +196,18 @@ public class PollService {
         log.info("Created poll {} '{}' in guild {}", pollId, session.title(), session.guildId());
     }
 
+    /**
+     * Whether the poll is certainly closed or gone, read from the store. Unlike {@link #getSessionById}, a failed read throws instead of
+     * looking like a closed poll, so a caller that would otherwise make a new poll never does so on a hiccup.
+     */
+    public boolean isClosed(long pollId) {
+        if (activePollsById.containsKey(pollId)) return false;
+        PollSession stored = pollRepository.getPollById(pollId);
+        return stored == null || !"ACTIVE".equalsIgnoreCase(stored.status());
+    }
+
     /** Closes a poll whose message Discord never took, and forgets it here. A failed close is only logged: the post's error matters more. */
-    private void discard(long pollId) {
+    public void discard(long pollId) {
         try {
             pollRepository.closePoll(pollId);
         } catch (RuntimeException e) {
