@@ -89,6 +89,7 @@ class RoleSyncBackfillTest {
         SelfMember self = mock(SelfMember.class);
         when(guild.getSelfMember()).thenReturn(self);
         when(self.canInteract(any(Member.class))).thenReturn(true);
+        when(self.canInteract(any(Role.class))).thenReturn(true); // ordinary roles the bot may hand out (MemberApi.safeToAssign)
         member = role(MEMBER);
         guest = role(GUEST);
         unverified = role(UNVERIFIED);
@@ -101,6 +102,7 @@ class RoleSyncBackfillTest {
     private Role role(long id) {
         Role r = mock(Role.class);
         when(r.getIdLong()).thenReturn(id);
+        when(r.getPermissions()).thenReturn(java.util.EnumSet.noneOf(net.dv8tion.jda.api.Permission.class));
         return r;
     }
 
@@ -187,6 +189,22 @@ class RoleSyncBackfillTest {
         verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
         verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
         verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
+    }
+
+    @Test
+    void aMemberRoleTheBotWontHandOutStopsTheFixBeforeAnyoneChanges() {
+        when(member.getPermissions()).thenReturn(java.util.EnumSet.of(net.dv8tion.jda.api.Permission.ADMINISTRATOR));
+        when(links.getAllLinks(GUILD)).thenReturn(List.of(link(5, "bob")));
+        when(clan.isActiveMember(GUILD, "bob")).thenReturn(true);
+        members(discord(5, "Bob", guest));
+
+        Plan plan = backfill.plan(guild);
+
+        assertNotNull(plan.problem());
+        assertTrue(plan.problem().contains("powerful permissions"), plan.problem());
+        assertTrue(plan.entries().isEmpty());
+        assertNotNull(backfill.start(guild, Set.of(5L), 1), "nothing to start");
+        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
     }
 
     @Test

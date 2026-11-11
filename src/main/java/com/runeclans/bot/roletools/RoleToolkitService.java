@@ -7,6 +7,7 @@ import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.permission.DashboardAccess;
 import com.runeclans.bot.permission.PermissionGroup;
 import com.runeclans.bot.permission.PermissionGroupService;
+import com.runeclans.bot.permission.RoleSafety;
 import com.runeclans.bot.roletools.RoleRules.Holder;
 import com.runeclans.bot.roletools.RoleRules.Mode;
 import com.runeclans.bot.roletools.RoleRules.Status;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -64,6 +66,27 @@ public class RoleToolkitService {
     @BEventListener
     public void onJdaReady(InjectedJDAEvent event) {
         this.jda = event.getJda();
+        RoleSafety.addPowerSource("role-toolkit", this::toolkitRefs);
+    }
+
+    private record Refs(long until, Set<String> refs) {}
+
+    private final ConcurrentHashMap<Long, Refs> toolkitRefs = new ConcurrentHashMap<>();
+
+    /**
+     * The groups that may give or take roles with /role ({@code group:<key>} for each group with an allowed role), so the bot never hands
+     * out a role of such a group (B-03). Held for 30 seconds: the role check runs often (every chat-level reward), the list rarely changes.
+     */
+    public Set<String> toolkitRefs(long guildId) {
+        long now = System.currentTimeMillis();
+        Refs cached = toolkitRefs.get(guildId);
+        if (cached != null && cached.until() > now) return cached.refs();
+        Set<String> refs = new HashSet<>();
+        repository.allowed(guildId).forEach((key, roles) -> {
+            if (!roles.isEmpty()) refs.add("group:" + key);
+        });
+        toolkitRefs.put(guildId, new Refs(now + 30_000, Set.copyOf(refs)));
+        return refs;
     }
 
     /** For tests, which have no Discord connection to wait for. */

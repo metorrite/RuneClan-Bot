@@ -120,4 +120,29 @@ class VerificationRoleSyncPlanTest {
         assertEquals(Set.of(MEMBER), gone2.add());
         assertEquals(Set.of(), gone2.remove());
     }
+
+    // ---------- a saved role the bot won't hand out any more (B-55) ----------
+
+    @Test
+    void aRefusedVerifiedRoleIsNotGivenAndTheUnverifiedRoleIsKept() {
+        var plan = VerificationRoleSyncService.plan(MEMBER, GUEST, Set.of(GUEST), id -> true, id -> id != MEMBER);
+        assertEquals(Set.of(), plan.add());
+        assertEquals(Set.of(), plan.remove(), "taking Guest away with nothing in its place would leave them with neither");
+        assertEquals(Set.of(MEMBER), plan.refused());
+    }
+
+    @Test
+    void aRefusedRoleTheMemberAlreadyHoldsStillLetsTheSwapFinish() {
+        var plan = VerificationRoleSyncService.plan(MEMBER, GUEST, Set.of(MEMBER, GUEST), id -> true, id -> id != MEMBER);
+        assertEquals(Set.of(GUEST), plan.remove());
+        assertEquals(Set.of(), plan.refused());
+    }
+
+    @Test
+    void leavingTheClanWithARefusedGuestRoleKeepsTheMemberRole() {
+        var plan = VerificationRoleSyncService.planLeave(MEMBER, GUEST, Set.of(MEMBER), id -> true, id -> id != GUEST);
+        assertEquals(Set.of(), plan.add());
+        assertEquals(Set.of(), plan.remove());
+        assertEquals(Set.of(GUEST), plan.refused());
+    }
 }

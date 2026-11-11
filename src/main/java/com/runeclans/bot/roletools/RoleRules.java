@@ -50,7 +50,7 @@ public final class RoleRules {
         if (!exists) return "That role does not exist in this server.";
         if (everyone) return "Nobody needs to be given @everyone.";
         if (syncOwned) return "@" + roleName + " is kept by the clan role sync (Member / Guest / Unverified), so it cannot be changed here.";
-        if (!safeToAssign) return "The bot will not hand out @" + roleName + ": it is above the bot's own role, managed by an integration, or carries powerful permissions.";
+        if (!safeToAssign) return "The bot will not hand out @" + roleName + ": it is above the bot's own role, managed by an integration, carries powerful permissions, or would make its holder bot staff.";
         return null;
     }
 

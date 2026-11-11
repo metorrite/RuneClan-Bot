@@ -115,7 +115,7 @@ public class GiveawayAdminApi implements AdminRouteExtension {
             String raw = body.getString("winnerRoleId").strip();
             Role role = raw.matches("\\d{1,20}") ? guild.getRoleById(Long.parseLong(raw)) : null;
             if (role == null) problems.add("The winner role doesn't exist in this server.");
-            else if (!MemberApi.safeToAssign(guild, role)) problems.add("\"" + role.getName() + "\" can't be given to winners: it is managed, above the bot's own role, or carries powerful permissions.");
+            else if (!MemberApi.safeToAssign(guild, role)) problems.add("Winner role: " + MemberApi.handOutRefusal(guild, role));
             else winnerRoleId = role.getIdLong();
         }
         boolean dmWinners = body.getBoolean("dmWinners", false);

@@ -159,7 +159,7 @@ public class ChatLevelAdminApi implements AdminRouteExtension {
                 Role role = raw.matches("\\d{1,20}") ? guild.getRoleById(Long.parseLong(raw)) : null;
                 if (level < 1 || level > ChatLevels.MAX_LEVEL) problems.add("A level role's level must be between 1 and " + ChatLevels.MAX_LEVEL + ".");
                 else if (role == null) problems.add("The role for level " + level + " doesn't exist in this server.");
-                else if (!MemberApi.safeToAssign(guild, role)) problems.add("The bot can't hand out @" + role.getName() + ": it must be an ordinary role below the bot's own with no powerful permissions.");
+                else if (!MemberApi.safeToAssign(guild, role)) problems.add("Level " + level + ": " + MemberApi.handOutRefusal(guild, role));
                 else if (rewards.containsKey(level)) problems.add("Level " + level + " has two roles; give each level one.");
                 else rewards.put(level, role.getIdLong());
             }

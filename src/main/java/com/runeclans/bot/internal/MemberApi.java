@@ -1,5 +1,6 @@
 package com.runeclans.bot.internal;
 
+import com.runeclans.bot.permission.RoleSafety;
 import com.runeclans.bot.discord.jobs.DiscordJob;
 import com.runeclans.bot.discord.jobs.DiscordJobs;
 import com.runeclans.bot.discord.jobs.DiscordOutbox;
@@ -126,7 +127,23 @@ public class MemberApi {
 
     /** Whether the bot may safely add/remove {@code role} for members: an ordinary role, below the bot's own, with nothing powerful in it. */
     public static boolean safeToAssign(Guild guild, Role role) {
-        return !role.isPublicRole() && !role.isManaged() && guild.getSelfMember().canInteract(role) && dangerousIn(role.getPermissions()).isEmpty();
+        return handOutRefusal(guild, role) == null;
+    }
+
+    /**
+     * Why the bot won't add/remove {@code role} for members, worded for the dashboard, or null when it may. The one check every path that
+     * hands roles to members uses (B-03, B-55): not @everyone, not managed, below the bot's own role, no powerful permissions, and not a
+     * role that would make its holder bot staff ({@link RoleSafety}).
+     */
+    public static String handOutRefusal(Guild guild, Role role) {
+        if (role == null) return "That role no longer exists in this server.";
+        if (role.isPublicRole()) return "@everyone can't be handed out.";
+        if (role.isManaged()) return "@" + role.getName() + " is managed by an integration, so the bot can't give it to anyone.";
+        if (!guild.getSelfMember().canInteract(role)) return "The bot can't give @" + role.getName() + " out. Move the bot's own role above it in Server Settings > Roles.";
+        EnumSet<Permission> dangerous = dangerousIn(role.getPermissions());
+        if (!dangerous.isEmpty()) return "@" + role.getName() + " carries powerful permissions (" + dangerous.iterator().next().getName()
+                + (dangerous.size() > 1 ? " and more" : "") + "), so the bot won't hand it out.";
+        return RoleSafety.refusal(guild, role);
     }
 
     /** The home site's {@code /internal/me/<route>}. */

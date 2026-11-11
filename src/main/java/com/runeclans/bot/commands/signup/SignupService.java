@@ -1,5 +1,6 @@
 package com.runeclans.bot.commands.signup;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.discord.Pagination;
@@ -955,6 +956,10 @@ public class SignupService {
         Role role = guild.getRoleById(roleId);
         if (role == null) {
             log.warn("Group role {} not found in guild {}", roleId, guild.getIdLong());
+            return;
+        }
+        if (!MemberApi.safeToAssign(guild, role)) {
+            log.warn("Not giving group role {} in guild {}: {}", roleId, guild.getIdLong(), MemberApi.handOutRefusal(guild, role));
             return;
         }
         guild.addRoleToMember(UserSnowflake.fromId(userId), role).queue(

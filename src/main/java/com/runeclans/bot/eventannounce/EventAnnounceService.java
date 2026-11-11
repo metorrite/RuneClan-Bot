@@ -1,5 +1,6 @@
 package com.runeclans.bot.eventannounce;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.discord.Mentions;
 import com.runeclans.bot.alerts.AutoPostRouter;
@@ -238,6 +239,7 @@ public class EventAnnounceService {
             guild.removeRoleFromMember(member, role).reason("No longer interested in the event").queue(ok -> {}, error -> {});
             return "Okay, you won't be told when it starts.";
         }
+        if (!MemberApi.safeToAssign(guild, role)) return "The bot can't hand out this event's role. Ask a server admin to check it.";
         guild.addRoleToMember(member, role).reason("Interested in the event").queue(ok -> {}, error -> {});
         return "You will be pinged when it starts.";
     }
