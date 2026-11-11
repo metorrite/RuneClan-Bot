@@ -95,4 +95,48 @@ class RankCongratsJobTest {
         DataObject named = DataObject.fromJson("{\"text\": \"hub text\", \"template\": \"{list}\", \"promoted\": [{\"rsnKey\": \"zezima\", \"rsn\": \"Zezima\", \"to\": \"Corporal\"}]}");
         assertEquals("• @@\u200beveryone (Zezima): Corporal", job.textFor(guild, named));
     }
+
+    /** B-37: a link saved with underscores or odd spacing names the member the hub folded to spaces. */
+    @Test
+    void aLinkIsMatchedTheWayTheHubFoldsNames() {
+        Guild guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
+        SiteCockpitStore cockpit = mock(SiteCockpitStore.class);
+        long linked = Long.parseLong("8".repeat(18));
+        when(cockpit.links(GUILD)).thenReturn(Map.of("foo_bar", linked, "a  b", Long.parseLong("7".repeat(18))));
+        net.dv8tion.jda.api.entities.Member member = mock(net.dv8tion.jda.api.entities.Member.class);
+        when(member.getEffectiveName()).thenReturn("Foo");
+        when(guild.getMemberById(linked)).thenReturn(member);
+        DataObject payload = DataObject.fromJson("""
+                {"channelId": 20, "text": "x", "template": "{list}",
+                 "promoted": [{"rsnKey": "foo bar", "rsn": "Foo Bar", "from": "Recruit", "to": "Corporal"}]}""");
+        assertEquals("• @Foo (Foo Bar): Corporal", new RankCongratsJob(cockpit).textFor(guild, payload));
+    }
+
+    /** B-37: a linked member the bot hasn't cached is asked from Discord; when Discord doesn't answer, the RuneScape name is used. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void anUncachedMemberIsAskedFromDiscord() {
+        Guild guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
+        SiteCockpitStore cockpit = mock(SiteCockpitStore.class);
+        long linked = Long.parseLong("6".repeat(18));
+        when(cockpit.links(GUILD)).thenReturn(Map.of("zezima", linked));
+        net.dv8tion.jda.api.entities.Member member = mock(net.dv8tion.jda.api.entities.Member.class);
+        when(member.getIdLong()).thenReturn(linked);
+        when(member.getEffectiveName()).thenReturn("Zez");
+        net.dv8tion.jda.api.utils.concurrent.Task<java.util.List<net.dv8tion.jda.api.entities.Member>> task =
+                mock(net.dv8tion.jda.api.utils.concurrent.Task.class);
+        when(guild.retrieveMembersByIds(org.mockito.ArgumentMatchers.eq(false), any(long[].class))).thenReturn(task);
+        when(task.setTimeout(RankCongratsJob.MEMBER_WAIT)).thenReturn(task);
+        when(task.get()).thenReturn(java.util.List.of(member));
+        DataObject payload = DataObject.fromJson("""
+                {"channelId": 20, "text": "x", "template": "{list}",
+                 "promoted": [{"rsnKey": "zezima", "rsn": "Zezima", "from": "Recruit", "to": "Corporal"}]}""");
+        RankCongratsJob job = new RankCongratsJob(cockpit);
+        assertEquals("• @Zez (Zezima): Corporal", job.textFor(guild, payload));
+
+        when(task.get()).thenThrow(new RuntimeException("timed out"));
+        assertEquals("• Zezima: Corporal", job.textFor(guild, payload), "no answer: the RuneScape name only");
+    }
 }
