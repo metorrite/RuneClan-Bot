@@ -48,6 +48,10 @@ class ProfileRulesTest {
                 "staging", "beta", "bot", "browse", "jonnybot"}) {
             assertNotNull(ProfileRules.slugProblem(name), name + " should be reserved");
         }
+        // the website's own pages under /clans/<slug>, which a clan's address must never hide (B-20); same words as the hub's list
+        for (String name : new String[] {"leaderboards", "finder", "alliances", "browse", "leagues", "register"}) {
+            assertNotNull(ProfileRules.slugProblem(name), name + " should be reserved");
+        }
         assertNull(ProfileRules.slugProblem("green-angels"));
         assertNull(ProfileRules.slugProblem("beta-testers"), "only the whole word is reserved");
     }
