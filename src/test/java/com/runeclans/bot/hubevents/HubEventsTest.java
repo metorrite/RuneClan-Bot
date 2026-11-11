@@ -369,6 +369,7 @@ class HubEventsTest {
         FakeEventHub.Call call = hub.last();
         assertEquals("56", call.json().getString("discordId"));
         assertEquals(ally.toString(), call.json().getString("originClanId"));
+        assertEquals("SELF", call.json().getString("source"), "B-59: the player's own Join, so it counts against the co-host's seats");
         assertEquals("77", call.headers().get(HubEventClient.ACTOR_HEADER));
         assertTrue(published.stream().anyMatch(c -> c.kind() == EventChanges.Kind.PLAYER_JOINED && c.userId() == 56L));
     }

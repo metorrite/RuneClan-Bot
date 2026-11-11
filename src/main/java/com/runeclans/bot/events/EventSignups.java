@@ -277,8 +277,9 @@ public class EventSignups {
                 continue;
             }
             try {
-                // added by the bot itself, so the deadline doesn't refuse a signup made in time; the hub's queue and seat rules still apply
-                events.join(guild.getIdLong(), eventId, entry.userId(), null, true, events.self(guild.getIdLong()));
+                // added by the bot itself, so the deadline doesn't refuse a signup made in time; as the player's own signup, the hub's queue and seat
+                // quotas still apply (B-59)
+                events.joinFromSignup(guild.getIdLong(), eventId, entry.userId(), events.self(guild.getIdLong()));
                 map.addSignupEntry(eventId, entry.userId());
                 map.clearRefusal(eventId, entry.userId());
                 added++;

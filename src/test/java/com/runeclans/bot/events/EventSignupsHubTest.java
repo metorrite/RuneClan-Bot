@@ -155,6 +155,7 @@ class EventSignupsHubTest {
         Hub.Call add = hub.of("POST", "/participants").get(0);
         assertTrue(add.headers().isEmpty(), "the bot adds them itself (as itself once connected), so the deadline doesn't refuse a signup made in time");
         assertEquals("1", DataObject.fromJson(add.body()).getString("discordId"));
+        assertEquals("SIGNUP", DataObject.fromJson(add.body()).getString("source"), "B-59: their own signup, so the hub counts it against the host's seats");
         assertEquals(List.of(1L, 2L), map.signupEntries(local).stream().sorted().toList(), "both are the signup's to follow now");
     }
 

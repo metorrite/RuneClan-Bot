@@ -266,9 +266,14 @@ public class HubEvents {
      * defaults, then applies what the member chose. Returns the new event's local id. {@code actor} has to be staff of the clan.
      */
     public long createEvent(long guildId, long actorId, EventInput in) {
+        return createEvent(guildId, in, Actor.of(actorId, guildId, true));
+    }
+
+    /** As above, made by {@code actor} (the bot itself, {@link #self(long)}, for an event it makes on a member's behalf, such as from a help ticket). */
+    public long createEvent(long guildId, EventInput in, Actor actor) {
         UUID clan = requireClan(guildId);
         DataObject answers = createBody(in, clock.instant());
-        DataObject json = hub.send("POST", "/v1/clans/" + clan + "/events", answers, Actor.of(actorId, guildId, true));
+        DataObject json = hub.send("POST", "/v1/clans/" + clan + "/events", answers, actor);
         UUID hubId = uuid(json.getString("id", null));
         if (hubId == null) throw new EventProblem(502, "RuneClans made the event but didn't say which.");
         return map.localId(hubId, clan, guildId);
@@ -362,8 +367,21 @@ public class HubEvents {
      * record for a member it has never met. Where they ended up: in a place, or waiting at {@code position}.
      */
     public Joined join(long guildId, long id, long userId, Long teamId, boolean staff, Actor actor) {
+        return join(guildId, id, userId, teamId, staff, null, actor);
+    }
+
+    /**
+     * Adds a player from the event's Discord signup: the bot adds them (so a signup made in time isn't refused at the deadline), but it is their own
+     * signup ({@code source: SIGNUP}), so the hub counts them against the host's seats like any player joining themselves.
+     */
+    public Joined joinFromSignup(long guildId, long id, long userId, Actor actor) {
+        return join(guildId, id, userId, null, true, "SIGNUP", actor);
+    }
+
+    private Joined join(long guildId, long id, long userId, Long teamId, boolean staff, String source, Actor actor) {
         DataObject body = DataObject.empty();
         if (staff) body.put("discordId", Long.toString(userId));
+        if (source != null) body.put("source", source);
         if (teamId != null) body.put("teamId", teamHubId(id, teamId).toString());
         DataObject json = hub.send("POST", path(guildId, id) + "/participants", body, actor);
         changes.publish(EventChanges.Kind.ROSTER, guildId, id);
@@ -817,9 +835,12 @@ public class HubEvents {
         return out;
     }
 
-    /** {@link #join(long, long, long, Long, boolean, Actor)} for a player who came through a co-host's server: the hub counts them against that clan's seats. */
+    /**
+     * {@link #join(long, long, long, Long, boolean, Actor)} for a player who came through a co-host's server (pressing Join on its panel): their own
+     * join, made by the bot ({@code source: SELF}), so the hub counts them against that clan's seats.
+     */
     public Joined join(long guildId, long id, long userId, UUID originClanId, Actor actor) {
-        DataObject body = DataObject.empty().put("discordId", Long.toString(userId));
+        DataObject body = DataObject.empty().put("discordId", Long.toString(userId)).put("source", "SELF");
         if (originClanId != null) body.put("originClanId", originClanId.toString());
         DataObject json = hub.send("POST", path(guildId, id) + "/participants", body, actor);
         changes.publish(EventChanges.Kind.ROSTER, guildId, id);
