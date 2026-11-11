@@ -244,4 +244,15 @@ class PollRacesDatabaseTest {
         Mockito.doThrow(new RuntimeException("database hiccup")).when(broken).getPollById(Mockito.anyLong());
         assertThrows(RuntimeException.class, () -> new PollService(broken).isClosed(pollId), "a failed read is never taken for a closed poll");
     }
+
+    @Test
+    void aPollMessagePingsNobody() {
+        PollService service = new PollService(polls);
+        GuildMessageChannel channel = channel();
+        long pollId = service.storePoll(guild(), channel, "<@123> raid?", false, false, List.of("Yes", "No"), OWNER, null);
+
+        service.postStored(pollId, channel, action -> message(559L), true);
+
+        Mockito.verify(channel.sendMessageComponents(Mockito.anyList()).useComponentsV2(true)).setAllowedMentions(com.runeclans.bot.discord.Mentions.NONE);
+    }
 }

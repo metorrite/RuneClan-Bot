@@ -184,8 +184,9 @@ public class PollService {
     }
 
     private static net.dv8tion.jda.api.requests.RestAction<Message> post(GuildMessageChannel channel, Stored stored) {
+        // the title and options are member-written text: they ping nobody
         return channel.sendMessageComponents(List.of(PollView.build(stored.session(), stored.options(), Map.of(), Map.of(), false)))
-                .useComponentsV2(true);
+                .useComponentsV2(true).setAllowedMentions(com.runeclans.bot.discord.Mentions.NONE);
     }
 
     private void posted(PollSession session, Message message) {
