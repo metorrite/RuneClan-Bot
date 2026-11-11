@@ -88,8 +88,10 @@ public class PollService {
 
     /**
      * {@link #createPoll} for a caller that must know Discord took the post: the dashboard's outbox job, which shows the page the result.
-     * {@code send} runs the post and waits for Discord (the outbox's {@code DiscordJobs::send}); when it throws (Discord refused, a rate
-     * limit, a fault), the poll is closed again before the error goes on, so no open poll is ever left without a message to vote on.
+     * {@code send} runs the post and waits for Discord (the outbox's {@code DiscordJobs::send}). When Discord certainly didn't take it
+     * ({@link #certainlyNotPosted}), the poll is closed again before the error goes on, so no open poll is left without a message. After
+     * an unclear failure (a timeout, a Discord server error) the message may be live, so the poll stays open: closing it would turn every
+     * button on a posted poll into "that poll has ended". A failure to record the posted message is only logged: the post went out.
      */
     public long createPollPosted(Guild guild, GuildMessageChannel channel, String title, boolean anonymous, boolean multipleVotes,
                                  List<String> optionLabels, long createdByUserId, java.time.Instant closesAt,
@@ -100,11 +102,27 @@ public class PollService {
         try {
             message = send.apply(post(channel, stored));
         } catch (RuntimeException e) {
-            discard(pollId);
+            if (certainlyNotPosted(e)) discard(pollId);
+            else log.warn("Poll {} '{}' may or may not have been posted in channel {}; it stays open", pollId, title, channel.getIdLong(), e);
             throw e;
         }
-        posted(stored.session(), message);
+        try {
+            posted(stored.session(), message);
+        } catch (RuntimeException e) {
+            log.warn("Poll {} was posted as message {} but its message id couldn't be saved", pollId, message.getIdLong(), e);
+        }
         return pollId;
+    }
+
+    /**
+     * Whether a failed post certainly never reached the channel: Discord answered with a refusal (a 4xx error such as missing permissions),
+     * JDA refused before sending (missing permission), or the outbox refused or held it back for a rate limit before sending.
+     */
+    static boolean certainlyNotPosted(RuntimeException e) {
+        if (e instanceof net.dv8tion.jda.api.exceptions.ErrorResponseException error) return !error.isServerError();
+        return e instanceof net.dv8tion.jda.api.exceptions.PermissionException
+                || e instanceof com.runeclans.bot.discord.jobs.DiscordJobs.Refused
+                || e instanceof com.runeclans.bot.discord.jobs.DiscordJobs.RetryLater;
     }
 
     private record Stored(PollSession session, List<PollOption> options) {}
@@ -300,7 +318,9 @@ public class PollService {
      * One member's vote changes one at a time. A change is several reads and writes (clear then add for a one-answer poll; read the
      * picks then write them all on the hub), so two clicks at once, or a click plus a website vote, could otherwise both pass and leave
      * two answers in a one-answer poll or lose a pick. Striped by (poll, member): different members never wait on each other for long.
-     * One bot process serves every vote (Discord buttons and the website's polls/vote route), so an in-process lock covers them all.
+     * On the bot's own tables one bot process serves every vote (Discord buttons and the website's polls/vote route), so this covers them
+     * all. On the hub ({@code hub-community}) website votes go to the hub directly, so this only covers votes that pass through the bot;
+     * the hub path holds the lock across its two hub calls, which are time-limited by the hub client.
      */
     private final Object[] voteLocks = newVoteLocks();
 

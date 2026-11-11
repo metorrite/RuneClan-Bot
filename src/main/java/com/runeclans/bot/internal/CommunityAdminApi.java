@@ -97,7 +97,7 @@ public class CommunityAdminApi {
         DiscordJob job = outbox.enqueue(PollJobs.CREATE, guild.getIdLong(), actor.getIdLong(), null,
                 PollJobs.createPayload(channel.getIdLong(), title, anonymous, multiple, options, closesAt));
         log.info("Dashboard: {} queued a poll '{}' in #{} (job {})", actor.getId(), title, channel.getName(), job.id());
-        return DataObject.empty().put("created", true).put("job", job.ticket());
+        return DataObject.empty().put("created", true).put("queued", true).put("job", job.ticket());
     }
 
     DataObject endPoll(Guild guild, Member actor, long pollId) {

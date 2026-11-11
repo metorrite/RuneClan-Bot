@@ -110,6 +110,41 @@ class PollJobsTest {
     }
 
     @Test
+    void aFailedPostFailsTheJobAndSchedulesNothing() {
+        GuildMessageChannel channel = mock(GuildMessageChannel.class);
+        when(channel.canTalk()).thenReturn(true);
+        when(guild.getChannelById(GuildMessageChannel.class, CHANNEL)).thenReturn(channel);
+        when(polls.createPollPosted(any(), any(), anyString(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), any()))
+                .thenThrow(new IllegalStateException("Discord said no"));
+
+        assertThrows(IllegalStateException.class, () -> jobs.run(jda, job(PollJobs.createPayload(CHANNEL, "Raid?", false, false, List.of("Yes", "No"),
+                Instant.parse("2026-11-12T18:00:00Z")))));
+        verify(community, never()).scheduleClose(anyLong(), any());
+    }
+
+    @Test
+    void aCloseThatCantBeScheduledStillReportsThePost() {
+        GuildMessageChannel channel = mock(GuildMessageChannel.class);
+        when(channel.canTalk()).thenReturn(true);
+        when(guild.getChannelById(GuildMessageChannel.class, CHANNEL)).thenReturn(channel);
+        Message message = mock(Message.class);
+        when(message.getId()).thenReturn("78");
+        when(polls.createPollPosted(any(), any(), anyString(), anyBoolean(), anyBoolean(), any(), anyLong(), any(), any())).thenAnswer(call -> {
+            java.util.function.Function<net.dv8tion.jda.api.requests.RestAction<Message>, Message> send = call.getArgument(8);
+            @SuppressWarnings("unchecked")
+            net.dv8tion.jda.api.requests.RestAction<Message> action = mock(net.dv8tion.jda.api.requests.RestAction.class);
+            when(action.complete(false)).thenReturn(message);
+            send.apply(action);
+            return 44L;
+        });
+        org.mockito.Mockito.doThrow(new RuntimeException("database hiccup")).when(community).scheduleClose(anyLong(), any());
+
+        DataObject result = jobs.run(jda, job(PollJobs.createPayload(CHANNEL, "Raid?", false, false, List.of("Yes", "No"), Instant.parse("2026-11-12T18:00:00Z"))));
+
+        assertEquals("44", result.getString("pollId"));
+    }
+
+    @Test
     void aPollOnTheHubIsClosedByTheHub() {
         GuildMessageChannel channel = mock(GuildMessageChannel.class);
         when(channel.canTalk()).thenReturn(true);

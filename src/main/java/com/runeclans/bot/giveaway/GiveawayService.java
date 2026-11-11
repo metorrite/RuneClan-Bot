@@ -103,9 +103,9 @@ public class GiveawayService {
 
     /** Ends it now (or when due): draws, shows the result on its message, and announces it. */
     public Giveaway end(Guild guild, Giveaway g) {
-        if (!g.open() || !repository.claimEnd(g.id())) throw new GiveawayException("That giveaway has already ended.");
-        List<Long> winners = draw(guild, g, Set.of());
-        repository.setWinners(g.id(), winners);
+        if (!g.open()) throw new GiveawayException("That giveaway has already ended.");
+        List<Long> winners = draw(guild, g, Set.of()); // only reads: a failure here leaves it open for the sweep
+        if (!repository.finishIfOpen(g.id(), winners)) throw new GiveawayException("That giveaway has already ended.");
         Giveaway ended = repository.get(guild.getIdLong(), g.id()).orElseThrow();
         show(guild, ended, winners, false);
         return ended;
@@ -182,10 +182,14 @@ public class GiveawayService {
                 try {
                     end(guild, g);
                 } catch (GiveawayException e) {
-                    // someone else (End now, /giveaway end) ended it a moment earlier; their winners stand
+                    log.debug("Giveaway {} was ended elsewhere a moment earlier; its winners stand", g.id());
                 } catch (RuntimeException e) {
                     log.warn("Couldn't end giveaway {}", g.id(), e);
-                    repository.claimEnd(g.id()); // don't retry forever; never overwrites winners another end already stored
+                    try {
+                        repository.finishIfOpen(g.id(), List.of()); // don't retry forever; never overwrites winners another end already stored
+                    } catch (RuntimeException again) {
+                        log.warn("Couldn't mark giveaway {} ended after its end failed", g.id(), again);
+                    }
                 }
             }
         } catch (Exception e) {

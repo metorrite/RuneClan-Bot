@@ -63,11 +63,13 @@ class GiveawayEndRaceDatabaseTest {
     }
 
     @Test
-    void anOpenGiveawayIsClaimedOnce() {
+    void anOpenGiveawayIsEndedOnceAndTheFirstWinnersStand() {
         long id = giveaway();
-        assertTrue(repository.claimEnd(id));
-        assertFalse(repository.claimEnd(id), "the second claim finds it ended");
-        assertEquals(Giveaway.Status.ENDED, repository.get(GUILD, id).orElseThrow().status());
+        assertTrue(repository.finishIfOpen(id, List.of(51L)));
+        assertFalse(repository.finishIfOpen(id, List.of(52L)), "the second end finds it ended");
+        Giveaway ended = repository.get(GUILD, id).orElseThrow();
+        assertEquals(Giveaway.Status.ENDED, ended.status());
+        assertEquals(List.of(51L), ended.winners(), "a late end never overwrites the winners");
     }
 
     @RepeatedTest(5)

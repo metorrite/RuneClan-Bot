@@ -89,6 +89,32 @@ class CofferTransferRaceDatabaseTest {
         assertEquals(1_000_000L, coffer.getHolderBalance(GUILD, BOB), "the recipient is paid once");
     }
 
+    @RepeatedTest(5)
+    void anAcceptAndARejectAtOnceLeaveOneOutcome() throws Exception {
+        coffer.insertDonation(GUILD, "Donor", 5_000_000L, ANN);
+        long id = pendingTransfer(1_000_000L);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch go = new CountDownLatch(1);
+        Future<CofferRepository.AcceptResult> accept = pool.submit(() -> {
+            go.await();
+            return coffer.acceptTransfer(id);
+        });
+        Future<Boolean> reject = pool.submit(() -> {
+            go.await();
+            return coffer.rejectTransfer(id);
+        });
+        go.countDown();
+        boolean accepted = accept.get(30, TimeUnit.SECONDS) == CofferRepository.AcceptResult.ACCEPTED;
+        boolean rejected = reject.get(30, TimeUnit.SECONDS);
+        pool.shutdown();
+
+        assertTrue(accepted ^ rejected, "exactly one of them wins");
+        String status = coffer.getPendingTransfer(id).status();
+        assertEquals(accepted ? "COMPLETED" : "REJECTED", status);
+        assertEquals(accepted ? 4_000_000L : 5_000_000L, coffer.getHolderBalance(GUILD, ANN), "the gp moved only if the accept won");
+    }
+
     @Test
     void anAcceptAfterARejectChangesNothing() {
         coffer.insertDonation(GUILD, "Donor", 5_000_000L, ANN);

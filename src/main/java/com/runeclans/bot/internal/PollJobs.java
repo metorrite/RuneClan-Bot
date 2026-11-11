@@ -25,6 +25,7 @@ import java.util.List;
  */
 @BService
 public class PollJobs implements DiscordJobHandler {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PollJobs.class);
     static final String CREATE = "poll.create";
 
     private final PollService polls;
@@ -71,7 +72,14 @@ public class PollJobs implements DiscordJobHandler {
         long pollId = polls.createPollPosted(guild, channel, p.getString("title"), p.getBoolean("anonymous", false), p.getBoolean("multiple", false),
                 options, job.actorId(), closesAt, action -> sent[0] = DiscordJobs.send(action));
         // on the hub the poll carries its end time and the hub closes it; on the bot's own tables the poll closer does
-        if (closesAt != null && !polls.onHub()) community.scheduleClose(pollId, closesAt.atOffset(ZoneOffset.UTC));
+        // the post went out: a failure in these follow-up steps is logged, never a failed job (the page would offer to post it again)
+        if (closesAt != null && !polls.onHub()) {
+            try {
+                community.scheduleClose(pollId, closesAt.atOffset(ZoneOffset.UTC));
+            } catch (RuntimeException e) {
+                log.warn("Poll {} was posted but its close at {} couldn't be scheduled", pollId, closesAt, e);
+            }
+        }
         cache.invalidate("polls");
         return DataObject.empty().put("pollId", Long.toString(pollId)).put("messageId", sent[0].getId()).put("channelId", channel.getId())
                 .put("jumpUrl", sent[0].getJumpUrl());
