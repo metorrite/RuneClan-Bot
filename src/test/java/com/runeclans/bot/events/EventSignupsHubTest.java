@@ -160,6 +160,16 @@ class EventSignupsHubTest {
     }
 
     @Test
+    void aSignupThatLandsOnTheWaitlistIsFollowedButNotCountedAsAdded() {
+        hub.ok("POST /v1/events/" + EVENT + "/participants", DataObject.empty().put("waiting", true).put("position", 2));
+        onSignup(1L);
+        hubState("SIGNUPS");
+        assertEquals(0, signups.sync(guild, local), "on the waitlist, not in a place");
+        assertEquals(List.of(1L), map.signupEntries(local), "the signup follows them, so they aren't joined (or told) twice");
+        verify(guild.getJDA(), Mockito.times(1)).retrieveUserById(1L); // told they are on the waitlist
+    }
+
+    @Test
     void aSignupTheHubTurnsAwayIsRememberedWithItsReasonAndTheyAreToldOnce() {
         hub.answers.put("POST /v1/events/" + EVENT + "/participants", new RuneClansHubClient.Answer(409, DataObject.empty().put("message", "Your server's places are taken.")));
         onSignup(1L);

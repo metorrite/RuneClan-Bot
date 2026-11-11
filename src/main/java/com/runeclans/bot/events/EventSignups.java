@@ -279,10 +279,13 @@ public class EventSignups {
             try {
                 // added by the bot itself, so the deadline doesn't refuse a signup made in time; as the player's own signup, the hub's queue and seat
                 // quotas still apply (B-59)
-                events.joinFromSignup(guild.getIdLong(), eventId, entry.userId(), events.self(guild.getIdLong()));
+                EventService.Joined joined = events.joinFromSignup(guild.getIdLong(), eventId, entry.userId(), events.self(guild.getIdLong()));
                 map.addSignupEntry(eventId, entry.userId());
                 map.clearRefusal(eventId, entry.userId());
-                added++;
+                // on the waitlist (their side's places are taken): tell them, so they don't think they are in; it happens once, as they are on the
+                // roster from now on
+                if (joined.waiting()) tellWaiting(guild, event, entry.userId(), joined.position());
+                else added++;
             } catch (EventProblem e) {
                 log.debug("Signup entry {} wasn't added to event {}: {}", entry.userId(), eventId, e.getMessage());
                 // remember why, so staff can see it on the dashboard, and tell the player once
@@ -330,6 +333,13 @@ public class EventSignups {
     }
 
     /** DMs a player whose signup was turned away, with the reason. A closed DM is fine: the dashboard still shows it to staff. */
+    private void tellWaiting(Guild guild, Event event, long userId, int position) {
+        String place = position > 0 ? " (number " + position + ")" : "";
+        String message = "You signed up for **" + event.name() + "**. It's full for now, so you're on the waitlist" + place + ". You'll get a place if one frees up.";
+        guild.getJDA().retrieveUserById(userId).flatMap(user -> user.openPrivateChannel()).flatMap(dm -> dm.sendMessage(message))
+                .queue(ok -> { }, error -> log.debug("Could not DM {} about a waitlisted signup: {}", userId, error.getMessage()));
+    }
+
     private void tellRefused(Guild guild, Event event, long userId, String reason) {
         String message = "You signed up for **" + event.name() + "** but couldn't be added: " + reason + " If that looks wrong, ask an organiser to add you.";
         guild.getJDA().retrieveUserById(userId).flatMap(user -> user.openPrivateChannel()).flatMap(dm -> dm.sendMessage(message))

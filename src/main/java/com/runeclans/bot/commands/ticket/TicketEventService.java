@@ -103,9 +103,10 @@ public class TicketEventService {
             people.add(ticket.requesterId());
             people.addAll(tickets.getHelpers(ticketId));
             List<Long> added = new ArrayList<>();
+            List<Long> waiting = new ArrayList<>();
             List<Long> notAdded = new ArrayList<>();
-            long eventId = makeOnHub(events, guildId, plan, people, added, notAdded, id -> extras.setEvent(ticketId, id));
-            event.getHook().sendMessageComponents(Containers.toast(Containers.SUCCESS, lines(event.getGuild().getIdLong(), plan, eventId, added, notAdded))).useComponentsV2(true).queue();
+            long eventId = makeOnHub(events, guildId, plan, people, added, waiting, notAdded, id -> extras.setEvent(ticketId, id));
+            event.getHook().sendMessageComponents(Containers.toast(Containers.SUCCESS, lines(event.getGuild().getIdLong(), plan, eventId, added, waiting, notAdded))).useComponentsV2(true).queue();
             log.info("{} made event {} from ticket {}", member.getId(), eventId, ticketId);
         } catch (EventProblem | IllegalArgumentException e) {
             // nothing was made (or it can't be used): free the ticket so the button can be pressed again
@@ -115,19 +116,29 @@ public class TicketEventService {
     }
 
     /**
-     * Makes the event on the hub as the bot ({@code remember} gets its local id the moment it exists, so a failure after that keeps the ticket tied to it),
-     * opens its signups and adds {@code people} as staff entries. Who couldn't be added goes in {@code notAdded}; the rest in {@code added}.
+     * Makes the event on the hub as the bot, opens its signups and adds {@code people} as staff entries; {@code remember} gets its local id once its
+     * signups are open. When the signups can't be opened, the new draft is taken away again (best effort) so the ticket's button can be pressed again.
+     * Who got a place goes in {@code added}, who landed on the waitlist in {@code waiting}, who couldn't be added in {@code notAdded}.
      */
-    static long makeOnHub(HubEvents events, long guildId, TicketEventPlan.Plan plan, Collection<Long> people, List<Long> added, List<Long> notAdded,
-                          java.util.function.LongConsumer remember) {
+    static long makeOnHub(HubEvents events, long guildId, TicketEventPlan.Plan plan, Collection<Long> people, List<Long> added, List<Long> waiting,
+                          List<Long> notAdded, java.util.function.LongConsumer remember) {
         Actor bot = events.self(guildId);
         long eventId = events.createEvent(guildId, plan.input(), bot);
+        try {
+            events.moveStage(guildId, eventId, EventRules.Status.SIGNUPS, bot);
+        } catch (EventProblem p) {
+            try {
+                events.deleteEvent(guildId, eventId, bot);
+            } catch (EventProblem gone) {
+                log.info("Couldn't take away draft event {} after its signups wouldn't open: {}", eventId, gone.getMessage());
+            }
+            throw p;
+        }
         remember.accept(eventId);
-        events.moveStage(guildId, eventId, EventRules.Status.SIGNUPS, bot);
         for (long user : people) {
             try {
-                events.join(guildId, eventId, user, null, true, bot);
-                added.add(user);
+                if (events.join(guildId, eventId, user, null, true, bot).waiting()) waiting.add(user);
+                else added.add(user);
             } catch (EventProblem p) {
                 log.info("Couldn't add {} to event {} made from a ticket: {}", user, eventId, p.getMessage());
                 notAdded.add(user);
@@ -136,11 +147,12 @@ public class TicketEventService {
         return eventId;
     }
 
-    static String[] lines(long guildId, TicketEventPlan.Plan plan, long eventId, List<Long> added, List<Long> notAdded) {
+    static String[] lines(long guildId, TicketEventPlan.Plan plan, long eventId, List<Long> added, List<Long> waiting, List<Long> notAdded) {
         List<String> lines = new ArrayList<>();
         lines.add(Text.of(guildId, "ticket.event.made_from_this_ticket", plan.input().name()));
         lines.add(Text.of(guildId, "ticket.event.signups_are_open", plan.summary(), eventId));
         if (!added.isEmpty()) lines.add(Text.of(guildId, "ticket.event.on_the_roster", added.stream().map(id -> "<@" + id + ">").collect(Collectors.joining(", "))));
+        if (!waiting.isEmpty()) lines.add(Text.of(guildId, "ticket.event.on_the_waitlist", waiting.stream().map(id -> "<@" + id + ">").collect(Collectors.joining(", "))));
         if (!notAdded.isEmpty()) lines.add(Text.of(guildId, "ticket.event.couldnt_be_added", notAdded.stream().map(id -> "<@" + id + ">").collect(Collectors.joining(", "))));
         lines.add(Text.of(guildId, "ticket.event.staff_prizes_teams"));
         return lines.toArray(String[]::new);

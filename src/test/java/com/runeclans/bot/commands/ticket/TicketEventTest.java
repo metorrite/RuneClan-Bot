@@ -72,13 +72,17 @@ class TicketEventTest {
         when(events.createEvent(guild, plan.input(), bot)).thenReturn(event);
         when(events.join(guild, event, 3L, null, true, bot)).thenReturn(new EventService.Joined(false, 0));
         when(events.join(guild, event, 4L, null, true, bot)).thenThrow(new EventProblem(409, "That player was removed from this event: spam"));
-        List<Long> added = new ArrayList<>(), notAdded = new ArrayList<>(), remembered = new ArrayList<>();
+        when(events.join(guild, event, 5L, null, true, bot)).thenReturn(new EventService.Joined(true, 1));
+        List<Long> added = new ArrayList<>(), waiting = new ArrayList<>(), notAdded = new ArrayList<>(), remembered = new ArrayList<>();
 
-        assertEquals(event, TicketEventService.makeOnHub(events, guild, plan, List.of(3L, 4L), added, notAdded, remembered::add));
+        assertEquals(event, TicketEventService.makeOnHub(events, guild, plan, List.of(3L, 4L, 5L), added, waiting, notAdded, remembered::add));
 
         assertEquals(List.of(event), remembered, "the ticket is tied to the hub event's local id, the one /events join knows");
         assertEquals(List.of(3L), added);
+        assertEquals(List.of(5L), waiting, "a waitlisted player isn't called added");
         assertEquals(List.of(4L), notAdded);
+        String toast = String.join("\n", TicketEventService.lines(guild, plan, event, added, waiting, notAdded));
+        assertTrue(toast.contains("<@5>") && toast.contains("waitlist"), toast);
         var order = inOrder(events);
         order.verify(events).createEvent(guild, plan.input(), bot);
         order.verify(events).moveStage(guild, event, EventRules.Status.SIGNUPS, bot);
@@ -95,9 +99,25 @@ class TicketEventTest {
         when(events.self(guild)).thenReturn(bot);
         when(events.createEvent(guild, plan.input(), bot)).thenThrow(new EventProblem(503, "RuneClans can't be reached right now."));
         List<Long> remembered = new ArrayList<>();
-        assertThrows(EventProblem.class, () -> TicketEventService.makeOnHub(events, guild, plan, List.of(3L), new ArrayList<>(), new ArrayList<>(), remembered::add));
+        assertThrows(EventProblem.class, () -> TicketEventService.makeOnHub(events, guild, plan, List.of(3L), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), remembered::add));
         assertTrue(remembered.isEmpty(), "so the ticket is freed and the button can be pressed again");
         verify(events, never()).moveStage(anyLong(), anyLong(), any(), any());
+        verify(events, never()).join(anyLong(), anyLong(), anyLong(), any(), eq(true), any());
+    }
+
+    @Test
+    void whenSignupsWontOpenTheDraftIsTakenAwaySoTheButtonWorksAgain() {
+        long guild = 7L, event = 1_000_000_000_043L;
+        Actor bot = Actor.of(99L, guild, true);
+        HubEvents events = mock(HubEvents.class);
+        var plan = TicketEventPlan.plan(fields, answers("Vorago", "Master", "", ""), 42, HelpExtras.defaults(1), NOW);
+        when(events.self(guild)).thenReturn(bot);
+        when(events.createEvent(guild, plan.input(), bot)).thenReturn(event);
+        org.mockito.Mockito.doThrow(new EventProblem(409, "Add an objective first.")).when(events).moveStage(guild, event, EventRules.Status.SIGNUPS, bot);
+        List<Long> remembered = new ArrayList<>();
+        assertThrows(EventProblem.class, () -> TicketEventService.makeOnHub(events, guild, plan, List.of(3L), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), remembered::add));
+        assertTrue(remembered.isEmpty(), "the ticket isn't tied to a draft");
+        verify(events).deleteEvent(guild, event, bot);
         verify(events, never()).join(anyLong(), anyLong(), anyLong(), any(), eq(true), any());
     }
 
