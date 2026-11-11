@@ -51,6 +51,8 @@ public class RankCongratsJob implements DiscordJobHandler {
 
     /** How long the job waits for Discord to answer about linked members it doesn't have in its member cache. */
     static final java.time.Duration MEMBER_WAIT = java.time.Duration.ofSeconds(10);
+    /** The most ids Discord takes in one member request. */
+    static final int MEMBER_BATCH = 100;
 
     /**
      * A hub entry's payload ({@code template} and {@code promoted}): the message with the linked members' server names filled in, from the
@@ -92,7 +94,7 @@ public class RankCongratsJob implements DiscordJobHandler {
         return out;
     }
 
-    /** Server names of these members: cached ones as they are, the rest asked from Discord within {@link #MEMBER_WAIT} (none if it fails). */
+    /** Server names of these members: cached ones as they are, the rest asked from Discord in batches of {@link #MEMBER_BATCH}, each within {@link #MEMBER_WAIT} (a batch that fails names none). Runs on the outbox lane, never a JDA callback thread, where the blocking wait is refused. */
     static Map<Long, String> memberNames(Guild guild, java.util.Set<Long> ids) {
         Map<Long, String> out = new HashMap<>();
         List<Long> missing = new ArrayList<>();
@@ -102,12 +104,15 @@ public class RankCongratsJob implements DiscordJobHandler {
             else missing.add(id);
         }
         if (missing.isEmpty()) return out;
-        try {
-            List<net.dv8tion.jda.api.entities.Member> found = guild.retrieveMembersByIds(false, missing.stream().mapToLong(Long::longValue).toArray())
-                    .setTimeout(MEMBER_WAIT).get();
-            for (net.dv8tion.jda.api.entities.Member m : found) out.put(m.getIdLong(), m.getEffectiveName());
-        } catch (RuntimeException e) {
-            // Discord didn't answer in time, or the bot may not ask: those members are listed by RuneScape name
+        for (int from = 0; from < missing.size(); from += MEMBER_BATCH) {
+            long[] batch = missing.subList(from, Math.min(missing.size(), from + MEMBER_BATCH)).stream().mapToLong(Long::longValue).toArray();
+            try {
+                for (net.dv8tion.jda.api.entities.Member m : guild.retrieveMembersByIds(false, batch).setTimeout(MEMBER_WAIT).get()) {
+                    out.put(m.getIdLong(), m.getEffectiveName());
+                }
+            } catch (RuntimeException e) {
+                // Discord didn't answer in time, or the bot may not ask: those members are listed by RuneScape name
+            }
         }
         return out;
     }

@@ -139,4 +139,25 @@ class RankCongratsJobTest {
         when(task.get()).thenThrow(new RuntimeException("timed out"));
         assertEquals("• Zezima: Corporal", job.textFor(guild, payload), "no answer: the RuneScape name only");
     }
+
+    /** Discord takes at most 100 ids per member request, so more uncached members are asked in batches. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void manyUncachedMembersAreAskedInBatches() {
+        Guild guild = mock(Guild.class);
+        net.dv8tion.jda.api.utils.concurrent.Task<java.util.List<net.dv8tion.jda.api.entities.Member>> task =
+                mock(net.dv8tion.jda.api.utils.concurrent.Task.class);
+        when(task.setTimeout(RankCongratsJob.MEMBER_WAIT)).thenReturn(task);
+        when(task.get()).thenReturn(java.util.List.of());
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        long base = Long.parseLong("1".repeat(18));
+        for (int i = 0; i < 250; i++) ids.add(base + i);
+        java.util.List<Integer> sizes = new java.util.ArrayList<>();
+        when(guild.retrieveMembersByIds(org.mockito.ArgumentMatchers.eq(false), any(long[].class))).thenAnswer(inv -> {
+            sizes.add(inv.getArguments().length - 1);
+            return task;
+        });
+        RankCongratsJob.memberNames(guild, ids);
+        assertEquals(java.util.List.of(100, 100, 50), sizes);
+    }
 }
