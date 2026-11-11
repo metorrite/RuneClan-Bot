@@ -1,5 +1,6 @@
 package com.runeclans.bot.commands.runescape;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.runescape.XpText;
 import com.runeclans.bot.configure.WebsiteLink;
@@ -632,6 +633,10 @@ public class RsInteractionListener extends ListenerAdapter {
 
         Role role = guild.getRoleById(onboardingRoleId);
         if (role == null || member.getRoles().contains(role)) return;
+        if (!MemberApi.safeToAssign(guild, role)) {
+            log.warn("Not giving onboarding role {} in guild {}: {}", onboardingRoleId, guildId, MemberApi.handOutRefusal(guild, role));
+            return;
+        }
 
         guild.addRoleToMember(member, role).queue(success -> {},
                 error -> log.warn("Failed to grant onboarding role to user {} in guild {}", member.getIdLong(), guildId, error));

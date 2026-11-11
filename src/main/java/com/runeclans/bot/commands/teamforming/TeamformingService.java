@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.components.separator.Separator;
 import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
 import net.dv8tion.jda.api.components.thumbnail.Thumbnail;
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.branding.BrandingService;
 import com.runeclans.bot.config.BotConfig;
 import net.dv8tion.jda.api.entities.Guild;
@@ -92,7 +93,12 @@ public class TeamformingService {
     }
 
     /** What "Update Roles" actually changed, as resolved {@link Role}s for mention-friendly replies. */
-    public record BatchResult(List<Role> added, List<Role> removed) {
+    /** What changed, and the roles asked for that the bot won't hand out ({@code MemberApi.safeToAssign}), so the member is told. */
+    public record BatchResult(List<Role> added, List<Role> removed, List<Role> refused) {
+        public BatchResult(List<Role> added, List<Role> removed) {
+            this(added, removed, List.of());
+        }
+
         public boolean isEmpty() {
             return added.isEmpty() && removed.isEmpty();
         }
@@ -295,12 +301,17 @@ public class TeamformingService {
             guild.getRolesByName(monthlyMass.roleName(), true).stream().findFirst().ifPresent(toRemove::add);
         }
 
+        // an existing role with the option's name is reused, so it must pass the shared hand-out check (B-03)
+        // (taking a role away grants nothing, so removals are left alone)
+        List<Role> refused = toAdd.stream().filter(role -> !MemberApi.safeToAssign(guild, role)).toList();
+        refused.forEach(role -> log.warn("Teamforming: not giving {} in guild {}: {}", role.getName(), guild.getIdLong(), MemberApi.handOutRefusal(guild, role)));
+        toAdd.removeAll(refused);
         if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
             guild.modifyMemberRoles(member, toAdd, toRemove).complete();
         }
 
         pendingByUserId.remove(member.getIdLong());
-        return new BatchResult(toAdd, toRemove);
+        return new BatchResult(toAdd, toRemove, refused);
     }
 
     // --- Role management ---

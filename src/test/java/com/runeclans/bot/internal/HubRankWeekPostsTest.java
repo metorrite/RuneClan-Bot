@@ -49,8 +49,30 @@ class HubRankWeekPostsTest {
         assertNull(HubRankWeekPosts.plan(entry(GUILD, CHANNEL, " ")), "no text");
         assertNull(HubRankWeekPosts.plan(DataObject.empty()));
         java.time.Instant weekStart = java.time.Instant.parse("2026-11-11T00:00:00Z");
-        assertFalse(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(8))));
-        assertTrue(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(10))), "a replay long after the week posts nothing");
+        assertFalse(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofHours(60))), "the hub's normal post time (turn + 2 days)");
+        assertFalse(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(3))));
+        assertTrue(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(3)).plusSeconds(1)), "past the window: nothing");
+        assertTrue(HubRankWeekPosts.stale(plan, weekStart.plus(java.time.Duration.ofDays(5))), "a replay after the outbox swept the job posts nothing");
+    }
+
+    /** B-47: a replay is only accepted while the outbox still remembers the first job, so it can never post twice. */
+    @Test
+    void theWindowIsNoLongerThanTheOutboxKeepsAFinishedJob() throws Exception {
+        java.lang.reflect.Field keep = DiscordOutbox.class.getDeclaredField("KEEP_FINISHED");
+        keep.setAccessible(true);
+        java.time.Duration kept = (java.time.Duration) keep.get(null);
+        assertFalse(HubRankWeekPosts.TOO_LATE.compareTo(kept) > 0, "TOO_LATE " + HubRankWeekPosts.TOO_LATE + " outlives KEEP_FINISHED " + kept);
+    }
+
+    @Test
+    void aReplayPastTheWindowIsNotQueuedEvenWhenTheOutboxForgotTheJob() {
+        DiscordOutbox outbox = mock(DiscordOutbox.class);
+        TrackingPostingToggle posting = mock(TrackingPostingToggle.class);
+        when(posting.isEnabled()).thenReturn(true);
+        HubRankWeekPosts posts = new HubRankWeekPosts(outbox, posting);
+        posts.clock = java.time.Clock.fixed(java.time.Instant.parse("2026-11-15T00:00:00Z"), java.time.ZoneOffset.UTC); // 4 days after the week start
+        posts.onHubFeed(HubRankWeekPosts.KIND, entry(GUILD, CHANNEL, "t"));
+        verify(outbox, never()).enqueue(anyString(), anyLong(), anyLong(), anyString(), any());
     }
 
     @Test

@@ -4,6 +4,9 @@ import com.runeclans.bot.cachebus.CacheBus;
 import com.runeclans.bot.cachebus.CacheInvalidator;
 import com.runeclans.bot.permission.AdminRoleFilter;
 import com.runeclans.bot.permission.PermissionGroupService;
+import com.runeclans.bot.permission.RoleSafety;
+import io.github.freya022.botcommands.api.core.annotations.BEventListener;
+import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
@@ -11,8 +14,10 @@ import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
@@ -58,6 +63,23 @@ public class HubService implements CacheInvalidator {
         this.repository = repository;
         this.adminRoleFilter = adminRoleFilter;
         this.permissionGroups = permissionGroups;
+    }
+
+    /** Tells the role check which groups and roles may run staff commands, so the bot never hands those roles out (B-03). */
+    @BEventListener
+    public void onJdaReady(InjectedJDAEvent event) {
+        RoleSafety.addPowerSource("staff-commands", this::staffRefs);
+    }
+
+    /** The {@code group:}/{@code role:} choices allowed on any command that is Admins-only by default (/ban, /announce, /lockdown, ...). */
+    public Set<String> staffRefs(long guildId) {
+        Set<String> refs = new HashSet<>();
+        for (HubCommand command : HubCommand.values()) {
+            if (!command.adminByDefault()) continue;
+            HubSettings settings = get(guildId, command);
+            if (settings.customAccess()) refs.addAll(settings.allowedRefs());
+        }
+        return refs;
     }
 
     // ---------- settings ----------

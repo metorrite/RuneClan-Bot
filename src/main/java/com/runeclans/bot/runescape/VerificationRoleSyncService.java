@@ -2,6 +2,7 @@ package com.runeclans.bot.runescape;
 
 import com.runeclans.bot.configure.GuildSettings;
 import com.runeclans.bot.configure.GuildSettingsService;
+import com.runeclans.bot.internal.MemberApi;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Role;
@@ -57,7 +58,7 @@ public class VerificationRoleSyncService {
         Long unverifiedRoleId = settings.unverifiedRoleId();
         if (verifiedRoleId == null && unverifiedRoleId == null) return;
 
-        apply(guild, discordUserId, rsn, (held, exists) -> plan(verifiedRoleId, unverifiedRoleId, held, exists));
+        apply(guild, discordUserId, rsn, (held, exists, canGive) -> plan(verifiedRoleId, unverifiedRoleId, held, exists, canGive));
     }
 
     /**
@@ -80,16 +81,24 @@ public class VerificationRoleSyncService {
             return;
         }
 
-        apply(guild, discordUserId, "left the clan", (held, exists) -> planLeave(clanRoleId, nonClanRoleId, held, exists));
+        apply(guild, discordUserId, "left the clan", (held, exists, canGive) -> planLeave(clanRoleId, nonClanRoleId, held, exists, canGive));
     }
 
-    private void apply(Guild guild, long discordUserId, String why, java.util.function.BiFunction<Set<Long>, java.util.function.Predicate<Long>, RolePlan> planner) {
+    /** Plans one member's change from the roles they hold, whether a role exists, and whether the bot may hand it out. */
+    interface Planner {
+        RolePlan plan(Set<Long> held, java.util.function.Predicate<Long> exists, java.util.function.Predicate<Long> canGive);
+    }
+
+    private void apply(Guild guild, long discordUserId, String why, Planner planner) {
         guild.retrieveMemberById(discordUserId).queue(member -> {
             Set<Long> held = new HashSet<>();
             for (Role role : member.getRoles()) held.add(role.getIdLong());
 
-            RolePlan plan = planner.apply(held, id -> guild.getRoleById(id) != null);
+            // B-55: a saved role may since have been given powers or moved; the plan never hands out one that fails the shared check, and
+            // then keeps the role it would have swapped out, so nobody is left holding neither
+            RolePlan plan = planner.plan(held, id -> guild.getRoleById(id) != null, id -> MemberApi.safeToAssign(guild, guild.getRoleById(id)));
             plan.missing().forEach(id -> log.warn("Configured verification role {} not found in guild {}", id, guild.getIdLong()));
+            plan.refused().forEach(id -> log.warn("Not giving verification role {} in guild {}: {}", id, guild.getIdLong(), MemberApi.handOutRefusal(guild, guild.getRoleById(id))));
             if (plan.add().isEmpty() && plan.remove().isEmpty()) return;
 
             List<Role> add = plan.add().stream().map(guild::getRoleById).toList();
@@ -100,8 +109,15 @@ public class VerificationRoleSyncService {
         }, error -> log.warn("Failed to retrieve member {} for verification role sync", discordUserId, error));
     }
 
-    /** What to change for one member: role ids to add, role ids to remove, and configured ids that no longer exist in the guild. */
-    record RolePlan(Set<Long> add, Set<Long> remove, Set<Long> missing) {}
+    /**
+     * What to change for one member: role ids to add, role ids to remove, configured ids that no longer exist in the guild, and configured
+     * ids the bot won't hand out ({@code MemberApi.safeToAssign}).
+     */
+    record RolePlan(Set<Long> add, Set<Long> remove, Set<Long> missing, Set<Long> refused) {
+        RolePlan(Set<Long> add, Set<Long> remove, Set<Long> missing) {
+            this(add, remove, missing, Set.of());
+        }
+    }
 
     /**
      * Pure decision, no Discord calls. The verified role is added if the member lacks it; the unverified
@@ -109,14 +125,23 @@ public class VerificationRoleSyncService {
      * simply kept. A configured role that no longer exists is skipped and reported, never guessed at.
      */
     static RolePlan plan(Long verifiedRoleId, Long unverifiedRoleId, Set<Long> memberRoleIds, java.util.function.Predicate<Long> roleExists) {
+        return plan(verifiedRoleId, unverifiedRoleId, memberRoleIds, roleExists, id -> true);
+    }
+
+    /** As above; a verified role the bot won't hand out is not added, and then the unverified role is kept too. */
+    static RolePlan plan(Long verifiedRoleId, Long unverifiedRoleId, Set<Long> memberRoleIds, java.util.function.Predicate<Long> roleExists,
+                         java.util.function.Predicate<Long> canGive) {
         Set<Long> add = new HashSet<>();
         Set<Long> remove = new HashSet<>();
         Set<Long> missing = new HashSet<>();
+        Set<Long> refused = new HashSet<>();
 
         if (verifiedRoleId != null) {
             if (!roleExists.test(verifiedRoleId)) missing.add(verifiedRoleId);
+            else if (!memberRoleIds.contains(verifiedRoleId) && !canGive.test(verifiedRoleId)) refused.add(verifiedRoleId);
             else if (!memberRoleIds.contains(verifiedRoleId)) add.add(verifiedRoleId);
         }
+        if (!refused.isEmpty()) return new RolePlan(add, remove, missing, refused);
         if (unverifiedRoleId != null) {
             if (!roleExists.test(unverifiedRoleId)) missing.add(unverifiedRoleId);
             else if (memberRoleIds.contains(unverifiedRoleId) && !unverifiedRoleId.equals(verifiedRoleId)) remove.add(unverifiedRoleId);
@@ -131,6 +156,12 @@ public class VerificationRoleSyncService {
      * linked an account is verified whether or not they are in the clan.
      */
     static RolePlan planLeave(Long clanRoleId, Long nonClanRoleId, Set<Long> memberRoleIds, java.util.function.Predicate<Long> roleExists) {
+        return planLeave(clanRoleId, nonClanRoleId, memberRoleIds, roleExists, id -> true);
+    }
+
+    /** As above; a Guest role the bot won't hand out changes nothing, so the Member role is not taken away with nothing in its place. */
+    static RolePlan planLeave(Long clanRoleId, Long nonClanRoleId, Set<Long> memberRoleIds, java.util.function.Predicate<Long> roleExists,
+                              java.util.function.Predicate<Long> canGive) {
         Set<Long> add = new HashSet<>();
         Set<Long> remove = new HashSet<>();
         Set<Long> missing = new HashSet<>();
@@ -142,6 +173,7 @@ public class VerificationRoleSyncService {
             return new RolePlan(add, remove, missing);
         }
 
+        if (!memberRoleIds.contains(nonClanRoleId) && !canGive.test(nonClanRoleId)) return new RolePlan(add, remove, missing, Set.of(nonClanRoleId));
         if (!memberRoleIds.contains(nonClanRoleId)) add.add(nonClanRoleId);
         if (roleExists.test(clanRoleId) && memberRoleIds.contains(clanRoleId) && !clanRoleId.equals(nonClanRoleId)) remove.add(clanRoleId);
         return new RolePlan(add, remove, missing);

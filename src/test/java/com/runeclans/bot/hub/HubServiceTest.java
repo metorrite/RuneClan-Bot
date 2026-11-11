@@ -168,4 +168,18 @@ class HubServiceTest {
 
         verify(repository, org.mockito.Mockito.times(2)).all(GUILD);
     }
+
+    // ---------- what the role check refuses (B-03) ----------
+
+    @Test
+    void staffRefsAreTheChoicesOnAdminOnlyCommandsWithTheirOwnAccess() {
+        HubRepository repository = mock(HubRepository.class);
+        when(repository.all(1L)).thenReturn(java.util.Map.of(
+                HubCommand.BAN.key(), new HubSettings(1L, HubCommand.BAN.key(), true, true, List.of("group:mods", "role:5"), List.of(), "{}"),
+                HubCommand.POLL.key(), new HubSettings(1L, HubCommand.POLL.key(), true, true, List.of("group:members"), List.of(), "{}"),
+                HubCommand.KICK.key(), new HubSettings(1L, HubCommand.KICK.key(), true, false, List.of("group:ignored"), List.of(), "{}")));
+
+        assertEquals(java.util.Set.of("group:mods", "role:5"), service(repository).staffRefs(1L),
+                "a member command (poll) gives no staff rights, and a list that isn't in use (customAccess off) counts for nothing");
+    }
 }

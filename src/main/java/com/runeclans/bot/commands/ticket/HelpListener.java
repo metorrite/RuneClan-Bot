@@ -1,5 +1,6 @@
 package com.runeclans.bot.commands.ticket;
 
+import com.runeclans.bot.internal.MemberApi;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.ticket.TicketModels.HelpSettings;
@@ -103,6 +104,10 @@ public class HelpListener extends ListenerAdapter {
         }
         if (!guild.getSelfMember().canInteract(role)) {
             Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "ticket.i_can_t_hand_out_that"));
+            return;
+        }
+        if (!MemberApi.safeToAssign(guild, role)) {
+            Containers.replyEphemeral(event, Containers.WARNING, MemberApi.handOutRefusal(guild, role));
             return;
         }
         event.deferReply(true).queue();

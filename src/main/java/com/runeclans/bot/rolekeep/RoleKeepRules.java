@@ -76,7 +76,7 @@ public final class RoleKeepRules {
         if (everyone) return "@everyone cannot be kept or timed.";
         if (syncOwned) return "@" + roleName + " is kept by the clan role sync (Member / Guest / Unverified), which always wins, so it cannot be kept or timed here.";
         if (staffRole) return "@" + roleName + " is one of this server's staff permission roles, which are never given back or timed automatically.";
-        if (!safeToAssign) return "The bot will not hand out @" + roleName + ": it is above the bot's own role, managed by an integration, or carries powerful permissions.";
+        if (!safeToAssign) return "The bot will not hand out @" + roleName + ": it is above the bot's own role, managed by an integration, carries powerful permissions, or would make its holder bot staff.";
         return null;
     }
 }

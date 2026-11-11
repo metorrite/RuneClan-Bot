@@ -150,7 +150,7 @@ class EventSpaceOpsTest {
         Mockito.when(guild.getChannels()).thenAnswer(inv -> new ArrayList<>(s.channels.values()));
         Mockito.when(guild.getGuildChannelById(ArgumentMatchers.anyLong())).thenAnswer(inv -> s.channels.get((Long) inv.getArgument(0)));
         Mockito.when(guild.getCategoryById(ArgumentMatchers.anyLong())).thenAnswer(inv -> s.channels.get((Long) inv.getArgument(0)) instanceof Category c ? c : null);
-        SelfMember self = Mockito.mock(SelfMember.class, invocation -> invocation.getMethod().getName().equals("hasPermission") ? Boolean.TRUE : Mockito.RETURNS_DEFAULTS.answer(invocation));
+        SelfMember self = Mockito.mock(SelfMember.class, invocation -> invocation.getMethod().getName().equals("hasPermission") || invocation.getMethod().getName().equals("canInteract") ? Boolean.TRUE : Mockito.RETURNS_DEFAULTS.answer(invocation));
         Mockito.when(self.getIdLong()).thenReturn(BOT);
         Mockito.when(guild.getSelfMember()).thenReturn(self);
 
@@ -239,6 +239,8 @@ class EventSpaceOpsTest {
         Mockito.when(role.getIdLong()).thenReturn(id);
         Mockito.when(role.getId()).thenReturn(Long.toString(id));
         Mockito.when(role.getName()).thenReturn(name);
+        // a bot-made role: ordinary, so MemberApi.safeToAssign lets the bot hand it out
+        Mockito.when(role.getPermissions()).thenReturn(java.util.EnumSet.noneOf(net.dv8tion.jda.api.Permission.class));
         AuditableRestAction<Void> delete = deletion(id);
         Mockito.when(role.delete()).thenReturn(delete);
         server.roles.put(id, role);
