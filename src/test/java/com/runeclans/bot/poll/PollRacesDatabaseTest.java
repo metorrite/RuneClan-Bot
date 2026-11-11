@@ -168,4 +168,65 @@ class PollRacesDatabaseTest {
         assertEquals(888L, service.getSessionById(pollId).messageId());
         assertEquals("ACTIVE", polls.getPollById(pollId).status());
     }
+
+    @Test
+    void aPostThatHasToWaitKeepsItsPollForTheNextTry() {
+        PollService service = new PollService(polls);
+        long pollId = service.storePoll(guild(), channel(), "Raid night?", false, false, List.of("Yes", "No"), OWNER, null);
+
+        assertThrows(DiscordJobs.RetryLater.class, () -> service.postStored(pollId, channel(), action -> {
+            throw new DiscordJobs.RetryLater(java.time.Duration.ofSeconds(5), "rate limited");
+        }, true));
+        assertEquals(1, activePolls(), "the poll waits for the next try");
+
+        service.postStored(pollId, channel(), action -> message(555L), true);
+
+        assertEquals(555L, polls.getPollById(pollId).messageId());
+        assertEquals(1, activePolls(), "waiting left no extra poll behind");
+        assertEquals(1, pollRows(), "and no closed empty one either");
+    }
+
+    @Test
+    void aPollIsNeverPostedTwice() {
+        PollService service = new PollService(polls);
+        long pollId = service.storePoll(guild(), channel(), "Raid night?", false, false, List.of("Yes", "No"), OWNER, null);
+        service.postStored(pollId, channel(), action -> message(556L), true);
+
+        DiscordJobs.Refused again = assertThrows(DiscordJobs.Refused.class, () -> service.postStored(pollId, channel(), action -> message(557L), true));
+        assertEquals("That poll is already posted.", again.getMessage());
+        assertEquals(556L, polls.getPollById(pollId).messageId());
+    }
+
+    @Test
+    void aClosedPollIsNeverPosted() {
+        PollService service = new PollService(polls);
+        long pollId = service.storePoll(guild(), channel(), "Raid night?", false, false, List.of("Yes", "No"), OWNER, null);
+        service.discard(pollId);
+
+        assertThrows(DiscordJobs.Refused.class, () -> service.postStored(pollId, channel(), action -> message(558L), true));
+        assertEquals(0, activePolls());
+    }
+
+    @Test
+    void aWaitThatEndsTheJobClosesThePoll() {
+        PollService service = new PollService(polls);
+        long pollId = service.storePoll(guild(), channel(), "Raid night?", false, false, List.of("Yes", "No"), OWNER, null);
+
+        assertThrows(DiscordJobs.RetryLater.class, () -> service.postStored(pollId, channel(), action -> {
+            throw new DiscordJobs.RetryLater(java.time.Duration.ofSeconds(5), "rate limited");
+        }, false));
+        assertEquals(0, activePolls(), "no try follows, so nothing is kept open");
+    }
+
+    private long pollRows() {
+        try (Connection c = db.getConnection(); PreparedStatement s = c.prepareStatement("SELECT count(*) FROM younglings.poll WHERE guild_id = ?")) {
+            s.setLong(1, GUILD);
+            try (java.sql.ResultSet rs = s.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 }

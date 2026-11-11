@@ -234,6 +234,21 @@ public class DiscordJobRepository {
     }
 
     /**
+     * Replaces a running job's payload, so a later try picks up where this one got to (a poll job keeps the poll it stored, T-1031). False
+     * when the job isn't running any more. Never changes a job that is waiting or finished.
+     */
+    public boolean savePayload(long id, DataObject payload) {
+        try (Connection c = connectionSupplier.getConnection();
+             PreparedStatement s = c.prepareStatement("UPDATE younglings.discord_job SET payload = ?, updated_at = now() WHERE id = ? AND state = 'running'")) {
+            s.setString(1, payload.toString());
+            s.setLong(2, id);
+            return s.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new IllegalStateException("Could not save job " + id, e);
+        }
+    }
+
+    /**
      * Puts a running job back to wait until {@code at}. If a newer change with the same key was queued meanwhile, that one wins and this one
      * ends as done: the newer change already says what the end state should be. Only for the process holding the job's claim.
      */
