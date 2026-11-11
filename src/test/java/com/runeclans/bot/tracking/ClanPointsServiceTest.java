@@ -1,5 +1,6 @@
 package com.runeclans.bot.tracking;
 
+import com.runeclans.bot.runescape.ClanPointsRepository;
 import com.runeclans.bot.runescape.ClanPointsRepository.RankConfigRow;
 import org.junit.jupiter.api.Test;
 
@@ -65,5 +66,15 @@ class ClanPointsServiceTest {
     @Test
     void paginateOfNothingIsNothing() {
         assertEquals(List.of(), ClanPointsService.paginate(List.of()));
+    }
+
+    @Test
+    void clanReportSortsAnUnmodifiableFlaggedList() {
+        // The repository returns Stream.toList(), which is unmodifiable: sorting it in place crashed the report.
+        var later = new ClanPointsRepository.MemberPointsRow("Later", 10, true, java.time.LocalDate.of(2026, 1, 5));
+        var earlier = new ClanPointsRepository.MemberPointsRow("Earlier", 10, true, java.time.LocalDate.of(2026, 1, 1));
+        var unknown = new ClanPointsRepository.MemberPointsRow("Unknown", 10, true, null);
+        List<ClanPointsRepository.MemberPointsRow> flagged = List.of(unknown, later, earlier);
+        assertEquals(List.of(earlier, later, unknown), ClanPointsService.longestWaitingFirst(flagged));
     }
 }
