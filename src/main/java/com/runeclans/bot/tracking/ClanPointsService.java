@@ -72,6 +72,14 @@ public class ClanPointsService {
         return earned;
     }
 
+    /** Oldest flag first. Sorts a copy: the repository hands back an unmodifiable list, and sorting it in place crashed the report. */
+    static List<ClanPointsRepository.MemberPointsRow> longestWaitingFirst(List<ClanPointsRepository.MemberPointsRow> flagged) {
+        List<ClanPointsRepository.MemberPointsRow> sorted = new ArrayList<>(flagged);
+        sorted.sort(Comparator.comparing(ClanPointsRepository.MemberPointsRow::promotionNeededSince,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+        return sorted;
+    }
+
     /** Returns how many members the report listed — 0 means nothing was sent. */
     private int sendClanReport(Guild guild) {
         long guildId = guild.getIdLong();
@@ -85,8 +93,7 @@ public class ClanPointsService {
         Map<String, ClanMemberRepository.ClanMemberRow> rosterByRsnLower = new HashMap<>();
         for (var member : clanMemberRepository.getAll(guildId, true)) rosterByRsnLower.put(member.rsn().toLowerCase(Locale.ROOT), member);
 
-        flagged.sort(Comparator.comparing(ClanPointsRepository.MemberPointsRow::promotionNeededSince,
-                Comparator.nullsLast(Comparator.naturalOrder())));
+        flagged = longestWaitingFirst(flagged);
 
         List<String> entries = new ArrayList<>();
         for (var row : flagged) {
