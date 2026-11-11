@@ -66,6 +66,40 @@ class EventScoringTest {
     }
 
     @Test
+    void aReversedCompletionDoesNotMoveTheTieTime() {
+        // B-76: A reaches 10 at minute 0, a mistaken 10 more at minute 120 is taken back at 125; B reaches 10 at minute 60
+        var objectives = List.of(obj("x", 10, 1, 1), obj("y", 10, 1, 1));
+        var s = EventScoring.standings(objectives, List.of(entry("u:a", "x", 1, 0), entry("u:a", "y", 1, 120), entry("u:a", "y", -1, 125), entry("u:b", "x", 1, 60)));
+        assertEquals(10, s.get(0).points());
+        assertEquals(10, s.get(1).points());
+        assertEquals("u:a", s.get(0).subject(), "A held 10 points first");
+        assertEquals(T0, s.get(0).lastCompletedAt());
+    }
+
+    @Test
+    void aZeroPointObjectiveDoesNotMoveTheTieTime() {
+        var objectives = List.of(obj("x", 10, 1, 1), obj("chat", 0, 1, 1));
+        var s = EventScoring.standings(objectives, List.of(entry("u:a", "x", 1, 0), entry("u:a", "chat", 1, 90), entry("u:b", "x", 1, 60)));
+        assertEquals("u:a", s.get(0).subject(), "the 0-point completion at minute 90 doesn't count as finishing later");
+        assertEquals(T0, s.get(0).lastCompletedAt());
+    }
+
+    @Test
+    void droppingBelowTheFinalTotalAndClimbingBackStartsTheClockAgain() {
+        var objectives = List.of(obj("x", 10, 1, 1));
+        var s = EventScoring.standings(objectives, List.of(entry("u:a", "x", 1, 0), entry("u:a", "x", -1, 30), entry("u:a", "x", 1, 90), entry("u:b", "x", 1, 60)));
+        assertEquals("u:b", s.get(0).subject(), "B has held 10 since minute 60, A only since minute 90");
+        assertEquals(T0.plusSeconds(90 * 60L), s.get(1).lastCompletedAt());
+    }
+
+    @Test
+    void noPointsMeansNoTieTime() {
+        var s = EventScoring.standings(List.of(obj("x", 10, 1, 1)), List.of(entry("u:a", "x", 1, 0), entry("u:a", "x", -1, 5)));
+        assertEquals(0, s.get(0).points());
+        assertEquals(null, s.get(0).lastCompletedAt());
+    }
+
+    @Test
     void aNegativeEntryReversesEarlierProgress() {
         var objectives = List.of(obj("a", 10, 1, 1));
         var s = EventScoring.standings(objectives, List.of(entry("u:1", "a", 1, 1), entry("u:1", "a", -1, 2)));

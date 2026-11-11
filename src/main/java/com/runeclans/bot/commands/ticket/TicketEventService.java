@@ -2,7 +2,9 @@ package com.runeclans.bot.commands.ticket;
 
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.events.EventProblem;
-import com.runeclans.bot.events.EventService;
+import com.runeclans.bot.events.EventRules;
+import com.runeclans.bot.hubevents.HubEventClient.Actor;
+import com.runeclans.bot.hubevents.HubEvents;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.permission.AdminRoleFilter;
 import com.runeclans.bot.ticket.HelpExtras;
@@ -22,6 +24,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,7 +32,8 @@ import java.util.stream.Collectors;
 
 /**
  * The "Make it an event" button of a help ticket (off until the server switches it on): turns the ticket into a boss-night event for the boss it asks about, opens
- * its signups, and puts the member and the helpers who joined the ticket on the roster. It can be done once per ticket. Who may press it: a helper who joined the
+ * its signups, and puts the member and the helpers who joined the ticket on the roster. The event is made on RuneClans (the hub), like every other event, so it
+ * shows on the website and {@code /events join} finds it (B-61); the bot makes it as itself, because a helper may press the button without being staff. It can be done once per ticket. Who may press it: a helper who joined the
  * ticket, the panel's helper and staff roles, and admins; not the member on their own.
  */
 @BService
@@ -38,10 +42,10 @@ public class TicketEventService {
 
     private final TicketRepository tickets;
     private final HelpExtrasRepository extras;
-    private final EventService events;
+    private final HubEvents events;
     private final AdminRoleFilter adminRoleFilter;
 
-    public TicketEventService(TicketRepository tickets, HelpExtrasRepository extras, EventService events, AdminRoleFilter adminRoleFilter) {
+    public TicketEventService(TicketRepository tickets, HelpExtrasRepository extras, HubEvents events, AdminRoleFilter adminRoleFilter) {
         this.tickets = tickets;
         this.extras = extras;
         this.events = events;
@@ -95,24 +99,14 @@ public class TicketEventService {
         event.deferReply().queue();
         long guildId = guild.getIdLong();
         try {
-            long eventId = events.createEvent(guildId, member.getIdLong(), plan.input());
-            extras.setEvent(ticketId, eventId);
-            events.moveStage(guildId, eventId, com.runeclans.bot.events.EventRules.Status.SIGNUPS);
             Set<Long> people = new LinkedHashSet<>();
             people.add(ticket.requesterId());
             people.addAll(tickets.getHelpers(ticketId));
             List<Long> added = new ArrayList<>();
+            List<Long> waiting = new ArrayList<>();
             List<Long> notAdded = new ArrayList<>();
-            for (long user : people) {
-                try {
-                    events.join(guildId, eventId, guildId, user, null, true, null);
-                    added.add(user);
-                } catch (EventProblem p) {
-                    log.info("Couldn't add {} to the event made from ticket {}: {}", user, ticketId, p.getMessage());
-                    notAdded.add(user);
-                }
-            }
-            event.getHook().sendMessageComponents(Containers.toast(Containers.SUCCESS, lines(event.getGuild().getIdLong(), plan, eventId, added, notAdded))).useComponentsV2(true).queue();
+            long eventId = makeOnHub(events, guildId, plan, people, added, waiting, notAdded, id -> extras.setEvent(ticketId, id));
+            event.getHook().sendMessageComponents(Containers.toast(Containers.SUCCESS, lines(event.getGuild().getIdLong(), plan, eventId, added, waiting, notAdded))).useComponentsV2(true).queue();
             log.info("{} made event {} from ticket {}", member.getId(), eventId, ticketId);
         } catch (EventProblem | IllegalArgumentException e) {
             // nothing was made (or it can't be used): free the ticket so the button can be pressed again
@@ -121,11 +115,44 @@ public class TicketEventService {
         }
     }
 
-    static String[] lines(long guildId, TicketEventPlan.Plan plan, long eventId, List<Long> added, List<Long> notAdded) {
+    /**
+     * Makes the event on the hub as the bot, opens its signups and adds {@code people} as staff entries; {@code remember} gets its local id once its
+     * signups are open. When the signups can't be opened, the new draft is taken away again (best effort) so the ticket's button can be pressed again.
+     * Who got a place goes in {@code added}, who landed on the waitlist in {@code waiting}, who couldn't be added in {@code notAdded}.
+     */
+    static long makeOnHub(HubEvents events, long guildId, TicketEventPlan.Plan plan, Collection<Long> people, List<Long> added, List<Long> waiting,
+                          List<Long> notAdded, java.util.function.LongConsumer remember) {
+        Actor bot = events.self(guildId);
+        long eventId = events.createEvent(guildId, plan.input(), bot);
+        try {
+            events.moveStage(guildId, eventId, EventRules.Status.SIGNUPS, bot);
+        } catch (EventProblem p) {
+            try {
+                events.deleteEvent(guildId, eventId, bot);
+            } catch (EventProblem gone) {
+                log.info("Couldn't take away draft event {} after its signups wouldn't open: {}", eventId, gone.getMessage());
+            }
+            throw p;
+        }
+        remember.accept(eventId);
+        for (long user : people) {
+            try {
+                if (events.join(guildId, eventId, user, null, true, bot).waiting()) waiting.add(user);
+                else added.add(user);
+            } catch (EventProblem p) {
+                log.info("Couldn't add {} to event {} made from a ticket: {}", user, eventId, p.getMessage());
+                notAdded.add(user);
+            }
+        }
+        return eventId;
+    }
+
+    static String[] lines(long guildId, TicketEventPlan.Plan plan, long eventId, List<Long> added, List<Long> waiting, List<Long> notAdded) {
         List<String> lines = new ArrayList<>();
         lines.add(Text.of(guildId, "ticket.event.made_from_this_ticket", plan.input().name()));
         lines.add(Text.of(guildId, "ticket.event.signups_are_open", plan.summary(), eventId));
         if (!added.isEmpty()) lines.add(Text.of(guildId, "ticket.event.on_the_roster", added.stream().map(id -> "<@" + id + ">").collect(Collectors.joining(", "))));
+        if (!waiting.isEmpty()) lines.add(Text.of(guildId, "ticket.event.on_the_waitlist", waiting.stream().map(id -> "<@" + id + ">").collect(Collectors.joining(", "))));
         if (!notAdded.isEmpty()) lines.add(Text.of(guildId, "ticket.event.couldnt_be_added", notAdded.stream().map(id -> "<@" + id + ">").collect(Collectors.joining(", "))));
         lines.add(Text.of(guildId, "ticket.event.staff_prizes_teams"));
         return lines.toArray(String[]::new);

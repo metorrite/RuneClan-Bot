@@ -155,7 +155,18 @@ class EventSignupsHubTest {
         Hub.Call add = hub.of("POST", "/participants").get(0);
         assertTrue(add.headers().isEmpty(), "the bot adds them itself (as itself once connected), so the deadline doesn't refuse a signup made in time");
         assertEquals("1", DataObject.fromJson(add.body()).getString("discordId"));
+        assertEquals("SIGNUP", DataObject.fromJson(add.body()).getString("source"), "B-59: their own signup, so the hub counts it against the host's seats");
         assertEquals(List.of(1L, 2L), map.signupEntries(local).stream().sorted().toList(), "both are the signup's to follow now");
+    }
+
+    @Test
+    void aSignupThatLandsOnTheWaitlistIsFollowedButNotCountedAsAdded() {
+        hub.ok("POST /v1/events/" + EVENT + "/participants", DataObject.empty().put("waiting", true).put("position", 2));
+        onSignup(1L);
+        hubState("SIGNUPS");
+        assertEquals(0, signups.sync(guild, local), "on the waitlist, not in a place");
+        assertEquals(List.of(1L), map.signupEntries(local), "the signup follows them, so they aren't joined (or told) twice");
+        verify(guild.getJDA(), Mockito.times(1)).retrieveUserById(1L); // told they are on the waitlist
     }
 
     @Test
