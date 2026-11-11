@@ -155,6 +155,22 @@ public class GiveawayRepository {
         return list;
     }
 
+    /**
+     * Ends an open giveaway with these winners, once, in one statement. Only the caller that gets {@code true} may announce: the sweep, the
+     * dashboard's End now job and /giveaway end can all reach the same giveaway at its end time, and the others must do nothing. Draw
+     * before calling it: a draw that fails leaves the giveaway OPEN, so the sweep tries again.
+     */
+    public boolean finishIfOpen(long id, List<Long> winners) {
+        try (Connection c = connectionSupplier.getConnection();
+             PreparedStatement s = c.prepareStatement("UPDATE younglings.giveaway SET status = 'ENDED', winners = ? WHERE id = ? AND status = 'OPEN'")) {
+            s.setString(1, String.join(",", winners.stream().map(String::valueOf).toList()));
+            s.setLong(2, id);
+            return s.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to end the giveaway", e);
+        }
+    }
+
     public void finish(long id, List<Long> winners) {
         try (Connection c = connectionSupplier.getConnection();
              PreparedStatement s = c.prepareStatement("UPDATE younglings.giveaway SET status = 'ENDED', winners = ? WHERE id = ?")) {

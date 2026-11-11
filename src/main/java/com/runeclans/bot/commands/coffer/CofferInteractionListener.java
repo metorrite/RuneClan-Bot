@@ -272,8 +272,12 @@ public class CofferInteractionListener extends ListenerAdapter {
             return;
         }
 
-        boolean accepted = repository.acceptTransfer(transferId);
-        if (!accepted) {
+        CofferRepository.AcceptResult accepted = repository.acceptTransfer(transferId);
+        if (accepted == CofferRepository.AcceptResult.ALREADY_RESOLVED) {
+            Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "coffer.this_transfer_no_longer_exists_or"));
+            return;
+        }
+        if (accepted == CofferRepository.AcceptResult.INSUFFICIENT_BALANCE) {
             Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "coffer.the_sender_no_longer_holds_enough"));
             return;
         }
@@ -295,7 +299,10 @@ public class CofferInteractionListener extends ListenerAdapter {
             return;
         }
 
-        repository.rejectTransfer(transferId);
+        if (!repository.rejectTransfer(transferId)) {
+            Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "coffer.this_transfer_no_longer_exists_or"));
+            return;
+        }
         Containers.reply(event, Containers.DANGER, false,
                 Text.of(event, "coffer.transfer_of_rejected", GpAmountParser.format(transfer.amount())));
     }

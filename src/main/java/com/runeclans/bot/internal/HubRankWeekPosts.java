@@ -13,16 +13,22 @@ import org.slf4j.LoggerFactory;
  * with the site owner's auto post on, sends feed entry {@value #KIND} once ({@code {siteId, guildId, channelId, weekStart, template,
  * promoted, text}}). This queues it as a {@link RankCongratsJob} in the Discord job outbox (so it runs in the process holding the server's
  * shard, names the linked members there, and allows no mentions), never while the bot's posting is off. A repeated entry posts once: an
- * entry whose server and week were already queued (any state, {@link DiscordOutbox#known}) is skipped, and so is one for a week past the
- * hub's own post window (a feed replay long after, once the outbox swept the old job). A post that can't be queued is logged and lost, not
+ * entry whose server and week were already queued (any state, {@link DiscordOutbox#known}) is skipped, and so is one that arrives after
+ * {@link #TOO_LATE} (B-47: the outbox forgets finished jobs after three days, so a feed replay later than that would post again). A post that can't be queued is logged and lost, not
  * retried: the page shows the message to copy.
  */
 @BService
 public class HubRankWeekPosts implements HubFeedListener {
     private static final Logger log = LoggerFactory.getLogger(HubRankWeekPosts.class);
     static final String KIND = "site.rank_week";
-    /** A week's post is queued at most this long after the week started: the Citadel week, plus the hub's two-day post window. */
-    static final java.time.Duration TOO_LATE = java.time.Duration.ofDays(9);
+    /**
+     * A week's post is queued at most this long after the week's start date. The hub turns the week about 12 hours after the Wednesday reset
+     * and posts within two days of that, so a normal post arrives by about 2.5 days. It must not be longer than the outbox keeps a finished
+     * job ({@code DiscordOutbox.KEEP_FINISHED}, 3 days): the job is queued no earlier than the week's start, so until this passes a replayed
+     * entry still finds it and posts nothing. A week the hub turns late (a roster outage) and posts after this gets no auto post; the
+     * Promotions page still shows the message to copy.
+     */
+    static final java.time.Duration TOO_LATE = java.time.Duration.ofDays(3);
 
     private final DiscordOutbox outbox;
     private final TrackingPostingToggle posting;
