@@ -103,9 +103,9 @@ public class GiveawayService {
 
     /** Ends it now (or when due): draws, shows the result on its message, and announces it. */
     public Giveaway end(Guild guild, Giveaway g) {
-        if (!g.open()) throw new GiveawayException("That giveaway has already ended.");
+        if (!g.open() || !repository.claimEnd(g.id())) throw new GiveawayException("That giveaway has already ended.");
         List<Long> winners = draw(guild, g, Set.of());
-        repository.finish(g.id(), winners);
+        repository.setWinners(g.id(), winners);
         Giveaway ended = repository.get(guild.getIdLong(), g.id()).orElseThrow();
         show(guild, ended, winners, false);
         return ended;
@@ -181,9 +181,11 @@ public class GiveawayService {
                 if (guild == null) continue;
                 try {
                     end(guild, g);
+                } catch (GiveawayException e) {
+                    // someone else (End now, /giveaway end) ended it a moment earlier; their winners stand
                 } catch (RuntimeException e) {
                     log.warn("Couldn't end giveaway {}", g.id(), e);
-                    repository.finish(g.id(), List.of()); // don't retry forever
+                    repository.claimEnd(g.id()); // don't retry forever; never overwrites winners another end already stored
                 }
             }
         } catch (Exception e) {

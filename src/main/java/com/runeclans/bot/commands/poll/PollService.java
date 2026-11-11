@@ -79,6 +79,38 @@ public class PollService {
      */
     public long createPoll(Guild guild, GuildMessageChannel channel, String title, boolean anonymous,
                            boolean multipleVotes, List<String> optionLabels, long createdByUserId, java.time.Instant closesAt) {
+        Stored stored = store(guild, channel, title, anonymous, multipleVotes, optionLabels, createdByUserId, closesAt);
+        long pollId = stored.session().pollId();
+        post(channel, stored).queue(message -> posted(stored.session(), message),
+                error -> log.warn("Failed to post poll {} '{}' in channel {}", pollId, title, channel.getIdLong(), error));
+        return pollId;
+    }
+
+    /**
+     * {@link #createPoll} for a caller that must know Discord took the post: the dashboard's outbox job, which shows the page the result.
+     * {@code send} runs the post and waits for Discord (the outbox's {@code DiscordJobs::send}); when it throws (Discord refused, a rate
+     * limit, a fault), the poll is closed again before the error goes on, so no open poll is ever left without a message to vote on.
+     */
+    public long createPollPosted(Guild guild, GuildMessageChannel channel, String title, boolean anonymous, boolean multipleVotes,
+                                 List<String> optionLabels, long createdByUserId, java.time.Instant closesAt,
+                                 java.util.function.Function<net.dv8tion.jda.api.requests.RestAction<Message>, Message> send) {
+        Stored stored = store(guild, channel, title, anonymous, multipleVotes, optionLabels, createdByUserId, closesAt);
+        long pollId = stored.session().pollId();
+        Message message;
+        try {
+            message = send.apply(post(channel, stored));
+        } catch (RuntimeException e) {
+            discard(pollId);
+            throw e;
+        }
+        posted(stored.session(), message);
+        return pollId;
+    }
+
+    private record Stored(PollSession session, List<PollOption> options) {}
+
+    private Stored store(Guild guild, GuildMessageChannel channel, String title, boolean anonymous, boolean multipleVotes,
+                         List<String> optionLabels, long createdByUserId, java.time.Instant closesAt) {
         long pollId;
         List<PollOption> options = new ArrayList<>();
         if (pollRepository.hub()) {
@@ -97,16 +129,31 @@ public class PollService {
                 null, title, anonymous, multipleVotes, "ACTIVE", createdByUserId);
         activePollsById.put(pollId, session);
         optionsByPollId.put(pollId, options);
+        return new Stored(session, options);
+    }
 
-        channel.sendMessageComponents(List.of(PollView.build(session, options, Map.of(), Map.of(), false)))
-                .useComponentsV2(true)
-                .queue(message -> {
-                    pollRepository.saveMessageId(pollId, message.getIdLong());
-                    activePollsById.put(pollId, new PollSession(pollId, guild.getIdLong(), channel.getIdLong(),
-                            message.getIdLong(), title, anonymous, multipleVotes, "ACTIVE", createdByUserId));
-                    log.info("Created poll {} '{}' in guild {}", pollId, title, guild.getIdLong());
-                }, error -> log.warn("Failed to post poll {} '{}' in channel {}", pollId, title, channel.getIdLong(), error));
-        return pollId;
+    private static net.dv8tion.jda.api.requests.RestAction<Message> post(GuildMessageChannel channel, Stored stored) {
+        return channel.sendMessageComponents(List.of(PollView.build(stored.session(), stored.options(), Map.of(), Map.of(), false)))
+                .useComponentsV2(true);
+    }
+
+    private void posted(PollSession session, Message message) {
+        long pollId = session.pollId();
+        pollRepository.saveMessageId(pollId, message.getIdLong());
+        activePollsById.put(pollId, new PollSession(pollId, session.guildId(), session.channelId(),
+                message.getIdLong(), session.title(), session.anonymous(), session.multipleVotes(), "ACTIVE", session.createdByUserId()));
+        log.info("Created poll {} '{}' in guild {}", pollId, session.title(), session.guildId());
+    }
+
+    /** Closes a poll whose message Discord never took, and forgets it here. A failed close is only logged: the post's error matters more. */
+    private void discard(long pollId) {
+        try {
+            pollRepository.closePoll(pollId);
+        } catch (RuntimeException e) {
+            log.warn("Couldn't close poll {} after its post failed", pollId, e);
+        }
+        activePollsById.remove(pollId);
+        optionsByPollId.remove(pollId);
     }
 
     // --- Lookup ---
@@ -249,7 +296,31 @@ public class PollService {
 
     public enum VoteResult { ADDED, REMOVED, SWITCHED, POLL_CLOSED }
 
+    /**
+     * One member's vote changes one at a time. A change is several reads and writes (clear then add for a one-answer poll; read the
+     * picks then write them all on the hub), so two clicks at once, or a click plus a website vote, could otherwise both pass and leave
+     * two answers in a one-answer poll or lose a pick. Striped by (poll, member): different members never wait on each other for long.
+     * One bot process serves every vote (Discord buttons and the website's polls/vote route), so an in-process lock covers them all.
+     */
+    private final Object[] voteLocks = newVoteLocks();
+
+    private static Object[] newVoteLocks() {
+        Object[] locks = new Object[64];
+        for (int i = 0; i < locks.length; i++) locks[i] = new Object();
+        return locks;
+    }
+
+    private Object voteLock(long pollId, long userId) {
+        return voteLocks[Math.floorMod(java.util.Objects.hash(pollId, userId), voteLocks.length)];
+    }
+
     public VoteResult toggleVote(long pollId, long optionId, long userId) {
+        synchronized (voteLock(pollId, userId)) {
+            return toggleVoteLocked(pollId, optionId, userId);
+        }
+    }
+
+    private VoteResult toggleVoteLocked(long pollId, long optionId, long userId) {
         PollSession session = getSessionById(pollId);
         if (session == null || !"ACTIVE".equalsIgnoreCase(session.status())) return VoteResult.POLL_CLOSED;
 

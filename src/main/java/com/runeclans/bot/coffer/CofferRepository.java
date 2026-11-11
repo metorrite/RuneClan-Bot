@@ -298,44 +298,52 @@ public class CofferRepository {
         }
     }
 
+    /** What {@link #acceptTransfer} did. */
+    public enum AcceptResult {
+        /** The transfer was still pending and the gp moved. */
+        ACCEPTED,
+        /** The sender no longer holds enough; the transfer stays PENDING so it can be retried or rejected. */
+        INSUFFICIENT_BALANCE,
+        /** The transfer is gone or was already accepted or rejected (for example by a second click a moment earlier). */
+        ALREADY_RESOLVED
+    }
+
     /**
-     * @return {@code true} if the pending transfer was found and had sufficient balance to
-     *         complete, {@code false} if the sender's balance is no longer sufficient (the
-     *         transfer is left PENDING in that case so it can be retried or rejected).
+     * Accepts a pending transfer exactly once. The first statement claims the row ({@code ... AND status = 'PENDING'}), which also
+     * row-locks it: a second Accept handled at the same time waits for this transaction, then finds the row no longer pending and
+     * changes nothing, so the gp can never move twice and an Accept can't overwrite a reject that landed first.
      */
-    public boolean acceptTransfer(long transferId) {
-        String getTransfer = "SELECT * FROM younglings.coffer_transfer WHERE transfer_id = ? AND status = 'PENDING'";
-        String updateStatus = """
+    public AcceptResult acceptTransfer(long transferId) {
+        String claim = """
                 UPDATE younglings.coffer_transfer
                 SET status = 'COMPLETED', resolved_at = NOW()
-                WHERE transfer_id = ?
+                WHERE transfer_id = ? AND status = 'PENDING'
+                RETURNING *
                 """;
 
         try (Connection conn = connectionSupplier.getConnection()) {
             conn.setAutoCommit(false);
             try {
                 CofferTransfer transfer;
-                try (PreparedStatement ps = conn.prepareStatement(getTransfer)) {
+                try (PreparedStatement ps = conn.prepareStatement(claim)) {
                     ps.setLong(1, transferId);
                     ResultSet rs = ps.executeQuery();
-                    if (!rs.next()) throw new SQLException("Transfer not found or already resolved");
+                    if (!rs.next()) {
+                        conn.rollback();
+                        return AcceptResult.ALREADY_RESOLVED;
+                    }
                     transfer = mapTransfer(rs);
                 }
 
                 if (!tryDebitHolderBalance(conn, transfer.guildId(), transfer.fromDiscordId(), transfer.amount())) {
                     conn.rollback();
-                    return false;
+                    return AcceptResult.INSUFFICIENT_BALANCE;
                 }
 
                 adjustHolderBalance(conn, transfer.guildId(), transfer.toDiscordId(), transfer.amount());
 
-                try (PreparedStatement ps = conn.prepareStatement(updateStatus)) {
-                    ps.setLong(1, transferId);
-                    ps.execute();
-                }
-
                 conn.commit();
-                return true;
+                return AcceptResult.ACCEPTED;
             } catch (SQLException e) {
                 conn.rollback();
                 throw e;
@@ -348,7 +356,8 @@ public class CofferRepository {
         }
     }
 
-    public void rejectTransfer(long transferId) {
+    /** @return {@code false} if the transfer was no longer pending (already accepted or rejected), so nothing changed. */
+    public boolean rejectTransfer(long transferId) {
         String sql = """
                 UPDATE younglings.coffer_transfer
                 SET status = 'REJECTED', resolved_at = NOW()
@@ -359,7 +368,7 @@ public class CofferRepository {
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setLong(1, transferId);
-            ps.executeUpdate();
+            return ps.executeUpdate() == 1;
 
         } catch (SQLException e) {
             log.error("Failed to reject coffer transfer", e);

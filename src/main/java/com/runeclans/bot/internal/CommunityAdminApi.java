@@ -5,6 +5,8 @@ import com.runeclans.bot.commands.signup.SignupEntry;
 import com.runeclans.bot.commands.signup.SignupService;
 import com.runeclans.bot.commands.signup.SignupSession;
 import com.runeclans.bot.commands.signup.SignupType;
+import com.runeclans.bot.discord.jobs.DiscordJob;
+import com.runeclans.bot.discord.jobs.DiscordOutbox;
 import com.runeclans.bot.commands.signup.SubmissionField;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.internal.TicketAdminApi.ApiError;
@@ -42,10 +44,11 @@ public class CommunityAdminApi {
     private final PlayerLinkRepository links;
     private final Debouncer debouncer;
     private final SiteCache cache;
-    private final CommunitySettings community;
+    private final DiscordOutbox outbox;
 
-    public CommunityAdminApi(PollService polls, SignupService signups, SiteStatsRepository stats, PlayerLinkRepository links, Debouncer debouncer, SiteCache cache, CommunitySettings community) {
-        this.community = community;
+    public CommunityAdminApi(PollService polls, SignupService signups, SiteStatsRepository stats, PlayerLinkRepository links, Debouncer debouncer, SiteCache cache,
+                             DiscordOutbox outbox) {
+        this.outbox = outbox;
         this.polls = polls;
         this.signups = signups;
         this.stats = stats;
@@ -89,13 +92,12 @@ public class CommunityAdminApi {
         if (problem != null) throw new ApiError(400, problem);
 
         GuildMessageChannel channel = postableChannel(guild, body.getString("channelId", ""), GuildMessageChannel.class);
-        // on the hub the poll carries its end time and the hub closes it; on the bot's own tables the poll closer does
         java.time.Instant closesAt = hours == null ? null : java.time.Instant.now().plus(java.time.Duration.ofHours(hours));
-        long pollId = polls.createPoll(guild, channel, title, anonymous, multiple, options, actor.getIdLong(), closesAt);
-        if (hours != null && !polls.onHub()) community.scheduleClose(pollId, java.time.OffsetDateTime.now().plusHours(hours));
-        cache.invalidate("polls");
-        log.info("Dashboard: {} created a poll '{}' in #{}", actor.getId(), title, channel.getName());
-        return DataObject.empty().put("created", true);
+        // the post is a website-triggered Discord write: the outbox stores and posts it, and keeps no open poll if Discord refuses
+        DiscordJob job = outbox.enqueue(PollJobs.CREATE, guild.getIdLong(), actor.getIdLong(), null,
+                PollJobs.createPayload(channel.getIdLong(), title, anonymous, multiple, options, closesAt));
+        log.info("Dashboard: {} queued a poll '{}' in #{} (job {})", actor.getId(), title, channel.getName(), job.id());
+        return DataObject.empty().put("created", true).put("job", job.ticket());
     }
 
     DataObject endPoll(Guild guild, Member actor, long pollId) {

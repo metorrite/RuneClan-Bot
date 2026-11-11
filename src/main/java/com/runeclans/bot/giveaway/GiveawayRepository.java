@@ -155,6 +155,20 @@ public class GiveawayRepository {
         return list;
     }
 
+    /**
+     * Marks an open giveaway ended, once. Only the caller that gets {@code true} may draw and announce winners: the sweep, the
+     * dashboard's End now job and /giveaway end can all reach the same giveaway at its end time, and the losers must do nothing.
+     */
+    public boolean claimEnd(long id) {
+        try (Connection c = connectionSupplier.getConnection();
+             PreparedStatement s = c.prepareStatement("UPDATE younglings.giveaway SET status = 'ENDED' WHERE id = ? AND status = 'OPEN'")) {
+            s.setLong(1, id);
+            return s.executeUpdate() == 1;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to end the giveaway", e);
+        }
+    }
+
     public void finish(long id, List<Long> winners) {
         try (Connection c = connectionSupplier.getConnection();
              PreparedStatement s = c.prepareStatement("UPDATE younglings.giveaway SET status = 'ENDED', winners = ? WHERE id = ?")) {
