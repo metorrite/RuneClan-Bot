@@ -1,5 +1,6 @@
 package com.runeclans.bot.suggestion;
 
+import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.i18n.Text;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -52,6 +53,7 @@ public class SuggestionListener extends ListenerAdapter implements BotListener {
             log.debug("{} voted {} on suggestion {}", event.getUser().getId(), now, s.id());
         } catch (Exception e) {
             log.error("Unhandled exception in suggestion button '{}'", id, e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 }

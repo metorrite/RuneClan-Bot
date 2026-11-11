@@ -46,6 +46,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /**
  * Signup panels in co-host servers (T-221, design {@code docs/EVENTS-CROSS-SERVER.md} sections 3 and 5). When a co-host accepts it picks a panel
@@ -310,37 +311,69 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         }
         long origin = interaction.getGuild().getIdLong();
         long userId = interaction.getUser().getIdLong();
+        // acknowledge first: the checks below are several hub reads (each can retry), which can pass Discord's 3 s limit (B-101)
+        interaction.deferReply(true).queue(hook -> executor.execute(() -> {
+            try {
+                join(interaction, eventId, origin, userId);
+            } catch (RuntimeException e) {
+                log.info("Join on the co-host panel for event {} in server {} failed: {}", eventId, origin, e.getMessage());
+                answer(interaction, Containers.WARNING, TRY_AGAIN);
+            }
+        }), error -> log.info("Join on the co-host panel for event {} couldn't be acknowledged ({})", eventId, error.getClass().getSimpleName()));
+    }
+
+    /** What a player who can't be answered properly (the hub or Discord had a hiccup) is told. */
+    static final String TRY_AGAIN = "Couldn't reach RuneClans to sign you up. Try again in a moment.";
+
+    /** The Join checks and the join itself, after the press was acknowledged. Every path answers through the hook. */
+    private void join(ButtonInteractionEvent interaction, long eventId, long origin, long userId) {
         Event event = events.eventById(eventId).orElse(null);
         if (event == null) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.this_event_doesn_t_exist_any"));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.this_event_doesn_t_exist_any"));
             return;
         }
         UUID originClan = acceptedCohost(eventId, origin);
         if (originClan == null) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.this_server_doesn_t_co_host"));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.this_server_doesn_t_co_host"));
             return;
         }
         if (!open(event)) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.signups_for_have_closed", event.name()));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.signups_for_have_closed", event.name()));
             return;
         }
         Guild host = Shards.guild(interaction.getJDA(), event.guildId());
         if (host == null) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.the_host_server_can_t_be"));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.the_host_server_can_t_be"));
             return;
         }
-        interaction.deferReply(true).queue();
-        host.retrieveMemberById(userId).queue(member -> answer(interaction, joinNow(event, originClan, userId)), error -> {
+        host.retrieveMemberById(userId).queue(member -> executor.execute(() -> answerSafely(interaction, () -> joinNow(event, originClan, userId))), error -> {
             if (error instanceof ErrorResponseException r && (r.getErrorResponse() == ErrorResponse.UNKNOWN_MEMBER || r.getErrorResponse() == ErrorResponse.UNKNOWN_USER)) {
-                answer(interaction, joinLater(event, origin, userId, Instant.now()));
+                executor.execute(() -> answerSafely(interaction, () -> joinLater(event, origin, userId, Instant.now())));
             } else {
                 answer(interaction, "Couldn't check whether you're in the host's Discord. Try again in a moment.");
             }
         });
     }
 
+    /** Answers with {@code text}, or with {@link #TRY_AGAIN} when working it out throws (a hub or database hiccup). */
+    private void answerSafely(ButtonInteractionEvent interaction, Supplier<String> text) {
+        String answer;
+        try {
+            answer = text.get();
+        } catch (RuntimeException e) {
+            log.info("Join on the co-host panel failed: {}", e.getMessage());
+            answer(interaction, Containers.WARNING, TRY_AGAIN);
+            return;
+        }
+        answer(interaction, answer);
+    }
+
     private static void answer(ButtonInteractionEvent interaction, String text) {
-        interaction.getHook().sendMessageComponents(List.of(Containers.toast(Containers.INFO, text))).useComponentsV2(true).setEphemeral(true).queue();
+        answer(interaction, Containers.INFO, text);
+    }
+
+    private static void answer(ButtonInteractionEvent interaction, Color accent, String text) {
+        interaction.getHook().sendMessageComponents(List.of(Containers.toast(accent, text))).useComponentsV2(true).setEphemeral(true).queue(ok -> { }, e -> { });
     }
 
     /** The hub clan of the co-host server {@code origin}, when it accepted the invitation to co-host the event; null otherwise. */

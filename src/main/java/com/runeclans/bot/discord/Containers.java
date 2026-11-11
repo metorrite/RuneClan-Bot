@@ -121,6 +121,18 @@ public final class Containers {
         replyThenDelete(event, accent, Duration.ofSeconds(5), lines);
     }
 
+    /**
+     * Ephemeral answer that works whether or not {@code event} was deferred: a fresh interaction gets a reply, a deferred one has its "thinking..."
+     * message replaced. Handlers that defer first (because the work can pass Discord's 3 s limit) answer every path through this.
+     */
+    public static void respond(IReplyCallback event, Color accent, String... lines) {
+        if (!event.isAcknowledged()) {
+            replyEphemeral(event, accent, lines);
+            return;
+        }
+        event.getHook().editOriginalComponents(List.of(toast(accent, lines))).useComponentsV2(true).queue(ok -> {}, failure -> {});
+    }
+
     // --- Edit (button/modal only — nothing to edit from a fresh slash command) ---
 
     public static void edit(IMessageEditCallback event, Color accent, String... lines) {

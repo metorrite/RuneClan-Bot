@@ -34,6 +34,8 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.utils.FileUpload;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -50,6 +52,7 @@ import java.util.Locale;
  */
 @Command
 public class EventsCommand {
+    private static final Logger log = LoggerFactory.getLogger(EventsCommand.class);
     /** How many of a member's events {@code mine} lists. */
     static final int MINE_SHOWN = 10;
 
@@ -68,21 +71,28 @@ public class EventsCommand {
     public void onMine(GuildSlashEvent event) {
         long guildId = event.getGuild().getIdLong();
         long userId = event.getUser().getIdLong();
-        List<HubEvents.Mine> mine;
+        // up to ~20 hub reads (standings and prizes per event) come before the answer, which can pass Discord's 3 s limit: acknowledge first (B-90)
+        event.deferReply(true).queue();
         try {
-            mine = service.mine(guildId, userId, MINE_SHOWN);
-        } catch (EventProblem p) {
-            Containers.replyEphemeral(event, Containers.WARNING, p.getMessage());
-            return;
+            List<HubEvents.Mine> mine;
+            try {
+                mine = service.mine(guildId, userId, MINE_SHOWN);
+            } catch (EventProblem p) {
+                Containers.respond(event, Containers.WARNING, p.getMessage());
+                return;
+            }
+            if (mine.isEmpty()) {
+                Containers.respond(event, Containers.INFO, Text.of(event, "events.you_haven_t_joined_any_events"));
+                return;
+            }
+            List<String> lines = new ArrayList<>();
+            lines.add("### Your events");
+            for (HubEvents.Mine m : mine) lines.add(mineLine(guildId, userId, m));
+            Containers.respond(event, Containers.INFO, lines.toArray(String[]::new));
+        } catch (RuntimeException e) {
+            log.warn("/events mine failed in server {}", guildId, e);
+            Containers.replyError(event);
         }
-        if (mine.isEmpty()) {
-            Containers.replyEphemeral(event, Containers.INFO, Text.of(event, "events.you_haven_t_joined_any_events"));
-            return;
-        }
-        List<String> lines = new ArrayList<>();
-        lines.add("### Your events");
-        for (HubEvents.Mine m : mine) lines.add(mineLine(guildId, userId, m));
-        Containers.replyEphemeral(event, Containers.INFO, lines.toArray(String[]::new));
     }
 
     /** One line of {@code /events mine}: the event, and the member's place, points, buy-in, verification and prizes in it, as far as the hub says. */
@@ -190,6 +200,8 @@ public class EventsCommand {
     public void onBoard(GuildSlashEvent event, @SlashOption(name = "event", description = "The event's number (your latest running bingo by default)") @Nullable Long eventId) {
         long guildId = event.getGuild().getIdLong();
         long userId = event.getUser().getIdLong();
+        // finding the latest bingo reads each running event in full from the hub before anything is said: acknowledge first (B-90)
+        event.deferReply(true).queue();
         Event target;
         try {
             // the member's list is compact (no settings), so each running candidate is read in full before its game is checked
@@ -197,23 +209,26 @@ public class EventsCommand {
                     .filter(e -> e.status() == Status.RUNNING || e.status() == Status.SCORING).map(e -> service.full(e).orElse(null))
                     .filter(e -> e != null && ClanVsClan.plays(e, BingoTemplate.KEY)).findFirst().orElse(null);
         } catch (EventProblem p) {
-            Containers.replyEphemeral(event, Containers.WARNING, p.getMessage());
+            Containers.respond(event, Containers.WARNING, p.getMessage());
+            return;
+        } catch (RuntimeException e) {
+            log.warn("/events board failed in server {}", guildId, e);
+            Containers.replyError(event);
             return;
         }
         if (target == null) {
-            Containers.replyEphemeral(event, Containers.INFO, Text.of(event, "events.you_aren_t_in_a_running"));
+            Containers.respond(event, Containers.INFO, Text.of(event, "events.you_aren_t_in_a_running"));
             return;
         }
         if (!ClanVsClan.plays(target, BingoTemplate.KEY)) {
-            Containers.replyEphemeral(event, Containers.INFO, Text.of(event, "events.that_event_doesn_t_have_a"));
+            Containers.respond(event, Containers.INFO, Text.of(event, "events.that_event_doesn_t_have_a"));
             return;
         }
-        if (service.participant(target.id(), userId).isEmpty()) {
-            Containers.replyEphemeral(event, Containers.INFO, Text.of(event, "events.you_aren_t_in", target.name()));
-            return;
-        }
-        event.deferReply(true).queue();
         try {
+            if (service.participant(target.id(), userId).isEmpty()) {
+                Containers.respond(event, Containers.INFO, Text.of(event, "events.you_aren_t_in", target.name()));
+                return;
+            }
             // the hub draws the member's own board (their tiles done so far)
             byte[] png = service.boardPng(guildId, target.id(), userId, true);
             event.getHook().sendMessage("**" + target.name() + "** · your board\n-# Submit proof with /events submit event:" + target.id())

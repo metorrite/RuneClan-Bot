@@ -1,5 +1,6 @@
 package com.runeclans.bot.eventannounce;
 
+import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.BotListener;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.events.guild.scheduledevent.ScheduledEventCreateEvent;
@@ -49,6 +50,7 @@ public class EventAnnounceListener extends ListenerAdapter implements BotListene
             event.reply(answer).setEphemeral(true).queue();
         } catch (Exception e) {
             log.error("Event announcer button '{}' failed", id, e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 }

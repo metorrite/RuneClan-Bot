@@ -1,5 +1,6 @@
 package com.runeclans.bot.tempvoice;
 
+import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.tempvoice.TempVoiceRules.Action;
@@ -92,6 +93,7 @@ public class TempVoiceListener extends ListenerAdapter implements BotListener {
             }
         } catch (Exception e) {
             log.error("Temporary voice button '{}' failed", event.getComponentId(), e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 
@@ -150,6 +152,7 @@ public class TempVoiceListener extends ListenerAdapter implements BotListener {
             }
         } catch (Exception e) {
             log.error("Temporary voice menu '{}' failed", event.getComponentId(), e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 
@@ -188,6 +191,7 @@ public class TempVoiceListener extends ListenerAdapter implements BotListener {
             }
         } catch (Exception e) {
             log.error("Temporary voice box '{}' failed", event.getModalId(), e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 
