@@ -55,6 +55,7 @@ class PollJobsTest {
         community = mock(CommunitySettings.class);
         cache = mock(SiteCache.class);
         repository = mock(DiscordJobRepository.class);
+        when(repository.savePayload(anyLong(), any())).thenReturn(true);
         jobs = new PollJobs(polls, community, cache, repository);
     }
 
@@ -87,6 +88,11 @@ class PollJobsTest {
             when(action.complete(false)).thenReturn(message);
             return send.apply(action);
         });
+    }
+
+    /** An earlier try stored poll 42 and it is still open, not yet posted. */
+    private void keptPollIsOpen() {
+        when(polls.getSessionById(42L)).thenReturn(new com.runeclans.bot.commands.poll.PollSession(42L, GUILD, CHANNEL, null, "Raid?", false, false, "ACTIVE", ACTOR));
     }
 
     private void neverStored() {
@@ -153,6 +159,7 @@ class PollJobsTest {
     @Test
     void aTryAfterAWaitPostsThePollTheFirstTryStored() {
         GuildMessageChannel channel = postable();
+        keptPollIsOpen();
         Message message = mock(Message.class);
         when(message.getId()).thenReturn("79");
         postsAs(message);
@@ -168,6 +175,7 @@ class PollJobsTest {
     @Test
     void theLastAllowedWaitClosesThePoll() {
         GuildMessageChannel channel = postable();
+        keptPollIsOpen();
         when(polls.postStored(anyLong(), any(), any(), anyBoolean())).thenThrow(new DiscordJobs.RetryLater(java.time.Duration.ofSeconds(3), "wait"));
 
         assertThrows(DiscordJobs.RetryLater.class, () -> jobs.run(jda, job(payload(null).put(PollJobs.POLL_ID, "42"), DiscordJobs.MAX_RATE_LIMIT_WAITS)));
@@ -237,5 +245,40 @@ class PollJobsTest {
         jobs.run(jda, job(payload(Instant.parse("2026-11-12T18:00:00Z"))));
 
         verify(community, never()).scheduleClose(anyLong(), any());
+    }
+
+    @Test
+    void aKeptPollIsClosedWhenTheServerIsStillUnavailableOnTheLastWait() {
+        when(jda.getGuildById(GUILD)).thenReturn(null);
+        when(jda.isUnavailable(GUILD)).thenReturn(true);
+        assertThrows(DiscordJobs.RetryLater.class,
+                () -> jobs.run(jda, job(payload(null).put(PollJobs.POLL_ID, "42"), DiscordJobs.MAX_RATE_LIMIT_WAITS)));
+        verify(polls).discard(42L);
+    }
+
+    @Test
+    void aStoredPollIsDroppedWhenTheJobStoppedRunningBeforeNamingIt() {
+        postable();
+        when(polls.storePoll(any(), any(), anyString(), anyBoolean(), anyBoolean(), any(), anyLong(), any())).thenReturn(42L);
+        when(repository.savePayload(anyLong(), any())).thenReturn(false);
+
+        assertThrows(IllegalStateException.class, () -> jobs.run(jda, job(payload(null))));
+
+        verify(polls).discard(42L);
+        verify(polls, never()).postStored(anyLong(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void aKeptPollThatWasClosedIsReplacedByAFreshOne() {
+        GuildMessageChannel channel = postable();
+        Message message = mock(Message.class);
+        when(message.getId()).thenReturn("80");
+        when(polls.storePoll(any(), any(), anyString(), anyBoolean(), anyBoolean(), any(), anyLong(), any())).thenReturn(43L);
+        postsAs(message);
+
+        DataObject result = jobs.run(jda, job(payload(null).put(PollJobs.POLL_ID, "42")));
+
+        assertEquals("43", result.getString("pollId"), "a Retry after a refusal makes a new poll instead of refusing every time");
+        verify(polls).postStored(eq(43L), eq(channel), any(), eq(true));
     }
 }

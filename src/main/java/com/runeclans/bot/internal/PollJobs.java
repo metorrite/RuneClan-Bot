@@ -85,17 +85,25 @@ public class PollJobs implements DiscordJobHandler {
         for (int i = 0; i < labels.length(); i++) options.add(labels.getString(i));
         Instant closesAt = p.isNull("closesAt") ? null : Instant.parse(p.getString("closesAt"));
 
+        // a kept poll that is closed (refused on an earlier run, then sent again with Retry) is not posted: this run starts afresh
+        if (kept != null && polls.getSessionById(Long.parseLong(kept)) == null) kept = null;
         long pollId;
         if (kept != null) {
             pollId = Long.parseLong(kept);
         } else {
             pollId = polls.storePoll(guild, channel, p.getString("title"), p.getBoolean("anonymous", false), p.getBoolean("multiple", false),
                     options, job.actorId(), closesAt);
+            boolean saved;
             try {
-                jobs.savePayload(job.id(), DataObject.fromJson(p.toJson()).put(POLL_ID, Long.toString(pollId)));
+                saved = jobs.savePayload(job.id(), DataObject.fromJson(p.toJson()).put(POLL_ID, Long.toString(pollId)));
             } catch (RuntimeException e) {
                 polls.discard(pollId); // nothing was posted; a later try would not know this poll
                 throw e;
+            }
+            if (!saved) {
+                // the job is no longer running here (its claim expired): another try would store a second poll, so this one is dropped
+                polls.discard(pollId);
+                throw new IllegalStateException("Poll job " + job.id() + " stopped running before its poll could be named");
             }
         }
         Message message = polls.postStored(pollId, channel, DiscordJobs::send, !DiscordJobs.lastWait(job));
