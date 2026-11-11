@@ -172,7 +172,7 @@ class ServerSetupAdminApiTest {
         var thrown = assertThrows(TicketAdminApi.ApiError.class, () ->
                 api.save(guild, actor, DataObject.fromJson("{\"onboardingRoleId\": \"500\"}")));
 
-        assertTrue(thrown.problems.getFirst().contains("Developer rights"), thrown.problems.getFirst());
+        assertTrue(thrown.problems.getFirst().contains("Developer"), thrown.problems.getFirst());
         verify(settings, never()).updateOnboardingRole(anyLong(), any());
     }
 

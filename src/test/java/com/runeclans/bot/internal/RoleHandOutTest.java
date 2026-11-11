@@ -81,7 +81,7 @@ class RoleHandOutTest {
         adminGroup(50);
 
         assertFalse(MemberApi.safeToAssign(guild, notify));
-        assertTrue(MemberApi.handOutRefusal(guild, notify).contains("Admin rights"));
+        assertTrue(MemberApi.handOutRefusal(guild, notify).contains("Admin"));
     }
 
     @Test
@@ -112,7 +112,7 @@ class RoleHandOutTest {
         var thrown = assertThrows(ServerProfile.Refused.class, () -> ServerProfile.setColorRole(outbox, guild, member, DataObject.empty().put("color", key)));
 
         assertEquals(403, thrown.status);
-        assertTrue(thrown.getMessage().contains("Admin rights"));
+        assertTrue(thrown.getMessage().contains("Admin"));
         verify(outbox, never()).enqueue(anyString(), anyLong(), anyLong(), anyString(), any());
     }
 

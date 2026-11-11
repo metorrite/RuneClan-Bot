@@ -192,6 +192,22 @@ class RoleSyncBackfillTest {
     }
 
     @Test
+    void aMemberRoleTheBotWontHandOutStopsTheFixBeforeAnyoneChanges() {
+        when(member.getPermissions()).thenReturn(java.util.EnumSet.of(net.dv8tion.jda.api.Permission.ADMINISTRATOR));
+        when(links.getAllLinks(GUILD)).thenReturn(List.of(link(5, "bob")));
+        when(clan.isActiveMember(GUILD, "bob")).thenReturn(true);
+        members(discord(5, "Bob", guest));
+
+        Plan plan = backfill.plan(guild);
+
+        assertNotNull(plan.problem());
+        assertTrue(plan.problem().contains("powerful permissions"), plan.problem());
+        assertTrue(plan.entries().isEmpty());
+        assertNotNull(backfill.start(guild, Set.of(5L), 1), "nothing to start");
+        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+    }
+
+    @Test
     void withoutAMemberRoleThereIsNothingToPlan() {
         when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Clan", null, null, null, null, GUEST, UNVERIFIED, null, true, null, null, null));
 

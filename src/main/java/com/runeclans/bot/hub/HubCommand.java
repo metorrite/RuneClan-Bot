@@ -51,7 +51,7 @@ public enum HubCommand {
             "Admins only", true, CommandTag.UTILITY, CommandTag.ADMIN),
     HIGHLIGHT("highlight", "Highlights", "highlight", "Members pick words and get a direct message when someone says one in a channel they can see. Off until the Highlights page switches it on.",
             "Everyone", false, CommandTag.UTILITY, CommandTag.MEMBER_USE),
-    ROLE("role", "Role toolkit", "role", "Give or take a role for a member. Admins can use any role the bot can hand out; others only the roles their permission group was allowed on the Role toolkit page.",
+    ROLE("role", "Role toolkit", "role", "Give or take a role for a member. Admins can use any role the bot can hand out (never one that gives bot staff rights); others only the roles their permission group was allowed on the Role toolkit page.",
             "Admins, and groups an admin allowed (set on the Role toolkit page)", false, CommandTag.ADMIN, CommandTag.CLAN_MANAGEMENT),
     ROLEPERSIST("rolepersist", "Kept roles", "rolepersist", "Mark a role on a member to be given back whenever they rejoin, and see or remove what is kept. The server-wide sticky list is on the Kept roles page.",
             "Admins only", true, CommandTag.ADMIN, CommandTag.CLAN_MANAGEMENT),

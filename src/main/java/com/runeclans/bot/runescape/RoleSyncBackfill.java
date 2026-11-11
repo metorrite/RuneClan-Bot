@@ -99,6 +99,13 @@ public class RoleSyncBackfill {
         long guildId = guild.getIdLong();
         GuildSettings s = settings.getEffective(guildId);
         if (s.verifiedClanRoleId() == null) return new Plan(List.of(), 0, 0, "The Member role is not set up (Server setup > Verification), so there is nothing to fix.");
+        // B-55: a role the bot won't hand out stops the fix before anyone loses a role it would have swapped
+        for (Long id : new Long[]{s.verifiedClanRoleId(), s.verifiedNonClanRoleId()}) {
+            Role role = id == null ? null : guild.getRoleById(id);
+            if (role != null && !MemberApi.safeToAssign(guild, role)) {
+                return new Plan(List.of(), 0, 0, MemberApi.handOutRefusal(guild, role) + " Choose another role in Server setup first.");
+            }
+        }
 
         Map<Long, List<PlayerLink>> byUser = new LinkedHashMap<>();
         for (PlayerLink link : links.getAllLinks(guildId)) byUser.computeIfAbsent(link.discordUserId(), k -> new ArrayList<>()).add(link);
@@ -193,9 +200,14 @@ public class RoleSyncBackfill {
                 if (!mine) break;
                 try {
                     Member member = guild.retrieveMemberById(entry.userId()).complete();
-                    List<Role> add = entry.add().stream().map(guild::getRoleById).filter(r -> r != null && MemberApi.safeToAssign(guild, r)).toList();
+                    List<Role> add = entry.add().stream().map(guild::getRoleById).filter(r -> r != null).toList();
                     List<Role> remove = entry.remove().stream().map(guild::getRoleById).filter(r -> r != null).toList();
-                    if (guild.getSelfMember().canInteract(member)) {
+                    Role refused = add.stream().filter(r -> !MemberApi.safeToAssign(guild, r)).findFirst().orElse(null);
+                    if (refused != null) {
+                        // the role changed since the plan was made: change nothing for this member, so they never lose a role for nothing
+                        log.warn("Role fix: not changing user {}: {}", entry.userId(), MemberApi.handOutRefusal(guild, refused));
+                        failed++;
+                    } else if (guild.getSelfMember().canInteract(member)) {
                         guild.modifyMemberRoles(member, add, remove).reason("Clan role fix by " + actorId).complete();
                         done++;
                     } else {

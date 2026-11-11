@@ -93,7 +93,12 @@ public class TeamformingService {
     }
 
     /** What "Update Roles" actually changed, as resolved {@link Role}s for mention-friendly replies. */
-    public record BatchResult(List<Role> added, List<Role> removed) {
+    /** What changed, and the roles asked for that the bot won't hand out ({@code MemberApi.safeToAssign}), so the member is told. */
+    public record BatchResult(List<Role> added, List<Role> removed, List<Role> refused) {
+        public BatchResult(List<Role> added, List<Role> removed) {
+            this(added, removed, List.of());
+        }
+
         public boolean isEmpty() {
             return added.isEmpty() && removed.isEmpty();
         }
@@ -297,14 +302,16 @@ public class TeamformingService {
         }
 
         // an existing role with the option's name is reused, so it must pass the shared hand-out check (B-03)
-        toAdd.removeIf(role -> !MemberApi.safeToAssign(guild, role));
-        toRemove.removeIf(role -> !MemberApi.safeToAssign(guild, role));
+        // (taking a role away grants nothing, so removals are left alone)
+        List<Role> refused = toAdd.stream().filter(role -> !MemberApi.safeToAssign(guild, role)).toList();
+        refused.forEach(role -> log.warn("Teamforming: not giving {} in guild {}: {}", role.getName(), guild.getIdLong(), MemberApi.handOutRefusal(guild, role)));
+        toAdd.removeAll(refused);
         if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
             guild.modifyMemberRoles(member, toAdd, toRemove).complete();
         }
 
         pendingByUserId.remove(member.getIdLong());
-        return new BatchResult(toAdd, toRemove);
+        return new BatchResult(toAdd, toRemove, refused);
     }
 
     // --- Role management ---

@@ -143,9 +143,7 @@ public class MemberApi {
         EnumSet<Permission> dangerous = dangerousIn(role.getPermissions());
         if (!dangerous.isEmpty()) return "@" + role.getName() + " carries powerful permissions (" + dangerous.iterator().next().getName()
                 + (dangerous.size() > 1 ? " and more" : "") + "), so the bot won't hand it out.";
-        String staff = RoleSafety.staffGroupGiven(guild, role);
-        if (staff != null) return RoleSafety.refusal(role.getName(), staff);
-        return null;
+        return RoleSafety.refusal(guild, role);
     }
 
     /** The home site's {@code /internal/me/<route>}. */
