@@ -15,7 +15,9 @@ public class SlashPing {
 
     // The one place the /dev group is declared as guild-scoped and test-only: @Test means it is only ever pushed to the
     // test guild(s), so none of /dev exists on the live bot. Every subcommand also refuses to run if it somehow did.
-    @TopLevelSlashCommandData(scope = CommandScope.GUILD, description = "Developer tools for testing the bot (never on the live bot)")
+    // The dev bot's test guild is a real community server, so the bot also lets only its owner run any of it (DevCommandFilter),
+    // and defaultLocked hides /dev from members without Administrator in Discord's command list as a first layer.
+    @TopLevelSlashCommandData(scope = CommandScope.GUILD, defaultLocked = true, description = "Developer tools for testing the bot (never on the live bot)")
     @Test({})
     @JDASlashCommand(name = "dev", subcommand = "ping", description = "Replies with pong")
     public void onPing(GuildSlashEvent event) {

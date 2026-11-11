@@ -3,6 +3,7 @@ package com.runeclans.bot.commands;
 import com.runeclans.bot.announcement.PostMarkup;
 import com.runeclans.bot.announcement.PostTextConverter;
 import com.runeclans.bot.config.BotConfig;
+import com.runeclans.bot.devtools.DevCommandFilter;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.permission.AdminRoleFilter;
@@ -32,10 +33,12 @@ public class DevEmbedListener extends ListenerAdapter {
 
     private final BotConfig botConfig;
     private final AdminRoleFilter adminRoleFilter;
+    private final DevCommandFilter devAccess;
 
-    public DevEmbedListener(BotConfig botConfig, AdminRoleFilter adminRoleFilter) {
+    public DevEmbedListener(BotConfig botConfig, AdminRoleFilter adminRoleFilter, DevCommandFilter devAccess) {
         this.botConfig = botConfig;
         this.adminRoleFilter = adminRoleFilter;
+        this.devAccess = devAccess;
     }
 
     static Modal buildModal() {
@@ -61,6 +64,10 @@ public class DevEmbedListener extends ListenerAdapter {
             Member member = event.getMember();
             if (guild == null || member == null || botConfig.getLiveEnvironment()) {
                 Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "commands.this_command_is_dev_only"));
+                return;
+            }
+            if (!devAccess.isAllowed(event.getJDA(), member.getIdLong())) {
+                Containers.replyEphemeral(event, Containers.WARNING, DevCommandFilter.refusal());
                 return;
             }
             if (!adminRoleFilter.isAuthorized(guild, member)) {
