@@ -158,4 +158,11 @@ class VerificationRoleSyncWritesTest {
         verify(guild, never()).addRoleToMember(any(Member.class), org.mockito.ArgumentMatchers.isNull());
         verify(guild).removeRoleFromMember(member, guestRole);
     }
+
+    @Test
+    void whenEveryRoleToGiveWasDeletedTheOldRoleIsKept() {
+        service.apply(guild, USER, "test", (held, exists, canGive) -> new VerificationRoleSyncService.RolePlan(Set.of(99L), Set.of(GUEST_ROLE), Set.of()));
+
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
+    }
 }
