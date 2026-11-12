@@ -26,6 +26,7 @@ import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -81,7 +82,7 @@ class EventAnnounceOrphanRoleTest {
         verify(delete).queue(deleted.capture(), any());
         verify(repository, never()).release(EVENT); // only once Discord confirms the role is gone
         deleted.getValue().accept(null);
-        verify(repository).release(EVENT);
+        verify(repository, timeout(2000)).release(EVENT); // on the announcer's own worker, not JDA's callback thread
     }
 
     @Test

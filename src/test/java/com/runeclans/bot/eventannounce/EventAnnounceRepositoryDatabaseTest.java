@@ -48,6 +48,7 @@ class EventAnnounceRepositoryDatabaseTest {
     void aRoleSavedBeforeThePostIsPickedUpByTheSweep() {
         assertTrue(repository.claim(EVENT, GUILD));
         repository.setRole(EVENT, 77L);
+        repository.setState(EVENT, EventAnnounceRules.State.COMPLETED, false); // a finished event: only the saved role keeps it on the sweep's list
         assertEquals(77L, repository.tracked(EVENT).orElseThrow().roleId());
         assertTrue(repository.open().stream().anyMatch(t -> t.eventId() == EVENT), "the sweep sees it, so the role is deleted when the event ends");
     }

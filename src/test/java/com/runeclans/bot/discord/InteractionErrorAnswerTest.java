@@ -2,6 +2,7 @@ package com.runeclans.bot.discord;
 
 import com.runeclans.bot.eventannounce.EventAnnounceListener;
 import com.runeclans.bot.eventannounce.EventAnnounceService;
+import com.runeclans.bot.giveaway.Giveaway;
 import com.runeclans.bot.giveaway.GiveawayListener;
 import com.runeclans.bot.giveaway.GiveawayRepository;
 import com.runeclans.bot.giveaway.GiveawayService;
@@ -25,11 +26,20 @@ import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionE
 import net.dv8tion.jda.api.interactions.callbacks.IReplyCallback;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.RETURNS_SELF;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -121,6 +131,48 @@ class InteractionErrorAnswerTest {
     }
 
     @Test
+    void aGiveawayEntryStaysAnsweredWhenOnlyTheMessageRefreshFails() {
+        GiveawayRepository repository = mock(GiveawayRepository.class);
+        GiveawayService service = mock(GiveawayService.class);
+        Giveaway open = new Giveaway(5, 1, 3, 4L, "Party hat", 9, 1, Instant.now().plusSeconds(3_600), null, Giveaway.Status.OPEN, List.of(), null, false, false);
+        when(repository.byId(5)).thenReturn(Optional.of(open));
+        when(repository.toggleEntry(5, 1, 0)).thenReturn(true);
+        doThrow(DB_DOWN).when(service).refresh(any(), any());
+        ButtonInteractionEvent event = button("gw:5");
+        when(event.isAcknowledged()).thenReturn(true); // the entry's answer has gone out
+
+        new GiveawayListener(repository, service).onButtonInteraction(event);
+
+        verify(event).reply(anyString());
+        verify(event, never()).replyComponents(anyList());
+        verify(event.getHook(), never()).editOriginalComponents(anyList());
+    }
+
+    @Test
+    void theErrorAnswerOfADeferredInteractionUsesComponentsV2() {
+        ButtonInteractionEvent event = button("x");
+        when(event.isAcknowledged()).thenReturn(true);
+        InteractionHook hook = mock(InteractionHook.class);
+        @SuppressWarnings("unchecked") WebhookMessageEditAction<Message> edit = mock(WebhookMessageEditAction.class, RETURNS_SELF);
+        when(hook.editOriginalComponents(anyList())).thenReturn(edit);
+        when(event.getHook()).thenReturn(hook);
+        Containers.replyError(event);
+        verify(edit).useComponentsV2(true);
+        verify(edit).queue(any(), any());
+    }
+
+    @Test
+    void aLongAnswerIsCutToDiscordsLimit() {
+        String line = "x".repeat(450);
+        String[] lines = new String[12];
+        java.util.Arrays.fill(lines, line);
+        String[] fitted = Containers.fit(lines);
+        assertTrue(java.util.Arrays.stream(fitted).mapToInt(String::length).sum() <= Containers.MAX_TEXT);
+        assertEquals("-# …and more", fitted[fitted.length - 1]);
+        assertArrayEquals(new String[]{"a", "b"}, Containers.fit("a", "b"), "short answers are left alone");
+    }
+
+    @Test
     void otherComponentsAreLeftToTheirOwnListener() {
         GiveawayRepository repository = mock(GiveawayRepository.class);
         ButtonInteractionEvent event = button("poll:1");
@@ -146,6 +198,7 @@ class InteractionErrorAnswerTest {
         when(event.getHook()).thenReturn(hook);
         Containers.respond(event, Containers.INFO, "hi");
         verify(hook).editOriginalComponents(anyList());
+        verify(edit).useComponentsV2(true);
         verify(edit).queue(any(), any());
         verify(event, never()).replyComponents(anyList());
     }

@@ -219,7 +219,7 @@ has more than one replica).
 | `request-cards` | `hubsites/RequestCards` | gateway (answers card presses); cards and roles go through the outbox (`hubsites/RequestCardJobs`) |
 | `discord-jobs`, `discord-job-claims` | `discord/jobs/DiscordOutbox` | gateway (own shards), see M3 and M4 (claims per process, done) |
 | `ephemeral-lifecycle` | `discord/EphemeralLifecycle` | gateway (the process that answered) |
-| `event-board-panels`, `cohost-panels`, `event-signups` | `events/...` | gateway (own shards) |
+| `event-board-panels`, `cohost-panels`, `cohost-join`, `event-signups` | `events/...` | gateway (own shards) |
 | `hub-event-reminders` | `hubevents/HubEventReminders` | gateway (own shards): turns the hub's `clan_event.reminder_due` feed entry into a post in the event's channel or DMs to its players (T-934) |
 | `event-announcer-sweep` | `eventannounce/EventAnnounceService` | gateway (own shards) |
 | `reminders` | `reminder/ReminderScheduler` | gateway (own shards) |
