@@ -117,6 +117,28 @@ public class EventAnnounceRepository {
         }
     }
 
+    /** Records the event's role as soon as it is made, so it is deleted when the event ends even if the post never goes out (B-102). */
+    public void setRole(long eventId, long roleId) {
+        try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement("UPDATE younglings.eventannounce_event SET role_id = ? WHERE event_id = ?")) {
+            s.setLong(1, roleId);
+            s.setLong(2, eventId);
+            s.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to record the event's role", e);
+        }
+    }
+
+    /** Gives back the claim on an event whose announcement was never posted (no message saved), so nothing is left tracked for it. */
+    public void release(long eventId) {
+        try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(
+                "DELETE FROM younglings.eventannounce_event WHERE event_id = ? AND message_id IS NULL")) {
+            s.setLong(1, eventId);
+            s.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to release the announced event", e);
+        }
+    }
+
     public void setState(long eventId, State state, boolean startAnnounced) {
         try (Connection c = connectionSupplier.getConnection(); PreparedStatement s = c.prepareStatement(
                 "UPDATE younglings.eventannounce_event SET state = ?, start_announced = ? WHERE event_id = ?")) {

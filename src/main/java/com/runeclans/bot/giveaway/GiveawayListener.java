@@ -1,5 +1,6 @@
 package com.runeclans.bot.giveaway;
 
+import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.i18n.Text;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -92,9 +93,14 @@ public class GiveawayListener extends ListenerAdapter implements BotListener {
             }
             boolean in = repository.toggleEntry(g.id(), g.guildId(), member.getIdLong());
             event.reply(in ? Text.of(event, "giveaway.you_re_in_press_the_button") : Text.of(event, "giveaway.you_ve_left_the_giveaway")).setEphemeral(true).queue();
-            service.refresh(guild, g);
+            try {
+                service.refresh(guild, g); // the entry count on the message; the member already has their answer
+            } catch (RuntimeException e) {
+                log.warn("Couldn't refresh giveaway {} after an entry", g.id(), e);
+            }
         } catch (Exception e) {
             log.error("Unhandled exception in giveaway button '{}'", id, e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.runeclans.bot.rolepanel;
 
+import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.rolepanel.RolePanel.RoleButton;
@@ -64,6 +65,7 @@ public class RolePanelListener extends ListenerAdapter implements BotListener {
             apply(event, guild, member, found.get(), change);
         } catch (Exception e) {
             log.error("Unhandled exception in role panel button '{}'", id, e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 
@@ -91,6 +93,7 @@ public class RolePanelListener extends ListenerAdapter implements BotListener {
             apply(event, guild, member, panel, change);
         } catch (Exception e) {
             log.error("Unhandled exception in role panel menu '{}'", id, e);
+            Containers.replyError(event); // always answer, or Discord shows "This interaction failed" (B-104)
         }
     }
 

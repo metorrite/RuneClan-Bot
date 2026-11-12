@@ -46,6 +46,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /**
  * Signup panels in co-host servers (T-221, design {@code docs/EVENTS-CROSS-SERVER.md} sections 3 and 5). When a co-host accepts it picks a panel
@@ -82,6 +83,8 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
     private final JoinLinks joinLinks;
     private final ClanProfileRepository profiles;
     private final ScheduledExecutorService executor = BotScheduler.lane("cohost-panels");
+    /** Join presses: their own lane, so a press never queues behind panel redraws and stage work. */
+    private final ScheduledExecutorService joinLane = BotScheduler.lane("cohost-join");
     private final Map<Long, ScheduledFuture<?>> redraws = new ConcurrentHashMap<>();
     private volatile JDA jda;
 
@@ -310,63 +313,118 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
         }
         long origin = interaction.getGuild().getIdLong();
         long userId = interaction.getUser().getIdLong();
+        // acknowledge first: the checks below are several hub reads (each can retry), which can pass Discord's 3 s limit (B-101). They run on their own
+        // lane, so a press doesn't wait behind panel redraws or other events' stage work.
+        interaction.deferReply(true).queue(hook -> joinLane.execute(() -> {
+            try {
+                join(interaction, eventId, origin, userId);
+            } catch (RuntimeException e) {
+                log.warn("Join on the co-host panel for event {} in server {} failed", eventId, origin, e);
+                answer(interaction, Containers.WARNING, TRY_AGAIN);
+            }
+        }), error -> log.info("Join on the co-host panel for event {} couldn't be acknowledged ({})", eventId, error.getClass().getSimpleName()));
+    }
+
+    /** What a player who can't be answered properly (the hub or Discord had a hiccup before they were signed up) is told. */
+    static final String TRY_AGAIN = "Couldn't reach RuneClans to sign you up. Try again in a moment.";
+
+    /** The Join checks and the join itself, after the press was acknowledged. Every path answers through the hook. */
+    private void join(ButtonInteractionEvent interaction, long eventId, long origin, long userId) {
         Event event = events.eventById(eventId).orElse(null);
         if (event == null) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.this_event_doesn_t_exist_any"));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.this_event_doesn_t_exist_any"));
             return;
         }
-        UUID originClan = acceptedCohost(eventId, origin);
+        UUID originClan = acceptedCohost(eventId, origin); // a hub hiccup throws here, so the player is told to try again, not that the server doesn't co-host
         if (originClan == null) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.this_server_doesn_t_co_host"));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.this_server_doesn_t_co_host"));
             return;
         }
         if (!open(event)) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.signups_for_have_closed", event.name()));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.signups_for_have_closed", event.name()));
             return;
         }
         Guild host = Shards.guild(interaction.getJDA(), event.guildId());
         if (host == null) {
-            Containers.replyEphemeral(interaction, Containers.WARNING, Text.of(interaction, "events.the_host_server_can_t_be"));
+            answer(interaction, Containers.WARNING, Text.of(interaction, "events.the_host_server_can_t_be"));
             return;
         }
-        interaction.deferReply(true).queue();
-        host.retrieveMemberById(userId).queue(member -> answer(interaction, joinNow(event, originClan, userId)), error -> {
+        host.retrieveMemberById(userId).queue(member -> joinLane.execute(() -> answerSafely(interaction, () -> joinNow(event, originClan, userId))), error -> {
             if (error instanceof ErrorResponseException r && (r.getErrorResponse() == ErrorResponse.UNKNOWN_MEMBER || r.getErrorResponse() == ErrorResponse.UNKNOWN_USER)) {
-                answer(interaction, joinLater(event, origin, userId, Instant.now()));
+                joinLane.execute(() -> answerSafely(interaction, () -> joinLater(event, origin, userId, Instant.now())));
             } else {
                 answer(interaction, "Couldn't check whether you're in the host's Discord. Try again in a moment.");
             }
         });
     }
 
-    private static void answer(ButtonInteractionEvent interaction, String text) {
-        interaction.getHook().sendMessageComponents(List.of(Containers.toast(Containers.INFO, text))).useComponentsV2(true).setEphemeral(true).queue();
+    /** Answers with {@code text}, or with {@link #TRY_AGAIN} when working it out throws (a hub or database hiccup before anything was saved). */
+    private void answerSafely(ButtonInteractionEvent interaction, Supplier<String> text) {
+        String answer;
+        try {
+            answer = text.get();
+        } catch (RuntimeException e) {
+            log.warn("Join on the co-host panel failed", e);
+            answer(interaction, Containers.WARNING, TRY_AGAIN);
+            return;
+        }
+        answer(interaction, answer);
     }
 
-    /** The hub clan of the co-host server {@code origin}, when it accepted the invitation to co-host the event; null otherwise. */
+    private static void answer(ButtonInteractionEvent interaction, String text) {
+        answer(interaction, Containers.INFO, text);
+    }
+
+    private static void answer(ButtonInteractionEvent interaction, Color accent, String text) {
+        interaction.getHook().sendMessageComponents(List.of(Containers.toast(accent, text))).useComponentsV2(true).setEphemeral(true)
+                .queue(ok -> { }, e -> log.warn("Couldn't answer a Join on a co-host panel: {}", e.getMessage()));
+    }
+
+    /** The hub clan of the co-host server {@code origin}, when it accepted the invitation to co-host the event; null otherwise. Throws when the hub can't say. */
     UUID acceptedCohost(long eventId, long origin) {
+        UUID clan = events.clanOf(origin).orElse(null);
+        if (clan == null) return null;
+        return events.cohosts(eventId).stream().filter(c -> c.clanId().equals(clan) && c.status().equals(EventCohostRepository.Status.ACCEPTED.name()))
+                .findFirst().map(HubEvents.Cohost::clanId).orElse(null);
+    }
+
+    /** {@link #acceptedCohost}, with a hub hiccup read as "not a co-host" (for pending joins, which are dropped either way). */
+    private UUID acceptedCohostOrNull(long eventId, long origin) {
         try {
-            UUID clan = events.clanOf(origin).orElse(null);
-            if (clan == null) return null;
-            return events.cohosts(eventId).stream().filter(c -> c.clanId().equals(clan) && c.status().equals(EventCohostRepository.Status.ACCEPTED.name()))
-                    .findFirst().map(HubEvents.Cohost::clanId).orElse(null);
+            return acceptedCohost(eventId, origin);
         } catch (RuntimeException e) {
             log.info("Couldn't check whether server {} co-hosts event {}: {}", origin, eventId, e.getMessage());
             return null;
         }
     }
 
-    /** They are in the host's Discord: join with the co-host's clan as where they came through (the hub counts them against its seats). */
+    /**
+     * They are in the host's Discord: join with the co-host's clan as where they came through (the hub counts them against its seats). Once the hub
+     * has signed them up the answer says so: tidying their pending join and naming the host are best effort, so a hiccup there can't turn a done
+     * sign-up into "try again".
+     */
     String joinNow(Event event, UUID originClan, long userId) {
+        EventService.Joined joined;
         try {
-            EventService.Joined joined = events.join(event.guildId(), event.id(), userId, originClan, events.self(event.guildId()));
-            cohosts.deletePendingJoin(event.id(), userId);
-            String where = "You play from **" + hostName(event.guildId()) + "**'s Discord.";
-            return joined.waiting() ? "**" + event.name() + "** is full, so you're on the waitlist (number " + joined.position() + "). " + where
-                    : "You're in **" + event.name() + "**! " + where;
+            joined = events.join(event.guildId(), event.id(), userId, originClan, events.self(event.guildId()));
         } catch (EventProblem e) {
             return e.getMessage();
         }
+        try {
+            cohosts.deletePendingJoin(event.id(), userId);
+        } catch (RuntimeException e) {
+            log.warn("User {} joined event {}, but their pending join couldn't be removed (it expires on its own)", userId, event.id(), e);
+        }
+        String hostName;
+        try {
+            hostName = hostName(event.guildId());
+        } catch (RuntimeException e) {
+            log.warn("Couldn't name the host of event {}", event.id(), e);
+            hostName = "the host's server";
+        }
+        String where = "You play from **" + hostName + "**'s Discord.";
+        return joined.waiting() ? "**" + event.name() + "** is full, so you're on the waitlist (number " + joined.position() + "). " + where
+                : "You're in **" + event.name() + "**! " + where;
     }
 
     /** They aren't in the host's Discord yet: remember it, and give them the invite. They join when they get there, until signups close. */
@@ -392,7 +450,7 @@ public class CohostPanels extends ListenerAdapter implements BotListener {
             for (PendingJoin p : cohosts.pendingJoins(userId, hostGuildId, now)) {
                 try {
                     Event event = events.eventById(p.eventId()).orElse(null);
-                    UUID originClan = event == null ? null : acceptedCohost(event.id(), p.originGuildId());
+                    UUID originClan = event == null ? null : acceptedCohostOrNull(event.id(), p.originGuildId());
                     if (event != null && originClan != null && open(event)) {
                         events.join(event.guildId(), event.id(), userId, originClan, events.self(event.guildId()));
                         joined++;

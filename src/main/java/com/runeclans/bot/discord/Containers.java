@@ -9,6 +9,8 @@ import net.dv8tion.jda.api.entities.emoji.Emoji;
 import net.dv8tion.jda.api.interactions.InteractionHook;
 import net.dv8tion.jda.api.interactions.callbacks.IMessageEditCallback;
 import net.dv8tion.jda.api.interactions.callbacks.IReplyCallback;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.awt.Color;
 import java.time.Duration;
@@ -28,6 +30,7 @@ import java.util.List;
  * this bot (slash command, button, modal) implements one or both — one helper works everywhere.
  */
 public final class Containers {
+    private static final Logger log = LoggerFactory.getLogger(Containers.class);
     private Containers() {}
 
     // A small shared palette instead of every listener defining its own — pick by what the message
@@ -121,6 +124,40 @@ public final class Containers {
         replyThenDelete(event, accent, Duration.ofSeconds(5), lines);
     }
 
+    /**
+     * Ephemeral answer that works whether or not {@code event} was deferred: a fresh interaction gets a reply, a deferred one has its "thinking..."
+     * message replaced. Handlers that defer first (because the work can pass Discord's 3 s limit) answer every path through this.
+     */
+    public static void respond(IReplyCallback event, Color accent, String... lines) {
+        String[] fitted = fit(lines);
+        if (!event.isAcknowledged()) {
+            replyEphemeral(event, accent, fitted);
+            return;
+        }
+        event.getHook().editOriginalComponents(List.of(toast(accent, fitted))).useComponentsV2(true)
+                .queue(ok -> {}, failure -> log.warn("Couldn't replace a deferred answer: {}", failure.getMessage()));
+    }
+
+    /** Discord refuses a Components V2 message whose text adds up to more than this, so long answers are cut to fit. */
+    static final int MAX_TEXT = 4000;
+    private static final String MORE = "-# …and more";
+
+    /** {@code lines} cut to fit {@link #MAX_TEXT}: whole lines while they fit, then a "…and more" note. */
+    static String[] fit(String... lines) {
+        int total = 0;
+        for (String line : lines) total += line.length();
+        if (total <= MAX_TEXT) return lines;
+        List<String> kept = new ArrayList<>();
+        int used = MORE.length();
+        for (String line : lines) {
+            if (used + line.length() > MAX_TEXT) break;
+            kept.add(line);
+            used += line.length();
+        }
+        kept.add(MORE);
+        return kept.toArray(String[]::new);
+    }
+
     // --- Edit (button/modal only — nothing to edit from a fresh slash command) ---
 
     public static void edit(IMessageEditCallback event, Color accent, String... lines) {
@@ -162,7 +199,7 @@ public final class Containers {
             } else {
                 event.getHook().editOriginalComponents(List.of(toast(DANGER, ERROR_MESSAGE)))
                         .useComponentsV2(true)
-                        .queue(success -> {}, failure -> {});
+                        .queue(success -> {}, failure -> log.warn("Couldn't show the error answer: {}", failure.getMessage()));
             }
         } catch (Exception ignored) {}
     }

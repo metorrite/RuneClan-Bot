@@ -111,7 +111,7 @@ public class EventAnnounceService {
 
     // ---------- announce, update, start, end ----------
 
-    private void announce(ScheduledEvent event) {
+    void announce(ScheduledEvent event) {
         Guild guild = event.getGuild();
         Settings settings = repository.settings(guild.getIdLong());
         if (!settings.active()) return;
@@ -120,18 +120,53 @@ public class EventAnnounceService {
         if (!repository.claim(event.getIdLong(), guild.getIdLong())) return; // already announced
 
         Role role = null;
-        if (settings.useRole() && guild.getSelfMember().hasPermission(Permission.MANAGE_ROLES) && EventAnnounceRules.canMakeRole(guild.getRoles().size())) {
-            role = guild.createRole().setName(EventAnnounceRules.roleName(event.getName())).setPermissions(Collections.emptyList()).setMentionable(true)
-                    .reason("Role for the event " + event.getName()).complete();
-        } else if (settings.useRole()) {
-            log.info("Event announcer: no role made for event {} in guild {} (missing Manage Roles or the server is close to 250 roles)", event.getId(), guild.getId());
+        boolean roleSaved = false;
+        Message sent = null;
+        try {
+            if (settings.useRole() && guild.getSelfMember().hasPermission(Permission.MANAGE_ROLES) && EventAnnounceRules.canMakeRole(guild.getRoles().size())) {
+                role = guild.createRole().setName(EventAnnounceRules.roleName(event.getName())).setPermissions(Collections.emptyList()).setMentionable(true)
+                        .reason("Role for the event " + event.getName()).complete();
+                repository.setRole(event.getIdLong(), role.getIdLong()); // saved before posting, so the role never outlives the event untracked
+                roleSaved = true;
+            } else if (settings.useRole()) {
+                log.info("Event announcer: no role made for event {} in guild {} (missing Manage Roles or the server is close to 250 roles)", event.getId(), guild.getId());
+            }
+            MessageCreateBuilder message = new MessageCreateBuilder().setEmbeds(embed(event, EventAnnounceRules.state(event.getStatus().name())).build())
+                    .setAllowedMentions(EnumSet.noneOf(Message.MentionType.class));
+            if (role != null) message.setComponents(ActionRow.of(Button.primary(BUTTON_PREFIX + event.getId(), "I'm interested")));
+            sent = channel.sendMessage(message.build()).complete();
+            repository.setMessage(event.getIdLong(), channel.getIdLong(), sent.getIdLong(), role == null ? null : role.getIdLong());
+            repository.setState(event.getIdLong(), EventAnnounceRules.state(event.getStatus().name()), false);
+        } catch (RuntimeException e) {
+            if (sent == null) undoAnnounce(event.getIdLong(), role, roleSaved);
+            throw e;
         }
-        MessageCreateBuilder message = new MessageCreateBuilder().setEmbeds(embed(event, EventAnnounceRules.state(event.getStatus().name())).build())
-                .setAllowedMentions(EnumSet.noneOf(Message.MentionType.class));
-        if (role != null) message.setComponents(ActionRow.of(Button.primary(BUTTON_PREFIX + event.getId(), "I'm interested")));
-        Message sent = channel.sendMessage(message.build()).complete();
-        repository.setMessage(event.getIdLong(), channel.getIdLong(), sent.getIdLong(), role == null ? null : role.getIdLong());
-        repository.setState(event.getIdLong(), EventAnnounceRules.state(event.getStatus().name()), false);
+    }
+
+    /**
+     * The announcement couldn't be posted (B-102): delete the role it made and give the claim back, so no orphan role stays in the server. If the role
+     * can't be deleted now, its id stays saved and the sweep or the event's end deletes it.
+     */
+    private void undoAnnounce(long eventId, Role role, boolean roleSaved) {
+        if (role == null) {
+            releaseQuietly(eventId);
+            return;
+        }
+        role.delete().reason("The event's announcement couldn't be posted").queue(ok -> worker.execute(() -> releaseQuietly(eventId)), error -> {
+            if (roleSaved) {
+                log.info("Event announcer: could not delete role {} of unposted event {}; it is deleted when the event ends", role.getId(), eventId);
+            } else {
+                log.warn("Event announcer: role {} of unposted event {} could be neither saved nor deleted; delete it by hand", role.getId(), eventId, error);
+            }
+        });
+    }
+
+    private void releaseQuietly(long eventId) {
+        try {
+            repository.release(eventId);
+        } catch (RuntimeException e) {
+            log.warn("Event announcer: could not release the claim on event {}", eventId, e);
+        }
     }
 
     private void update(ScheduledEvent event) {

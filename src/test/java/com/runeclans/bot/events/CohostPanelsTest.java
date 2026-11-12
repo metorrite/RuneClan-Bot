@@ -9,6 +9,18 @@ import com.runeclans.bot.events.EventRules.ScoringMode;
 import com.runeclans.bot.events.EventRules.Status;
 import com.runeclans.bot.hubevents.HubEventClient.Actor;
 import com.runeclans.bot.hubevents.HubEvents;
+import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.components.MessageTopLevelComponent;
+import net.dv8tion.jda.api.components.container.Container;
+import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
+import net.dv8tion.jda.api.interactions.InteractionHook;
+import net.dv8tion.jda.api.requests.restaction.CacheRestAction;
+import net.dv8tion.jda.api.requests.restaction.WebhookMessageCreateAction;
+import net.dv8tion.jda.api.requests.restaction.interactions.ReplyCallbackAction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -17,6 +29,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Collection;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -24,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,13 +61,14 @@ class CohostPanelsTest {
     private GuildSettingsService guildSettings;
     private CohostPanels panels;
     private Event event;
+    private ClanProfileRepository profiles;
 
     @BeforeEach
     void setUp() {
         events = mock(HubEvents.class);
         cohosts = mock(EventCohostRepository.class);
         guildSettings = mock(GuildSettingsService.class, Mockito.RETURNS_DEEP_STUBS);
-        ClanProfileRepository profiles = mock(ClanProfileRepository.class);
+        profiles = mock(ClanProfileRepository.class);
         when(profiles.get(anyLong())).thenReturn(Optional.empty());
         when(guildSettings.getEffective(HOST).inviteUrl()).thenReturn("https://discord.gg/example");
         panels = new CohostPanels(events, cohosts,
@@ -157,5 +174,124 @@ class CohostPanelsTest {
 
         panels.setChannel(event, ALLY, 556L, BOT);
         verify(events).setCohostChannel(EVENT, ALLY_CLAN, 556L, BOT);
+    }
+
+    // ---------- B-101: Join always answers ----------
+
+    /** A press on the ally's panel whose acknowledgement goes through, so the Join work runs on its lane; the answers land in {@code sent}. */
+    @SuppressWarnings("unchecked")
+    private ButtonInteractionEvent press(List<String> sent) {
+        ButtonInteractionEvent press = mock(ButtonInteractionEvent.class, Mockito.RETURNS_DEEP_STUBS);
+        when(press.getComponentId()).thenReturn(CohostPanels.JOIN + EVENT);
+        Guild ally = mock(Guild.class);
+        when(ally.getIdLong()).thenReturn(ALLY);
+        when(press.getGuild()).thenReturn(ally);
+        when(press.getUser().getIdLong()).thenReturn(USER);
+        InteractionHook hook = mock(InteractionHook.class);
+        when(press.getHook()).thenReturn(hook);
+        ReplyCallbackAction defer = mock(ReplyCallbackAction.class);
+        when(press.deferReply(true)).thenReturn(defer);
+        doAnswer(i -> {
+            ((Consumer<InteractionHook>) i.getArgument(0)).accept(hook);
+            return null;
+        }).when(defer).queue(any(), any());
+        WebhookMessageCreateAction<Message> send = mock(WebhookMessageCreateAction.class, Mockito.RETURNS_SELF);
+        when(hook.sendMessageComponents(Mockito.<Collection<? extends MessageTopLevelComponent>>any())).thenAnswer(i -> {
+            Container card = (Container) ((Collection<?>) i.getArgument(0)).iterator().next();
+            synchronized (sent) {
+                sent.add(card.getComponents().stream().map(c -> ((TextDisplay) c).getContent()).collect(Collectors.joining("\n")));
+            }
+            return send;
+        });
+        return press;
+    }
+
+    /** {@code press} also finds the host's Discord, and the player is a member there. */
+    @SuppressWarnings("unchecked")
+    private void inTheHostsDiscord(ButtonInteractionEvent press) {
+        JDA jda = mock(JDA.class);
+        when(press.getJDA()).thenReturn(jda);
+        Guild host = mock(Guild.class);
+        when(jda.getGuildById(HOST)).thenReturn(host);
+        CacheRestAction<Member> retrieve = mock(CacheRestAction.class);
+        when(host.retrieveMemberById(USER)).thenReturn(retrieve);
+        doAnswer(i -> {
+            ((Consumer<Member>) i.getArgument(0)).accept(mock(Member.class));
+            return null;
+        }).when(retrieve).queue(any(), any());
+    }
+
+    private static String answerOf(List<String> sent) {
+        synchronized (sent) {
+            assertEquals(1, sent.size(), "exactly one answer: " + sent);
+            return sent.get(0);
+        }
+    }
+
+    private static void awaitAnswer(List<String> sent) throws InterruptedException {
+        for (int i = 0; i < 200; i++) {
+            synchronized (sent) {
+                if (!sent.isEmpty()) return;
+            }
+            Thread.sleep(10);
+        }
+    }
+
+    @Test
+    void aHubFailureReadingTheEventAnswersTryAgain() throws Exception {
+        when(events.eventById(EVENT)).thenThrow(new EventProblem(503, "hub down"));
+        List<String> sent = new java.util.ArrayList<>();
+        panels.onButtonInteraction(press(sent));
+        awaitAnswer(sent);
+        assertEquals(CohostPanels.TRY_AGAIN, answerOf(sent));
+    }
+
+    @Test
+    void aHubFailureCheckingTheCoHostAnswersTryAgainNotDoesntCoHost() throws Exception {
+        when(events.cohosts(EVENT)).thenThrow(new EventProblem(503, "hub down"));
+        List<String> sent = new java.util.ArrayList<>();
+        panels.onButtonInteraction(press(sent));
+        awaitAnswer(sent);
+        assertEquals(CohostPanels.TRY_AGAIN, answerOf(sent));
+    }
+
+    @Test
+    void anUnexpectedFailureJoiningAnswersTryAgain() throws Exception {
+        when(events.join(HOST, EVENT, USER, ALLY_CLAN, BOT)).thenThrow(new IllegalStateException("pool exhausted"));
+        List<String> sent = new java.util.ArrayList<>();
+        ButtonInteractionEvent press = press(sent);
+        inTheHostsDiscord(press);
+        panels.onButtonInteraction(press);
+        awaitAnswer(sent);
+        assertEquals(CohostPanels.TRY_AGAIN, answerOf(sent));
+    }
+
+    @Test
+    void aJoinThatWentThroughSaysSo() throws Exception {
+        when(events.join(HOST, EVENT, USER, ALLY_CLAN, BOT)).thenReturn(new EventService.Joined(false, 0));
+        List<String> sent = new java.util.ArrayList<>();
+        ButtonInteractionEvent press = press(sent);
+        inTheHostsDiscord(press);
+        panels.onButtonInteraction(press);
+        awaitAnswer(sent);
+        assertTrue(answerOf(sent).startsWith("You're in **Joint Bingo**"), sent.toString());
+    }
+
+    @Test
+    void tidyingUpAfterTheJoinCantTurnItIntoTryAgain() {
+        when(events.join(HOST, EVENT, USER, ALLY_CLAN, BOT)).thenReturn(new EventService.Joined(true, 3));
+        Mockito.doThrow(new IllegalStateException("db down")).when(cohosts).deletePendingJoin(EVENT, USER);
+        when(profiles.get(anyLong())).thenThrow(new IllegalStateException("db down"));
+        String answer = panels.joinNow(event, ALLY_CLAN, USER);
+        assertTrue(answer.startsWith("**Joint Bingo** is full, so you're on the waitlist (number 3)"), answer);
+        assertTrue(answer.contains("the host's server"), answer);
+    }
+
+    @Test
+    void aPendingJoinIsDroppedQuietlyWhenTheHubCantSayWhoCoHosts() {
+        when(cohosts.pendingJoins(USER, HOST, NOW)).thenReturn(List.of(new PendingJoin(EVENT, USER, ALLY, NOW.plusSeconds(3_600))));
+        when(events.cohosts(EVENT)).thenThrow(new EventProblem(503, "hub down"));
+        assertEquals(0, panels.completePendingJoins(HOST, USER, NOW));
+        verify(cohosts).deletePendingJoin(EVENT, USER);
     }
 }
