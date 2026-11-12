@@ -162,7 +162,14 @@ public class RoleRuleService implements CacheInvalidator {
 
         hops.put(key, new Hop(depth + 1, ids(add), ids(remove), now + CHAIN_WINDOW_MILLIS));
         log.info("Role rules: user {} in guild {}: add {}, remove {}", member.getId(), guild.getIdLong(), ids(add), ids(remove));
-        guild.modifyMemberRoles(member, add, remove).reason("Role rule").queue(ok -> {}, e -> log.warn("Role rule change for {} failed: {}", member.getId(), e.getMessage()));
+        // one request per role, never modifyMemberRoles: rules fire on role events, often while autorole, role keep or the verification sync is
+        // changing the same member, and a whole-list write would overwrite (or be overwritten by) those changes (B-89 follow-up)
+        for (Role role : add) {
+            guild.addRoleToMember(member, role).reason("Role rule").queue(ok -> {}, e -> log.warn("Role rule: giving {} to {} failed: {}", role.getId(), member.getId(), e.getMessage()));
+        }
+        for (Role role : remove) {
+            guild.removeRoleFromMember(member, role).reason("Role rule").queue(ok -> {}, e -> log.warn("Role rule: taking {} from {} failed: {}", role.getId(), member.getId(), e.getMessage()));
+        }
     }
 
     /** How many rule-made changes led to this one: 0 for a change nobody here made, else one more than the change it follows. */

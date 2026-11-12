@@ -1,5 +1,6 @@
 package com.runeclans.bot.highlight;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.config.PrivilegedIntents;
 import com.runeclans.bot.highlight.HighlightRepository.Keyword;
@@ -41,6 +42,7 @@ public class HighlightListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("highlight")) return; // DMs members in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             Guild guild = event.getGuild();

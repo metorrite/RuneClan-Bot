@@ -105,15 +105,19 @@ class RoleRuleServiceTest {
     // ---------- running ----------
 
     @Test
-    void gainingTheConditionRoleGivesTheOtherRoleInOneChange() {
+    void gainingTheConditionRoleGivesTheOtherRoleAndTakesTheRemovedOneRoleByRole() {
         rules(rule(1, Event.GAINS, List.of(1L), List.of(20L), List.of(30L)));
         Member m = member(5, 1, 30);
         AuditableRestAction<Void> action = action();
-        when(guild.modifyMemberRoles(eq(m), any(Collection.class), any(Collection.class))).thenReturn(action);
+        when(guild.addRoleToMember(eq(m), any(Role.class))).thenReturn(action);
+        when(guild.removeRoleFromMember(eq(m), any(Role.class))).thenReturn(action);
 
         service.onRoleChange(guild, m, Set.of(1L), true);
 
-        verify(guild).modifyMemberRoles(eq(m), argThat((Collection<Role> add) -> add.size() == 1 && add.iterator().next().getIdLong() == 20), argThat((Collection<Role> rem) -> rem.size() == 1 && rem.iterator().next().getIdLong() == 30));
+        // one request per role, never a whole-list write that could undo another feature's change on the same member (B-89)
+        verify(guild).addRoleToMember(eq(m), argThat((Role r) -> r.getIdLong() == 20));
+        verify(guild).removeRoleFromMember(eq(m), argThat((Role r) -> r.getIdLong() == 30));
+        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
     }
 
     @Test
@@ -123,7 +127,7 @@ class RoleRuleServiceTest {
         rules(rule(1, Event.GAINS, List.of(1L), List.of(20L), List.of()));
         service.onRoleChange(guild, member(5, 2), Set.of(2L), true);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     @Test
@@ -132,7 +136,7 @@ class RoleRuleServiceTest {
 
         service.onRoleChange(guild, member(5, 1, 20), Set.of(1L), true);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     // ---------- the clan sync always wins ----------
@@ -162,7 +166,7 @@ class RoleRuleServiceTest {
 
         service.onRoleChange(guild, member(5, 1), Set.of(1L), true);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     // ---------- loops ----------
@@ -192,7 +196,7 @@ class RoleRuleServiceTest {
         rules(rule(1, Event.GAINS, List.of(1L), List.of(2L), List.of()), rule(2, Event.GAINS, List.of(2L), List.of(3L), List.of()), rule(3, Event.GAINS, List.of(3L), List.of(1L), List.of()),
                 rule(4, Event.LOSES, List.of(1L), List.of(), List.of()));
         AuditableRestAction<Void> action = action();
-        when(guild.modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class))).thenReturn(action);
+        when(guild.addRoleToMember(any(Member.class), any(Role.class))).thenReturn(action);
         Member m = member(5, 1);
 
         service.onRoleChange(guild, m, Set.of(1L), true);      // the person's own change: depth 0, makes a change (gives 2)
@@ -200,21 +204,21 @@ class RoleRuleServiceTest {
         service.onRoleChange(guild, member(5, 1, 2, 3), Set.of(3L), true); // depth 2 (would give 1, already held)
         service.onRoleChange(guild, member(5, 2, 3), Set.of(1L), false);
 
-        verify(guild, times(2)).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, times(2)).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     @Test
     void aMemberCannotBeChangedMoreThanTheLimitPerMinute() {
         rules(rule(1, Event.GAINS, List.of(1L), List.of(20L), List.of()));
         AuditableRestAction<Void> action = action();
-        when(guild.modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class))).thenReturn(action);
+        when(guild.addRoleToMember(any(Member.class), any(Role.class))).thenReturn(action);
 
         for (int i = 0; i < RoleRuleRules.MAX_CHANGES_PER_MEMBER_PER_MINUTE + 5; i++) service.onRoleChange(guild, member(5, 1), Set.of(1L), true);
-        verify(guild, times(RoleRuleRules.MAX_CHANGES_PER_MEMBER_PER_MINUTE)).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, times(RoleRuleRules.MAX_CHANGES_PER_MEMBER_PER_MINUTE)).addRoleToMember(any(Member.class), any(Role.class));
 
         now.addAndGet(61_000); // a minute later the member may be changed again
         service.onRoleChange(guild, member(5, 1), Set.of(1L), true);
-        verify(guild, times(RoleRuleRules.MAX_CHANGES_PER_MEMBER_PER_MINUTE + 1)).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, times(RoleRuleRules.MAX_CHANGES_PER_MEMBER_PER_MINUTE + 1)).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     @Test
@@ -225,7 +229,7 @@ class RoleRuleServiceTest {
 
         service.onRoleChange(guild, bot, Set.of(1L), true);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     @Test

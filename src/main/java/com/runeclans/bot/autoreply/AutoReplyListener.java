@@ -1,5 +1,6 @@
 package com.runeclans.bot.autoreply;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Message;
@@ -36,6 +37,7 @@ public class AutoReplyListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("auto-reply")) return; // replies in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             Message message = event.getMessage();

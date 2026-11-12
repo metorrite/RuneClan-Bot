@@ -1,5 +1,6 @@
 package com.runeclans.bot.modlog;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.modlog.ModLogMessage.Kind;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -37,16 +38,19 @@ public class ModLogListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onGuildBan(GuildBanEvent event) {
+        if (AutoPostRouter.skipSweep("moderation log")) return; // posts in the real server: only the live bot does that (B-82 follow-up)
         record(event.getGuild(), event.getUser(), Kind.BAN, null);
     }
 
     @Override
     public void onGuildUnban(GuildUnbanEvent event) {
+        if (AutoPostRouter.skipSweep("moderation log")) return;
         record(event.getGuild(), event.getUser(), Kind.UNBAN, null);
     }
 
     @Override
     public void onGuildMemberUpdateTimeOut(GuildMemberUpdateTimeOutEvent event) {
+        if (AutoPostRouter.skipSweep("moderation log")) return;
         OffsetDateTime now = event.getNewTimeOutEnd();
         boolean started = now != null && now.isAfter(OffsetDateTime.now());
         boolean ended = now == null && event.getOldTimeOutEnd() != null;

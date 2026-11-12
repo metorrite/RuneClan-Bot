@@ -1,5 +1,6 @@
 package com.runeclans.bot.starboard;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.starboard.StarboardLogic.Action;
 import com.runeclans.bot.starboard.StarboardLogic.Reactor;
@@ -45,11 +46,13 @@ public class StarboardListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReactionAdd(MessageReactionAddEvent event) {
+        if (AutoPostRouter.skipSweep("starboard")) return; // posts and edits in the real server: only the live bot does that (B-82 follow-up)
         if (event.isFromGuild()) handle(event.getGuild(), event.getGuildChannel(), event.getMessageIdLong(), event.getEmoji(), event);
     }
 
     @Override
     public void onMessageReactionRemove(MessageReactionRemoveEvent event) {
+        if (AutoPostRouter.skipSweep("starboard")) return;
         if (event.isFromGuild()) handle(event.getGuild(), event.getGuildChannel(), event.getMessageIdLong(), event.getEmoji(), event);
     }
 

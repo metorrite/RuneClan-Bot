@@ -1,5 +1,6 @@
 package com.runeclans.bot.tempvoice;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.i18n.Text;
@@ -43,6 +44,7 @@ public class TempVoiceListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onGuildVoiceUpdate(GuildVoiceUpdateEvent event) {
+        if (AutoPostRouter.skipSweep("temporary voice")) return; // creates and deletes channels in the real server: only the live bot does that (B-82 follow-up)
         try {
             if (event.getChannelLeft() != null) service.onLeave(event.getGuild(), event.getChannelLeft());
             if (event.getChannelJoined() != null) service.onJoin(event.getMember(), event.getChannelJoined());

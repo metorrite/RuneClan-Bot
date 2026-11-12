@@ -1,5 +1,6 @@
 package com.runeclans.bot.ban;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.events.guild.GuildBanEvent;
@@ -20,6 +21,7 @@ public class BanAnnouncementListener extends ListenerAdapter implements BotListe
 
     @Override
     public void onGuildBan(GuildBanEvent event) {
+        if (AutoPostRouter.skipSweep("ban announcement")) return; // posts in the real server: only the live bot does that (B-82 follow-up)
         try {
             service.onBan(event.getGuild(), event.getUser());
         } catch (Exception e) {

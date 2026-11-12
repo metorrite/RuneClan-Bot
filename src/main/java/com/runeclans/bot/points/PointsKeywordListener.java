@@ -1,5 +1,6 @@
 package com.runeclans.bot.points;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.points.PointsExtrasRules.Trigger;
 import com.runeclans.bot.points.PointsRules.Category;
@@ -42,6 +43,7 @@ public class PointsKeywordListener extends ListenerAdapter implements BotListene
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("points keyword")) return; // awards points and replies in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             long guildId = event.getGuild().getIdLong();

@@ -1,5 +1,6 @@
 package com.runeclans.bot.messagelog;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.config.PrivilegedIntents;
 import com.runeclans.bot.highlight.HighlightService;
@@ -66,6 +67,7 @@ public class MessageLogListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("message log")) return; // posts log entries in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             MessageLogConfig config = repository.config(event.getGuild().getIdLong());
@@ -81,6 +83,7 @@ public class MessageLogListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageUpdate(MessageUpdateEvent event) {
+        if (AutoPostRouter.skipSweep("message log")) return;
         if (!event.isFromGuild() || event.getAuthor().isBot()) return;
         try {
             Guild guild = event.getGuild();
@@ -107,6 +110,7 @@ public class MessageLogListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageDelete(MessageDeleteEvent event) {
+        if (AutoPostRouter.skipSweep("message log")) return;
         if (!event.isFromGuild()) return;
         try {
             Guild guild = event.getGuild();
@@ -126,6 +130,7 @@ public class MessageLogListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageBulkDelete(MessageBulkDeleteEvent event) {
+        if (AutoPostRouter.skipSweep("message log")) return;
         try {
             Guild guild = event.getGuild();
             MessageLogConfig config = repository.config(guild.getIdLong());
@@ -143,6 +148,7 @@ public class MessageLogListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onGuildVoiceUpdate(GuildVoiceUpdateEvent event) {
+        if (AutoPostRouter.skipSweep("message log")) return;
         try {
             Guild guild = event.getGuild();
             MessageLogConfig config = repository.config(guild.getIdLong());

@@ -1,5 +1,6 @@
 package com.runeclans.bot.automod;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.moderation.ModAction;
 import com.runeclans.bot.moderation.ModCase;
 import com.runeclans.bot.moderation.ModService;
@@ -53,6 +54,7 @@ public class AutomodListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("automod")) return; // deletes, times out and alerts in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             Config config = repository.get(event.getGuild().getIdLong());

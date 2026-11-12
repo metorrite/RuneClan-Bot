@@ -1,5 +1,6 @@
 package com.runeclans.bot.rolepanel;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.rolepanel.RolePanel.RoleButton;
 import com.runeclans.bot.rolepanel.RolePanelLogic.ReactionChange;
@@ -39,11 +40,13 @@ public class RolePanelReactionListener extends ListenerAdapter implements BotLis
 
     @Override
     public void onMessageReactionAdd(MessageReactionAddEvent event) {
+        if (AutoPostRouter.skipSweep("role panel reactions")) return; // gives and takes roles in the real server: only the live bot does that (B-82 follow-up)
         handle(event, true);
     }
 
     @Override
     public void onMessageReactionRemove(MessageReactionRemoveEvent event) {
+        if (AutoPostRouter.skipSweep("role panel reactions")) return;
         handle(event, false);
     }
 

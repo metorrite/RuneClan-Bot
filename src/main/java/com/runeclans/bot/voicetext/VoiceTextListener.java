@@ -1,5 +1,6 @@
 package com.runeclans.bot.voicetext;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
@@ -23,6 +24,7 @@ public class VoiceTextListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onGuildVoiceUpdate(GuildVoiceUpdateEvent event) {
+        if (AutoPostRouter.skipSweep("voice text")) return; // changes channel access in the real server: only the live bot does that (B-82 follow-up)
         if (event.getMember().getUser().isBot()) return;
         try {
             if (event.getChannelLeft() != null) service.left(event.getGuild(), event.getMember(), event.getChannelLeft());
