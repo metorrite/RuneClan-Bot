@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Keeps a linked player's Discord roles in step with whether their RSN is in the clan: adds a configured
@@ -32,8 +34,8 @@ import java.util.Set;
  * <p>
  * The two roles can legitimately be the <em>same</em> role: with Guest as both the "unverified" and the
  * "not a clan member" role, a verified non-clan player keeps Guest while a clan member trades Guest for
- * Member. So the unverified role is never removed if it is the very role being granted, and both
- * changes are sent to Discord as one update — nobody is ever left holding neither role, even briefly.
+ * Member. So the unverified role is never removed if it is the very role being granted, and the old role
+ * is only taken off once the new one is on — nobody is ever left holding neither role, even briefly.
  */
 @BService
 public class VerificationRoleSyncService {
@@ -105,14 +107,27 @@ public class VerificationRoleSyncService {
             List<Role> remove = plan.remove().stream().map(guild::getRoleById).toList();
             log.info("Updating roles for user {} ({}): add {}, remove {}", discordUserId, why, plan.add(), plan.remove());
             // one request per role, never modifyMemberRoles: that writes the whole role list from this member snapshot and would undo a role
-            // another feature (autorole, role keep, role rules) gave in the meantime (B-89 follow-up)
-            for (Role role : add) {
-                guild.addRoleToMember(member, role).reason("Verification roles").queue(success -> {},
-                        error -> log.warn("Failed to give verification role {} to user {}", role.getId(), discordUserId, error));
+            // another feature (autorole, role keep, role rules) gave in the meantime (B-89 follow-up). The new role goes on first and the old one
+            // comes off only once that worked, so nobody is left holding neither role.
+            Runnable takeOff = () -> {
+                for (Role role : remove) {
+                    guild.removeRoleFromMember(member, role).reason("Verification roles").queue(success -> {},
+                            error -> log.warn("Failed to take verification role {} from user {}", role.getId(), discordUserId, error));
+                }
+            };
+            if (add.isEmpty()) {
+                takeOff.run();
+                return;
             }
-            for (Role role : remove) {
-                guild.removeRoleFromMember(member, role).reason("Verification roles").queue(success -> {},
-                        error -> log.warn("Failed to take verification role {} from user {}", role.getId(), discordUserId, error));
+            AtomicInteger waiting = new AtomicInteger(add.size());
+            AtomicBoolean failed = new AtomicBoolean();
+            for (Role role : add) {
+                guild.addRoleToMember(member, role).reason("Verification roles").queue(success -> {
+                    if (waiting.decrementAndGet() == 0 && !failed.get()) takeOff.run();
+                }, error -> {
+                    failed.set(true);
+                    log.warn("Failed to give verification role {} to user {}; kept {} so they still hold a role", role.getId(), discordUserId, plan.remove(), error);
+                });
             }
         }, error -> log.warn("Failed to retrieve member {} for verification role sync", discordUserId, error));
     }
