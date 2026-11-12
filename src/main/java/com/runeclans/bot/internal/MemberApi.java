@@ -488,13 +488,13 @@ public class MemberApi {
         return DataObject.empty().put("polls", array);
     }
 
+    /** How many running polls one member may have started from the website; checked here and again when the queued job runs. */
+    static final int MAX_WEBSITE_POLLS = 3;
+
     /**
      * A member starts a poll from the website: same rules and limits as /poll, posted in the channel an admin chose for member polls. The
      * post is queued ({@link PollJobs}), so the answer never waits on Discord and carries the job the page follows.
      */
-    /** How many running polls one member may have started from the website; checked here and again when the queued job runs. */
-    static final int MAX_WEBSITE_POLLS = 3;
-
     private DataObject createPoll(Guild guild, long userId, DataObject body) {
         Member member = memberOf(guild, userId);
         if (!memberAccess.isMemberTier(guild, member)) throw new Rejected(403, "Starting a poll is for verified clan members.");

@@ -73,7 +73,7 @@ public class SignupInteractionListener extends ListenerAdapter {
      * Who may run a signup's admin panel: the bot's Admin group (the same people {@code /signup} lets build signups) or anyone with Discord's
      * Manage Server, as the event buttons do. Manage Server alone left the staff who made a sheet unable to run it.
      */
-    private boolean isAdmin(net.dv8tion.jda.api.entities.Guild guild, net.dv8tion.jda.api.entities.Member member) {
+    boolean isAdmin(net.dv8tion.jda.api.entities.Guild guild, net.dv8tion.jda.api.entities.Member member) {
         return mayManage(member != null && member.hasPermission(Permission.MANAGE_SERVER), () -> guild != null && member != null && adminRoleFilter.isAuthorized(guild, member));
     }
 

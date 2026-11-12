@@ -75,6 +75,56 @@ class SignupLoadThroughTest {
         assertTrue(service.addUser(null, 7, USER, "Some Rsn", null));
     }
 
+    // B-39: the cap goes to the store with the add, which counts it under the same lock as the insert
+
+    private static SignupSession capped(long id, int max) {
+        return new SignupSession(id, GUILD, "Signup " + id, null, max, SignupType.QUEUE, null, null);
+    }
+
+    @Test
+    void aMemberJoiningACappedSheetHandsTheCapToTheStore() {
+        SignupRepository repository = emptyRepository();
+        SignupService service = new SignupService(repository);
+        when(repository.getOpenSignupById(7)).thenReturn(capped(7, 10));
+        when(repository.getSignupStatus(7)).thenReturn("ACTIVE");
+        when(repository.addEntry(7, USER, "Some Rsn", null, USER, SignupType.QUEUE, 10)).thenReturn(true);
+
+        assertTrue(service.addUser(null, 7, USER, "Some Rsn", null));
+        verify(repository).addEntry(7, USER, "Some Rsn", null, USER, SignupType.QUEUE, 10);
+    }
+
+    @Test
+    void anAdminAddingSomeoneToACappedSheetHandsTheCapToTheStoreToo() {
+        SignupRepository repository = emptyRepository();
+        SignupService service = new SignupService(repository);
+        when(repository.getOpenSignupById(7)).thenReturn(capped(7, 10));
+        when(repository.addEntry(7, USER, "Some Rsn", null, 99L, SignupType.QUEUE, 10)).thenReturn(true);
+
+        assertTrue(service.addManualUser(null, 7, USER, "Some Rsn", null, 99L));
+        verify(repository).addEntry(7, USER, "Some Rsn", null, 99L, SignupType.QUEUE, 10);
+    }
+
+    @Test
+    void aFullSheetRefusesTheJoin() {
+        SignupRepository repository = emptyRepository();
+        SignupService service = new SignupService(repository);
+        when(repository.getOpenSignupById(7)).thenReturn(capped(7, 1));
+        when(repository.getSignupStatus(7)).thenReturn("ACTIVE");
+        when(repository.addEntry(7, USER, "Some Rsn", null, USER, SignupType.QUEUE, 1)).thenReturn(false);
+
+        org.junit.jupiter.api.Assertions.assertFalse(service.addUser(null, 7, USER, "Some Rsn", null));
+    }
+
+    @Test
+    void isGoneThrowsOnAFailedReadInsteadOfSayingGone() {
+        SignupRepository repository = emptyRepository();
+        SignupService service = new SignupService(repository);
+        when(repository.getOpenSignupById(9)).thenThrow(new RuntimeException("database down"));
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () -> service.isGone(9));
+        when(repository.getOpenSignupById(8)).thenReturn(null);
+        assertTrue(service.isGone(8));
+    }
+
     @Test
     void theListWarmsTheCacheSoTheLookupsAfterItDoNotQueryOneByOne() {
         SignupRepository repository = mock(SignupRepository.class);

@@ -230,6 +230,18 @@ public class SignupService {
         return signupId;
     }
 
+    /**
+     * Whether the sheet is certainly gone (removed, or never stored), read from the store. Unlike {@link #getSessionById}, a failed read
+     * throws instead of looking like a gone sheet, so a caller that would otherwise make a new sheet never does so on a hiccup.
+     */
+    public boolean isGone(long signupId) {
+        if (activeSignupsById.containsKey(signupId)) return false;
+        SignupSession stored = signupRepository.getOpenSignupById(signupId);
+        if (stored == null) return true;
+        activeSignupsById.putIfAbsent(signupId, stored);
+        return false;
+    }
+
     /** Whether a stored sheet already shows a panel of this kind (an earlier try posted it before it had to wait). */
     public boolean hasPanel(long signupId, SignupPanelType panel) {
         return signupRepository.getActiveMessages(signupId).stream().anyMatch(m -> panel.name().equalsIgnoreCase(m.messageType()));

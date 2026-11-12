@@ -32,7 +32,6 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -234,6 +233,142 @@ class SignupJobsTest {
         verify(role).delete();
     }
 
+    // ---------- review round 1: a live sheet is never taken down; a deleted role is never reused ----------
+
+    private static DataObject livePayload() {
+        return DataObject.fromJson(queue().toJson()).put(SignupJobs.SIGNUP_ID, "42").put(SignupJobs.PUBLIC_POSTED, "100");
+    }
+
+    @Test
+    void aLiveSheetWhoseAdminChannelWentAwayStaysAndSaysTheAdminPanelIsMissing() {
+        when(guild.getTextChannelById(ADMIN)).thenReturn(null);
+        DataObject result = jobs.run(jda, job(livePayload(), 1));
+        assertFalse(result.getBoolean("adminPanel"));
+        verify(signups, never()).discard(anyLong());
+        verify(signups, never()).postPanel(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void aLiveSheetWhoseAdminChannelWentMuteStaysToo() {
+        when(adminChannel.canTalk()).thenReturn(false);
+        when(guild.getTextChannelById(PUBLIC)).thenReturn(null); // even the sheet's own channel going away doesn't matter now
+        DataObject result = jobs.run(jda, job(livePayload(), 1));
+        assertFalse(result.getBoolean("adminPanel"));
+        verify(signups, never()).discard(anyLong());
+    }
+
+    @Test
+    void aSheetWithItsPublicPanelRecordedCountsAsLiveEvenWithoutTheJobsNote() {
+        when(signups.hasPanel(SIGNUP, SignupPanelType.PUBLIC)).thenReturn(true);
+        when(guild.getTextChannelById(ADMIN)).thenReturn(null);
+        jobs.run(jda, job(DataObject.fromJson(queue().toJson()).put(SignupJobs.SIGNUP_ID, "42"), 1));
+        verify(signups, never()).discard(anyLong());
+    }
+
+    @Test
+    void aSheetNotYetLiveIsTakenDownWhenItsChannelGoesAway() {
+        when(guild.getTextChannelById(PUBLIC)).thenReturn(null);
+        assertThrows(DiscordJobs.Refused.class, () -> jobs.run(jda, job(DataObject.fromJson(queue().toJson()).put(SignupJobs.SIGNUP_ID, "42"), 1)));
+        verify(signups).discard(SIGNUP);
+    }
+
+    @Test
+    void aLiveSheetIsKeptWhenTheServerStaysUnavailableToTheLastWait() {
+        when(jda.getGuildById(GUILD)).thenReturn(null);
+        when(jda.isUnavailable(GUILD)).thenReturn(true);
+        DataObject live = DataObject.fromJson(livePayload().toJson()).put(SignupJobs.ROLE_ID, Long.toString(ROLE));
+        assertThrows(DiscordJobs.RetryLater.class, () -> jobs.run(jda, job(live, DiscordJobs.MAX_RATE_LIMIT_WAITS)));
+        verify(signups, never()).discard(anyLong());
+    }
+
+    @Test
+    void aSheetNotYetLiveIsTakenDownWhenTheServerStaysUnavailableToTheLastWait() {
+        when(jda.getGuildById(GUILD)).thenReturn(null);
+        when(jda.isUnavailable(GUILD)).thenReturn(true);
+        DataObject kept = DataObject.fromJson(queue().toJson()).put(SignupJobs.SIGNUP_ID, "42");
+        assertThrows(DiscordJobs.RetryLater.class, () -> jobs.run(jda, job(kept, DiscordJobs.MAX_RATE_LIMIT_WAITS)));
+        verify(signups).discard(SIGNUP);
+    }
+
+    @Test
+    void aPublicPanelThatWasPostedButNotRecordedIsNeverPostedTwice() {
+        panelPosts(SignupPanelType.PUBLIC, message("100"));
+        panelPosts(SignupPanelType.ADMIN, new DiscordJobs.RetryLater(Duration.ofSeconds(2), "wait"));
+        assertThrows(DiscordJobs.RetryLater.class, () -> jobs.run(jda, job(queue(), 0)));
+        ArgumentCaptor<DataObject> saved = ArgumentCaptor.forClass(DataObject.class);
+        verify(repository, times(2)).savePayload(eq(5L), saved.capture());
+        DataObject last = saved.getValue();
+        assertEquals("100", last.getString(SignupJobs.PUBLIC_POSTED));
+
+        // the next try: the sheet has no recorded public message (its save failed), but the job's note says it's out
+        panelPosts(SignupPanelType.ADMIN, message("101"));
+        jobs.run(jda, job(last, 1));
+        verify(signups, times(1)).postPanel(anyLong(), any(), eq(SignupPanelType.PUBLIC), any());
+    }
+
+    @Test
+    void theLastWaitOnThePublicPanelTakesTheSheetDown() {
+        panelPosts(SignupPanelType.PUBLIC, new DiscordJobs.RetryLater(Duration.ofSeconds(2), "wait"));
+        assertThrows(DiscordJobs.RetryLater.class, () -> jobs.run(jda, job(queue(), DiscordJobs.MAX_RATE_LIMIT_WAITS)));
+        verify(signups).discard(SIGNUP);
+    }
+
+    @Test
+    void aFailedReadOfTheKeptSheetNeverMakesASecondOne() {
+        when(signups.isGone(SIGNUP)).thenThrow(new RuntimeException("database down"));
+        assertThrows(RuntimeException.class, () -> jobs.run(jda, job(DataObject.fromJson(queue().toJson()).put(SignupJobs.SIGNUP_ID, "42"), 1)));
+        verify(signups, never()).storeSignup(anyLong(), any(), anyString(), any(), any(), any(), anyLong(), any());
+        verify(signups, never()).discard(anyLong());
+    }
+
+    @SuppressWarnings("unchecked")
+    private Role roleMadeAs(long id) {
+        RoleAction create = mock(RoleAction.class);
+        when(guild.createRole()).thenReturn(create);
+        when(create.setName(anyString())).thenReturn(create);
+        when(create.setMentionable(anyBoolean())).thenReturn(create);
+        Role role = mock(Role.class);
+        when(role.getIdLong()).thenReturn(id);
+        try {
+            when(create.complete(false)).thenReturn(role);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        when(guild.getRoleById(id)).thenReturn(role);
+        AuditableRestAction<Void> delete = mock(AuditableRestAction.class);
+        when(role.delete()).thenReturn(delete);
+        return role;
+    }
+
+    @Test
+    void retryAfterTheRoleWasTakenDownMakesANewRole() {
+        long fresh = 78L;
+        roleMadeAs(fresh);
+        when(guild.getRoleById(ROLE)).thenReturn(null); // the earlier try deleted it
+        panelPosts(SignupPanelType.PUBLIC, message("100"));
+        panelPosts(SignupPanelType.ADMIN, message("101"));
+        DataObject group = SignupJobs.createPayload(SignupType.GROUP, PUBLIC, ADMIN, "Raid group", null, null, null).put(SignupJobs.ROLE_ID, Long.toString(ROLE));
+
+        jobs.run(jda, job(group, 0));
+
+        verify(signups).storeSignup(GUILD, SignupType.GROUP, "Raid group", null, null, null, ACTOR, fresh);
+    }
+
+    @Test
+    void aStoreThatFailsAfterTheRoleWasMadeTakesTheRoleDownAndForgetsIt() {
+        Role role = roleMadeAs(ROLE);
+        when(signups.storeSignup(anyLong(), any(), anyString(), any(), any(), any(), anyLong(), any())).thenThrow(new RuntimeException("hub down"));
+        DataObject group = SignupJobs.createPayload(SignupType.GROUP, PUBLIC, ADMIN, "Raid group", null, null, null);
+
+        assertThrows(RuntimeException.class, () -> jobs.run(jda, job(group, 0)));
+
+        verify(role).delete();
+        ArgumentCaptor<DataObject> saved = ArgumentCaptor.forClass(DataObject.class);
+        verify(repository, times(2)).savePayload(eq(5L), saved.capture());
+        assertTrue(saved.getAllValues().getFirst().hasKey(SignupJobs.ROLE_ID), "the role was named first");
+        assertFalse(saved.getValue().hasKey(SignupJobs.ROLE_ID), "then dropped, so Retry never names a deleted role");
+    }
+
     // ---------- the API queues the sheet instead of posting it on the web request ----------
 
     @Test
@@ -278,6 +413,5 @@ class SignupJobsTest {
         assertTrue(DiscordJobs.certainlyNotSent(missingPermissions()));
         assertTrue(DiscordJobs.certainlyNotSent(new DiscordJobs.Refused("no")));
         assertFalse(DiscordJobs.certainlyNotSent(new IllegalStateException("timeout")));
-        assertSame(DiscordJobs.Refused.class, new DiscordJobs.Refused("x").getClass());
     }
 }

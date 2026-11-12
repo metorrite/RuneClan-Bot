@@ -509,7 +509,7 @@ public class SignupRepository implements SignupStore {
                 // the cap, counted under the lock: a join racing this one waits here and then sees this entry
                 if (maxEntries != null && countEntries(connection, signupId) >= maxEntries) {
                     connection.rollback();
-                    log.info("Skipped user {} for signup {}: it's full ({} of {})", discordUserId, signupId, maxEntries, maxEntries);
+                    log.info("Skipped user {} for signup {}: it's full ({} places)", discordUserId, signupId, maxEntries);
                     return false;
                 }
 
