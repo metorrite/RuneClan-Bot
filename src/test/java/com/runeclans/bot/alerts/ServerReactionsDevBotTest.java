@@ -64,12 +64,14 @@ class ServerReactionsDevBotTest {
     }
 
     /**
-     * Events that look real enough to get past each listener's own early returns (from a server, with an attachment), so only the dev-bot gate
+     * Events that look real enough to get past each listener's own early returns (from a server, by someone other than the bot, with an attachment, a timeout that started), so only the dev-bot gate
      * can stop them: without it the listener goes on to read its settings, and the test fails.
      */
     private static final Answer<Object> REAL_ENOUGH = invocation -> {
         String name = invocation.getMethod().getName();
         if (name.equals("isFromGuild")) return true;
+        if (name.equals("getUserIdLong")) return 1L; // someone other than the bot itself (whose id the mocks answer as 0)
+        if (name.equals("getNewTimeOutEnd")) return java.time.OffsetDateTime.now().plusHours(1); // a timeout that really started
         if (name.equals("getAttachments")) return List.of(mock(Message.Attachment.class, Answers.RETURNS_DEEP_STUBS));
         return Answers.RETURNS_DEEP_STUBS.answer(invocation);
     };
