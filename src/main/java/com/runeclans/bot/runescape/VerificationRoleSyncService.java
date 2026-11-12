@@ -104,8 +104,16 @@ public class VerificationRoleSyncService {
             List<Role> add = plan.add().stream().map(guild::getRoleById).toList();
             List<Role> remove = plan.remove().stream().map(guild::getRoleById).toList();
             log.info("Updating roles for user {} ({}): add {}, remove {}", discordUserId, why, plan.add(), plan.remove());
-            guild.modifyMemberRoles(member, add, remove).queue(success -> {},
-                    error -> log.warn("Failed to update verification roles (add {}, remove {}) for user {}", plan.add(), plan.remove(), discordUserId, error));
+            // one request per role, never modifyMemberRoles: that writes the whole role list from this member snapshot and would undo a role
+            // another feature (autorole, role keep, role rules) gave in the meantime (B-89 follow-up)
+            for (Role role : add) {
+                guild.addRoleToMember(member, role).reason("Verification roles").queue(success -> {},
+                        error -> log.warn("Failed to give verification role {} to user {}", role.getId(), discordUserId, error));
+            }
+            for (Role role : remove) {
+                guild.removeRoleFromMember(member, role).reason("Verification roles").queue(success -> {},
+                        error -> log.warn("Failed to take verification role {} from user {}", role.getId(), discordUserId, error));
+            }
         }, error -> log.warn("Failed to retrieve member {} for verification role sync", discordUserId, error));
     }
 

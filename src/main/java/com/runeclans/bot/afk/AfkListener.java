@@ -1,5 +1,6 @@
 package com.runeclans.bot.afk;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.afk.AfkRepository.Afk;
 import com.runeclans.bot.hub.HubService;
@@ -36,6 +37,7 @@ public class AfkListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("AFK")) return; // replies and changes nicknames in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             long guildId = event.getGuild().getIdLong();

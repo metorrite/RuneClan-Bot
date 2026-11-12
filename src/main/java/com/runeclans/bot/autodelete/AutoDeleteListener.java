@@ -1,5 +1,6 @@
 package com.runeclans.bot.autodelete;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.Permission;
@@ -39,6 +40,7 @@ public class AutoDeleteListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("auto-delete")) return; // deletes messages in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage()) return;
         try {
             AutoDeleteRule rule = repository.forChannel(event.getGuild().getIdLong(), event.getChannel().getIdLong());

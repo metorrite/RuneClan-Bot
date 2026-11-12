@@ -80,6 +80,7 @@ public class ChatLevelListener extends ListenerAdapter implements BotListener {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("chat levels")) return; // level-up posts and level roles in the real server: only the live bot does that (T-187, B-82)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage() || event.getMember() == null) return;
         try {
             Guild guild = event.getGuild();
@@ -107,7 +108,7 @@ public class ChatLevelListener extends ListenerAdapter implements BotListener {
             if (total < 0) return;
             int before = ChatLevels.levelOf(total - amount);
             int after = ChatLevels.levelOf(total);
-            if (after > before && !AutoPostRouter.skipSweep("chat level-ups")) { // posts and gives roles in the real server: only the live bot does that (T-187, B-82)
+            if (after > before) {
                 if (config.announce()) announce(guild, member, message, after, config);
                 giveRoles(guild, member, after, config);
             }

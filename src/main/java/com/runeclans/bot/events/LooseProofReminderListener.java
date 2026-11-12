@@ -1,5 +1,6 @@
 package com.runeclans.bot.events;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.config.PrivilegedIntents;
 import com.runeclans.bot.events.EventRepository.Event;
@@ -67,6 +68,7 @@ public class LooseProofReminderListener extends ListenerAdapter implements BotLi
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("loose-proof reminder")) return; // replies in the real server: only the live bot does that (B-82 follow-up)
         if (!event.isFromGuild() || event.getAuthor().isBot() || event.isWebhookMessage() || event.getMessage().getAttachments().isEmpty()) return;
         try {
             if (!PrivilegedIntents.messageContent() || !hasPicture(event.getMessage().getAttachments())) return;

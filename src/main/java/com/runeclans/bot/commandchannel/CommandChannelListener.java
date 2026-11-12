@@ -1,5 +1,6 @@
 package com.runeclans.bot.commandchannel;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
@@ -51,6 +52,7 @@ public class CommandChannelListener extends ListenerAdapter {
 
     @Override
     public void onMessageReceived(MessageReceivedEvent event) {
+        if (AutoPostRouter.skipSweep("command-only channel")) return; // deletes messages and posts notices in the real server: only the live bot does that (B-82 follow-up)
         try {
             if (!event.isFromGuild() || event.isWebhookMessage() || event.getAuthor().isBot()) return;
 
