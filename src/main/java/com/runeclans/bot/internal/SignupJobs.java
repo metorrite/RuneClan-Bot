@@ -171,7 +171,7 @@ public class SignupJobs implements DiscordJobHandler {
     }
 
     private void deleteRole(JDA jda, long guildId, long roleId) {
-        Guild guild = jda.getGuildById(guildId);
+        Guild guild = com.runeclans.bot.discord.Shards.guild(jda, guildId);
         if (guild != null) deleteRole(guild, roleId);
     }
 
