@@ -119,7 +119,8 @@ public class PollInteractionListener extends ListenerAdapter {
                 PollSession poll = manageablePoll(event, parts[1], member, admin);
                 if (poll == null) return;
 
-                if (parts.length > 2 && parts[2].equals("1")) dmResults(event, poll);
+                // an anonymous poll never DMs who voted, even from a confirm card made before this rule
+                if (parts.length > 2 && parts[2].equals("1") && !poll.anonymous()) dmResults(event, poll);
                 pollService.closePoll(guild, poll.pollId());
                 showPanel(event, member, admin, 0, "✅ Ended **“" + poll.title() + "”**.");
             }

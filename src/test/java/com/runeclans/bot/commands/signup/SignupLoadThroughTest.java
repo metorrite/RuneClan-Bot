@@ -70,7 +70,7 @@ class SignupLoadThroughTest {
         SignupService service = new SignupService(repository);
         when(repository.getOpenSignupById(7)).thenReturn(signup(7));
         when(repository.getSignupStatus(7)).thenReturn("ACTIVE");
-        when(repository.addEntry(7, USER, "Some Rsn", null, USER, SignupType.QUEUE)).thenReturn(true);
+        when(repository.addEntry(7, USER, "Some Rsn", null, USER, SignupType.QUEUE, null)).thenReturn(true);
 
         assertTrue(service.addUser(null, 7, USER, "Some Rsn", null));
     }

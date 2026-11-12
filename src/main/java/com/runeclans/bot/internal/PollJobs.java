@@ -55,12 +55,31 @@ public class PollJobs implements DiscordJobHandler {
         return false;
     }
 
+    /** Payload key: at most this many running polls for the person who asked (a member poll); absent for a dashboard poll. */
+    static final String OWNER_LIMIT = "ownerLimit";
+
     /** Everything a poll needs, checked by the API first. {@code closesAt} is fixed when the poll is asked for, not when the bot gets to it. */
     static DataObject createPayload(long channelId, String title, boolean anonymous, boolean multiple, List<String> options, Instant closesAt) {
+        return createPayload(channelId, title, anonymous, multiple, options, closesAt, null);
+    }
+
+    /**
+     * {@link #createPayload} for a member's poll: {@code ownerLimit} is checked again when the job runs, because the API's own check only
+     * counts polls already stored, and several queued jobs would each pass it (B-117).
+     */
+    static DataObject createPayload(long channelId, String title, boolean anonymous, boolean multiple, List<String> options, Instant closesAt,
+                                    Integer ownerLimit) {
         DataArray labels = DataArray.empty();
         options.forEach(labels::add);
-        return DataObject.empty().put("channelId", Long.toString(channelId)).put("title", title).put("anonymous", anonymous).put("multiple", multiple)
+        DataObject payload = DataObject.empty().put("channelId", Long.toString(channelId)).put("title", title).put("anonymous", anonymous).put("multiple", multiple)
                 .put("options", labels).put("closesAt", closesAt == null ? null : closesAt.toString());
+        if (ownerLimit != null) payload.put(OWNER_LIMIT, ownerLimit);
+        return payload;
+    }
+
+    /** The words a member sees when the limit refuses a queued poll. */
+    static String limitReached(int limit) {
+        return "You already have " + limit + " polls running — end one first.";
     }
 
     @Override
@@ -92,6 +111,11 @@ public class PollJobs implements DiscordJobHandler {
         if (kept != null) {
             pollId = Long.parseLong(kept);
         } else {
+            // a member poll: the outbox runs one job at a time, so this count already holds every poll an earlier job stored
+            if (!p.isNull(OWNER_LIMIT)) {
+                int limit = p.getInt(OWNER_LIMIT);
+                if (polls.activePollsOwnedBy(guild.getIdLong(), job.actorId()).size() >= limit) throw new DiscordJobs.Refused(limitReached(limit));
+            }
             pollId = polls.storePoll(guild, channel, p.getString("title"), p.getBoolean("anonymous", false), p.getBoolean("multiple", false),
                     options, job.actorId(), closesAt);
             boolean saved;

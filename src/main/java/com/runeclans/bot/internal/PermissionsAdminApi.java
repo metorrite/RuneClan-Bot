@@ -63,7 +63,9 @@ public class PermissionsAdminApi {
                     }
                     long roleId = Long.parseLong(raw);
                     Role role = guild.getRoleById(roleId);
-                    if (role == null) problems.add((name.isEmpty() ? "A group" : "\"" + name + "\"") + " has a role that doesn't exist in this server any more.");
+                    // a role deleted in Discord is dropped quietly: the page (and the setup wizard, which sends every group's stored roles
+                    // back) can't keep it anyway, and refusing would block every save while one group still names it
+                    if (role == null) log.info("Dashboard: dropped deleted role {} from group \"{}\" in {}", roleId, name, guild.getId());
                     else if (role.isPublicRole()) problems.add((name.isEmpty() ? "A group" : "\"" + name + "\"") + " can't use @everyone: that would be everyone.");
                     else roleIds.add(roleId);
                 }
@@ -71,6 +73,8 @@ public class PermissionsAdminApi {
             drafts.add(new PermissionGroupService.Draft(key, name, g.getBoolean("includeHigher", false), roleIds));
         }
 
+        // checked as a whole before anything changes: a refused save must not have saved the other groups
+        if (!problems.isEmpty()) throw new ApiError(400, Text.of(guild, "dashboard.those_permission_groups_can_t_be"), problems);
         try {
             groups.save(guild.getIdLong(), drafts);
         } catch (PermissionGroupService.InvalidGroupsException e) {

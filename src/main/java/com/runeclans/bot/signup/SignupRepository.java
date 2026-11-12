@@ -484,6 +484,13 @@ public class SignupRepository implements SignupStore {
     @Override
     public boolean addEntry(long signupId, long discordUserId, String rsn, String submissionValue,
                              long addedByUserId, SignupType type) {
+        return addEntry(signupId, discordUserId, rsn, submissionValue, addedByUserId, type, null);
+    }
+
+    /** {@link #addEntry} with the cap checked inside the same locked transaction as the insert (B-39). */
+    @Override
+    public boolean addEntry(long signupId, long discordUserId, String rsn, String submissionValue,
+                             long addedByUserId, SignupType type, Integer maxEntries) {
         String insertSql = """
                 INSERT INTO younglings.signup_entry
                     (signup_id, discord_user_id, rsn, queue_position, added_by_user_id, submission_value)
@@ -498,6 +505,13 @@ public class SignupRepository implements SignupStore {
             connection.setAutoCommit(false);
             try {
                 lockSignupForEntryChanges(connection, signupId);
+
+                // the cap, counted under the lock: a join racing this one waits here and then sees this entry
+                if (maxEntries != null && countEntries(connection, signupId) >= maxEntries) {
+                    connection.rollback();
+                    log.info("Skipped user {} for signup {}: it's full ({} of {})", discordUserId, signupId, maxEntries, maxEntries);
+                    return false;
+                }
 
                 // SUBMISSION allows multiple entries per user; QUEUE and GROUP do not
                 if (type != SignupType.SUBMISSION && isUserInSignup(connection, signupId, discordUserId)) {
@@ -560,6 +574,13 @@ public class SignupRepository implements SignupStore {
         try (PreparedStatement statement = connection.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
             statement.setLong(1, signupId);
             statement.execute();
+        }
+    }
+
+    private int countEntries(Connection connection, long signupId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT COUNT(*) FROM younglings.signup_entry WHERE signup_id = ?")) {
+            statement.setLong(1, signupId);
+            try (ResultSet rs = statement.executeQuery()) { return rs.next() ? rs.getInt(1) : 0; }
         }
     }
 

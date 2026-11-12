@@ -48,6 +48,16 @@ public interface SignupStore {
 
     boolean addEntry(long signupId, long discordUserId, String rsn, String submissionValue, long addedByUserId, SignupType type);
 
+    /**
+     * {@link #addEntry} on a sheet with a cap: false, adding nothing, when it already holds {@code maxEntries} (null = no cap). The bot's own
+     * tables check the count under the same lock as the insert, so two joins for the last place can't both get it (B-39); the hub checks the
+     * cap itself on every join, so this default (a count first, then the add) only saves it a refused call.
+     */
+    default boolean addEntry(long signupId, long discordUserId, String rsn, String submissionValue, long addedByUserId, SignupType type, Integer maxEntries) {
+        if (maxEntries != null && getEntryCount(signupId) >= maxEntries) return false;
+        return addEntry(signupId, discordUserId, rsn, submissionValue, addedByUserId, type);
+    }
+
     boolean removeEntryByUserId(long signupId, long discordUserId);
 
     List<SignupEntry> getEntries(long signupId);

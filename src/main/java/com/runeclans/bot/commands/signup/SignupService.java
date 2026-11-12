@@ -215,6 +215,55 @@ public class SignupService {
                 });
     }
 
+    // --- Made by the outbox (the dashboard's "New signup sheet", SignupJobs) ---
+
+    /**
+     * Stores a sheet (open, no messages yet) and remembers it here, for a caller that posts its panels with {@link #postPanel}, possibly over
+     * several tries. {@code serializedFields} is {@link SubmissionField#serialize} for a submission sheet, else null; {@code groupRoleId} the
+     * role a group sheet hands out.
+     */
+    public long storeSignup(long guildId, SignupType type, String title, String notificationMessage, String serializedFields, Integer maxSignups,
+                            long createdByUserId, Long groupRoleId) {
+        long signupId = signupRepository.createSignup(guildId, title, type, notificationMessage, serializedFields, maxSignups, createdByUserId, groupRoleId);
+        activeSignupsById.put(signupId, new SignupSession(signupId, guildId, title, notificationMessage, maxSignups, type, serializedFields, groupRoleId));
+        log.info("Stored {} signup {} '{}' in guild {}", type, signupId, title, guildId);
+        return signupId;
+    }
+
+    /** Whether a stored sheet already shows a panel of this kind (an earlier try posted it before it had to wait). */
+    public boolean hasPanel(long signupId, SignupPanelType panel) {
+        return signupRepository.getActiveMessages(signupId).stream().anyMatch(m -> panel.name().equalsIgnoreCase(m.messageType()));
+    }
+
+    /**
+     * Posts one panel of a sheet {@link #storeSignup} stored and records its message. {@code send} runs the post and waits for Discord (the
+     * outbox's {@code DiscordJobs::send}); its errors go to the caller, which decides whether the sheet stays. A failure to record the posted
+     * message is only logged: the post went out.
+     */
+    public net.dv8tion.jda.api.entities.Message postPanel(long signupId, TextChannel channel, SignupPanelType panel,
+                                                          java.util.function.Function<net.dv8tion.jda.api.requests.RestAction<net.dv8tion.jda.api.entities.Message>, net.dv8tion.jda.api.entities.Message> send) {
+        SignupSession session = getSessionById(signupId);
+        if (session == null) throw new com.runeclans.bot.discord.jobs.DiscordJobs.Refused("That signup was removed before it could be posted.");
+        Container container = panel == SignupPanelType.ADMIN ? buildAdminContainer(session) : buildPublicContainer(session);
+        net.dv8tion.jda.api.entities.Message message = send.apply(channel.sendMessageComponents(List.of(container)).useComponentsV2(true));
+        try {
+            signupRepository.saveMessage(signupId, session.guildId(), channel.getIdLong(), message.getIdLong(), panel.name());
+        } catch (RuntimeException e) {
+            log.warn("Signup {} was posted as message {} but the message couldn't be recorded", signupId, message.getIdLong(), e);
+        }
+        return message;
+    }
+
+    /** Removes a stored sheet whose public panel Discord never took, and forgets it here. A failed removal is only logged: the post's error matters more. */
+    public void discard(long signupId) {
+        try {
+            signupRepository.deleteSignupForAdminArchive(signupId);
+        } catch (RuntimeException e) {
+            log.warn("Couldn't remove signup {} after its post failed", signupId, e);
+        }
+        forget(signupId);
+    }
+
     // --- /signupbuilder SUBMISSION drafts ---
 
     // No Discord event fires when a user dismisses the ephemeral message a draft lives behind, so
@@ -293,12 +342,8 @@ public class SignupService {
         if (session == null) return false;
         if (!isSignupActive(signupId)) return false;
 
-        if (session.maxSignups() != null
-                && signupRepository.getEntryCount(signupId) >= session.maxSignups()) {
-            return false;
-        }
-
-        boolean added = signupRepository.addEntry(signupId, userId, rsn, submissionValue, userId, session.type());
+        // the cap is checked by the store with the add itself, so two joins for the last place can't both get it
+        boolean added = signupRepository.addEntry(signupId, userId, rsn, submissionValue, userId, session.type(), session.maxSignups());
 
         if (added && session.type() == SignupType.GROUP && session.groupRoleId() != null) {
             assignGroupRole(guild, session.groupRoleId(), userId);
@@ -312,12 +357,7 @@ public class SignupService {
         SignupSession session = getSessionById(signupId);
         if (session == null) return false;
 
-        if (session.maxSignups() != null
-                && signupRepository.getEntryCount(signupId) >= session.maxSignups()) {
-            return false;
-        }
-
-        boolean added = signupRepository.addEntry(signupId, userId, rsn, submissionValue, addedByUserId, session.type());
+        boolean added = signupRepository.addEntry(signupId, userId, rsn, submissionValue, addedByUserId, session.type(), session.maxSignups());
 
         if (added && session.type() == SignupType.GROUP && session.groupRoleId() != null) {
             assignGroupRole(guild, session.groupRoleId(), userId);

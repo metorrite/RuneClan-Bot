@@ -202,31 +202,36 @@ public class CommunityAdminApi {
         TextChannel signupChannel = postableChannel(guild, body.getString("signupChannelId", ""), TextChannel.class);
         TextChannel adminChannel = postableChannel(guild, body.getString("adminChannelId", ""), TextChannel.class);
 
+        String note = null;
+        String fields = null;
         switch (type) {
             case QUEUE -> {
-                String note = body.getString("note", "").strip();
+                note = body.getString("note", "").strip();
                 if (note.length() > 500) throw new ApiError(400, Text.of(guild, "dashboard.the_notification_message_can_be_at"));
-                signups.createQueueSession(guild, signupChannel, adminChannel, title, note.isEmpty() ? null : note, max, actor.getIdLong());
+                if (note.isEmpty()) note = null;
             }
-            case GROUP -> signups.createGroupSession(guild, signupChannel, adminChannel, title, actor.getIdLong());
+            case GROUP -> max = null; // a group sheet has no cap, as /signup makes it
             case SUBMISSION -> {
-                List<SubmissionField> fields = new ArrayList<>();
+                List<SubmissionField> list = new ArrayList<>();
                 if (!body.isNull("fields")) {
                     DataArray array = body.getArray("fields");
                     for (int i = 0; i < array.length() && i < 3; i++) {
                         DataObject f = array.getObject(i);
                         String label = f.getString("label", "").strip();
                         if (label.isEmpty() || label.length() > 45) throw new ApiError(400, Text.of(guild, "dashboard.each_question_needs_a_label_of"));
-                        fields.add(new SubmissionField(label, SubmissionField.normalizeType(f.getString("type", "TEXT")), f.getBoolean("required", true)));
+                        list.add(new SubmissionField(label, SubmissionField.normalizeType(f.getString("type", "TEXT")), f.getBoolean("required", true)));
                     }
                 }
-                if (fields.isEmpty()) throw new ApiError(400, Text.of(guild, "dashboard.a_submission_signup_needs_at_least"));
-                signups.createSubmissionSession(guild, signupChannel, adminChannel, title, fields, max, actor.getIdLong());
+                if (list.isEmpty()) throw new ApiError(400, Text.of(guild, "dashboard.a_submission_signup_needs_at_least"));
+                fields = SubmissionField.serialize(list);
             }
         }
-        cache.invalidate("signups");
-        log.info("Dashboard: {} created a {} signup '{}'", actor.getId(), type, title);
-        return DataObject.empty().put("created", true);
+        // a website-triggered Discord write (B-112): the outbox makes the sheet and posts its panels, and keeps no open sheet if Discord
+        // refuses the post; the page follows the job instead of saying "created" before Discord answered
+        DiscordJob job = outbox.enqueue(SignupJobs.CREATE, guild.getIdLong(), actor.getIdLong(), null,
+                SignupJobs.createPayload(type, signupChannel.getIdLong(), adminChannel.getIdLong(), title, note, max, fields));
+        log.info("Dashboard: {} queued a {} signup '{}' (job {})", actor.getId(), type, title, job.id());
+        return DataObject.empty().put("created", true).put("queued", true).put("job", job.ticket());
     }
 
     private SignupSession ownSignup(Guild guild, long signupId) {
