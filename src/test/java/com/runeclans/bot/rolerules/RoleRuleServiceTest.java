@@ -128,6 +128,7 @@ class RoleRuleServiceTest {
         service.onRoleChange(guild, member(5, 2), Set.of(2L), true);
 
         verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
     }
 
     @Test
@@ -137,6 +138,7 @@ class RoleRuleServiceTest {
         service.onRoleChange(guild, member(5, 1, 20), Set.of(1L), true);
 
         verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
     }
 
     // ---------- the clan sync always wins ----------
@@ -161,12 +163,22 @@ class RoleRuleServiceTest {
     }
 
     @Test
+    void aSavedRuleThatWouldTakeTheClanSyncRoleIsRefusedAtRunTime() {
+        rules(rule(1, Event.GAINS, List.of(1L), List.of(), List.of(MEMBER_ROLE)));
+
+        service.onRoleChange(guild, member(5, 1, MEMBER_ROLE), Set.of(1L), true);
+
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
+    }
+
+    @Test
     void aSavedRuleWhoseTargetBecameTheClanSyncRoleSinceIsRefusedAtRunTime() {
         rules(rule(1, Event.GAINS, List.of(1L), List.of(MEMBER_ROLE), List.of()));
 
         service.onRoleChange(guild, member(5, 1), Set.of(1L), true);
 
         verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
     }
 
     // ---------- loops ----------
@@ -230,6 +242,7 @@ class RoleRuleServiceTest {
         service.onRoleChange(guild, bot, Set.of(1L), true);
 
         verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
     }
 
     @Test
