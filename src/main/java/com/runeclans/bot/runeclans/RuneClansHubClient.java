@@ -317,8 +317,8 @@ public class RuneClansHubClient {
         return URLEncoder.encode(s, StandardCharsets.UTF_8);
     }
 
-    /** One call's timeout: {@link #REQUEST_TIMEOUT}, or less when this thread's {@link #withinBudget} has less left (never 0: the client refuses it). */
-    static Duration callTimeout() {
+    /** One call's timeout: {@link #REQUEST_TIMEOUT}, or less when this thread's {@link #withinBudget} has less left (never 0: the client refuses it). Public so tests elsewhere can see a call's budget. */
+    public static Duration callTimeout() {
         Duration left = HubRetry.timeLeft(REQUEST_TIMEOUT);
         return left.compareTo(Duration.ofMillis(1)) < 0 ? Duration.ofMillis(1) : left;
     }

@@ -46,7 +46,8 @@ public class ClanPointsScheduler {
     private final ClanPointsService clanPointsService;
     private final ClanSyncService clanSyncService;
     private final BotConfig botConfig;
-    private final ScheduledExecutorService executor = BotScheduler.lane("clan-points-scheduler");
+    /** Replaceable in tests, to see the retries scheduled. */
+    ScheduledExecutorService executor = BotScheduler.lane("clan-points-scheduler");
 
     public ClanPointsScheduler(ClanPointsService clanPointsService, ClanSyncService clanSyncService, BotConfig botConfig) {
         this.clanPointsService = clanPointsService;
@@ -83,7 +84,7 @@ public class ClanPointsScheduler {
     }
 
     /** Try {@code tryNumber} for {@code guilds}; the ones the hub didn't answer for are tried again later, while tries are left. */
-    private void runAndRetry(JDA jda, List<Guild> guilds, int tryNumber) {
+    void runAndRetry(JDA jda, List<Guild> guilds, int tryNumber) {
         List<Long> again = run(guilds);
         if (again.isEmpty()) return;
         if (tryNumber >= TRIES) {

@@ -29,7 +29,7 @@ public class AdminListFeed implements HubFeedListener {
     public void onHubFeed(String kind, DataObject data) {
         if (!KIND.equals(kind)) return;
         try {
-            boolean removed = data != null && data.optObject("data").map(d -> d.getBoolean("removed", true)).orElse(true);
+            boolean removed = data == null || data.optObject("data").map(d -> d.getBoolean("removed", true)).orElse(true);
             admins.changed(removed);
             siteRoles.forgetAll();
         } catch (RuntimeException e) {

@@ -55,4 +55,20 @@ class ClanAdminApiPointsTest {
                 .put("ranks", DataArray.empty().add(DataObject.empty().put("id", "1").put("threshold", 40))));
         verify(points).save(eq(GUILD), eq(ACTOR), eq(7L), isNull(), isNull(), eq(Map.of(1L, 40L)));
     }
+
+    /** B-36: the panel after a save is drawn from the save's own answer, with no second hub read. */
+    @Test
+    void aSaveIsDrawnFromItsOwnAnswerWithNoSecondRead() {
+        when(points.save(anyLong(), anyLong(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(DataObject.empty().put("dailyMembershipPoints", 9).put("citadelVisitPoints", 4).put("citadelCapPoints", 30));
+        DataObject shown = api.saveClanPoints(guild, actor, DataObject.empty().put("dailyMembershipPoints", 9));
+        assertEquals(9, shown.getInt("dailyMembershipPoints"));
+        assertEquals(30, shown.getInt("citadelCapPoints"));
+        assertEquals(ClanPointsRepository.STANDARD_RANK_NAMES.size(), shown.getArray("ranks").length());
+        org.mockito.Mockito.verify(points, org.mockito.Mockito.never()).known(anyLong());
+
+        when(points.save(anyLong(), anyLong(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenReturn(null);
+        assertEquals(503, assertThrows(ApiError.class, () -> api.saveClanPoints(guild, actor, DataObject.empty().put("dailyMembershipPoints", 9))).status);
+    }
 }

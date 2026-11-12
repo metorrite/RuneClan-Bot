@@ -58,6 +58,8 @@ public class OverallAdmins {
     private volatile long freshUntil;
     private final AtomicBoolean refreshing = new AtomicBoolean();
     private final Object firstLoad = new Object();
+    /** Bumped by a removal ({@link #changed}); a read started before it is dropped, so it can't put a removed admin back. */
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     public OverallAdmins(RuneClansHubClient hub, BotOwners owners) {
         this.owners = owners;
@@ -99,6 +101,7 @@ public class OverallAdmins {
             return false;
         }
         synchronized (firstLoad) {
+            generation.incrementAndGet();
             try {
                 known = source.read();
                 freshUntil = clock.getAsLong() + CACHE_MILLIS;
@@ -138,14 +141,26 @@ public class OverallAdmins {
     }
 
     private void refresh() {
+        long started = generation.get();
+        HubList read;
         try {
-            known = source.read();
-            freshUntil = clock.getAsLong() + CACHE_MILLIS;
+            read = source.read();
         } catch (RuntimeException e) {
             log.warn("Couldn't read the RuneClan Admins from the hub ({}); keeping the list already known.", e.getMessage());
-            freshUntil = clock.getAsLong() + RETRY_MILLIS;
+            synchronized (firstLoad) {
+                if (generation.get() == started) freshUntil = clock.getAsLong() + RETRY_MILLIS;
+                loaded = true;
+            }
+            return;
         }
-        loaded = true;
+        synchronized (firstLoad) {
+            // a removal while this read was on its way already read a newer list: this one may still hold the removed admin
+            if (generation.get() == started) {
+                known = read;
+                freshUntil = clock.getAsLong() + CACHE_MILLIS;
+            }
+            loaded = true;
+        }
     }
 
     /** {@code GET /v1/admins} with the bot's first-party key: tried once, so a down hub costs one timeout, not the retries. */
