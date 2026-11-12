@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -36,13 +37,17 @@ class VerificationRoleSyncWritesTest {
     private Role memberRole;
     private Role guestRole;
     private VerificationRoleSyncService service;
+    private GuildSettingsService settings;
+    private ClanMemberRepository roster;
+    private PlayerLinkService links;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
     void setUp() {
-        GuildSettingsService settings = mock(GuildSettingsService.class);
-        ClanMemberRepository roster = mock(ClanMemberRepository.class);
-        service = new VerificationRoleSyncService(settings, roster, mock(PlayerLinkService.class));
+        settings = mock(GuildSettingsService.class);
+        roster = mock(ClanMemberRepository.class);
+        links = mock(PlayerLinkService.class);
+        service = new VerificationRoleSyncService(settings, roster, links);
         when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Clan", null, null, null, MEMBER_ROLE, null, GUEST_ROLE, null, true, null, null, null));
         when(roster.isActiveMember(GUILD, "Test Player")).thenReturn(true);
 
@@ -110,5 +115,47 @@ class VerificationRoleSyncWritesTest {
         service.syncRoles(guild, USER, "Test Player");
 
         verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
+    }
+
+    @Test
+    void withNothingToGiveTheOldRoleStillComesOff() {
+        // a linked player left the clan and already holds Guest: only Member comes off
+        when(roster.isActiveMember(GUILD, "Test Player")).thenReturn(false);
+        when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Clan", null, null, null, MEMBER_ROLE, GUEST_ROLE, null, null, true, null, null, null));
+        when(links.getLinksForUser(GUILD, USER)).thenReturn(List.of());
+        when(member.getRoles()).thenReturn(List.of(memberRole, guestRole));
+        AuditableRestAction<Void> take = answers(true);
+        when(guild.removeRoleFromMember(member, memberRole)).thenReturn(take);
+
+        service.syncLeftClan(guild, USER);
+
+        verify(guild).removeRoleFromMember(member, memberRole);
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
+    }
+
+    @Test
+    void whenOneOfTwoNewRolesFailsTheOldRoleIsKept() {
+        Role extra = role(30);
+        AuditableRestAction<Void> ok = answers(true);
+        AuditableRestAction<Void> bad = answers(false);
+        when(guild.addRoleToMember(member, memberRole)).thenReturn(ok);
+        when(guild.addRoleToMember(member, extra)).thenReturn(bad);
+
+        service.apply(guild, USER, "test", (held, exists, canGive) -> new VerificationRoleSyncService.RolePlan(Set.of(MEMBER_ROLE, 30L), Set.of(GUEST_ROLE), Set.of()));
+
+        verify(guild, never()).removeRoleFromMember(any(Member.class), any(Role.class));
+    }
+
+    @Test
+    void aRoleDeletedSinceThePlanIsSkippedNotSentAsNull() {
+        AuditableRestAction<Void> ok = answers(true);
+        when(guild.addRoleToMember(member, memberRole)).thenReturn(ok);
+        when(guild.removeRoleFromMember(member, guestRole)).thenReturn(ok);
+
+        // role 99 was in the plan but no longer exists
+        service.apply(guild, USER, "test", (held, exists, canGive) -> new VerificationRoleSyncService.RolePlan(Set.of(MEMBER_ROLE, 99L), Set.of(GUEST_ROLE), Set.of()));
+
+        verify(guild, never()).addRoleToMember(any(Member.class), org.mockito.ArgumentMatchers.isNull());
+        verify(guild).removeRoleFromMember(member, guestRole);
     }
 }

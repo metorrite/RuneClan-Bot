@@ -11,8 +11,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -91,7 +91,8 @@ public class VerificationRoleSyncService {
         RolePlan plan(Set<Long> held, java.util.function.Predicate<Long> exists, java.util.function.Predicate<Long> canGive);
     }
 
-    private void apply(Guild guild, long discordUserId, String why, Planner planner) {
+    /** Package-private so tests can hand in a plan directly. */
+    void apply(Guild guild, long discordUserId, String why, Planner planner) {
         guild.retrieveMemberById(discordUserId).queue(member -> {
             Set<Long> held = new HashSet<>();
             for (Role role : member.getRoles()) held.add(role.getIdLong());
@@ -103,8 +104,9 @@ public class VerificationRoleSyncService {
             plan.refused().forEach(id -> log.warn("Not giving verification role {} in guild {}: {}", id, guild.getIdLong(), MemberApi.handOutRefusal(guild, guild.getRoleById(id))));
             if (plan.add().isEmpty() && plan.remove().isEmpty()) return;
 
-            List<Role> add = plan.add().stream().map(guild::getRoleById).toList();
-            List<Role> remove = plan.remove().stream().map(guild::getRoleById).toList();
+            // a role deleted since the plan looked is skipped, not handed to Discord as null
+            List<Role> add = plan.add().stream().map(guild::getRoleById).filter(Objects::nonNull).toList();
+            List<Role> remove = plan.remove().stream().map(guild::getRoleById).filter(Objects::nonNull).toList();
             log.info("Updating roles for user {} ({}): add {}, remove {}", discordUserId, why, plan.add(), plan.remove());
             // one request per role, never modifyMemberRoles: that writes the whole role list from this member snapshot and would undo a role
             // another feature (autorole, role keep, role rules) gave in the meantime (B-89 follow-up). The new role goes on first and the old one
@@ -119,13 +121,12 @@ public class VerificationRoleSyncService {
                 takeOff.run();
                 return;
             }
+            // counts down only on success, so one failed give means the old role is never taken off
             AtomicInteger waiting = new AtomicInteger(add.size());
-            AtomicBoolean failed = new AtomicBoolean();
             for (Role role : add) {
                 guild.addRoleToMember(member, role).reason("Verification roles").queue(success -> {
-                    if (waiting.decrementAndGet() == 0 && !failed.get()) takeOff.run();
+                    if (waiting.decrementAndGet() == 0) takeOff.run();
                 }, error -> {
-                    failed.set(true);
                     log.warn("Failed to give verification role {} to user {}; kept {} so they still hold a role", role.getId(), discordUserId, plan.remove(), error);
                 });
             }
