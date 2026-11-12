@@ -2,6 +2,7 @@ package com.runeclans.bot.commands.signup;
 
 import com.runeclans.bot.discord.Mentions;
 import com.runeclans.bot.config.BotConfig;
+import com.runeclans.bot.devtools.DevCommandFilter;
 import com.runeclans.bot.discord.Containers;
 import com.runeclans.bot.discord.Pagination;
 import com.runeclans.bot.hub.HubService;
@@ -43,9 +44,12 @@ public class SignupInteractionListener extends ListenerAdapter {
     private final BotConfig botConfig;
     private final AdminRoleFilter adminRoleFilter;
     private final HubService hub;
+    private final DevCommandFilter devAccess;
 
-    public SignupInteractionListener(SignupService signupService, BotConfig botConfig, AdminRoleFilter adminRoleFilter, HubService hub) {
+    public SignupInteractionListener(SignupService signupService, BotConfig botConfig, AdminRoleFilter adminRoleFilter, HubService hub,
+                                     DevCommandFilter devAccess) {
         this.hub = hub;
+        this.devAccess = devAccess;
         this.signupService = signupService;
         this.botConfig = botConfig;
         this.adminRoleFilter = adminRoleFilter;
@@ -576,6 +580,11 @@ public class SignupInteractionListener extends ListenerAdapter {
     private void handleDevCloseAll(ButtonInteractionEvent event, String id) {
         if (botConfig.getLiveEnvironment()) {
             Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "signup.this_command_is_dev_only"));
+            return;
+        }
+        // Checked on every press, the confirm included: the buttons can be pressed by anyone who can see them.
+        if (!devAccess.isAllowed(event.getJDA(), event.getUser().getIdLong())) {
+            Containers.replyEphemeral(event, Containers.WARNING, DevCommandFilter.refusal());
             return;
         }
 

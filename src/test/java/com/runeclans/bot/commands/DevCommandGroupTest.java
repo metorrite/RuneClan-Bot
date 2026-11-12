@@ -54,5 +54,7 @@ class DevCommandGroupTest {
         Method carrier = declaring.get(0);
         assertEquals(CommandScope.GUILD, carrier.getAnnotation(TopLevelSlashCommandData.class).scope());
         assertTrue(carrier.isAnnotationPresent(Test.class), "the group must be @Test so it is never pushed to the live bot");
+        assertTrue(carrier.getAnnotation(TopLevelSlashCommandData.class).defaultLocked(),
+                "/dev is hidden from members without Administrator (the bot also checks the owner: DevCommandFilter)");
     }
 }
