@@ -1,5 +1,6 @@
 package com.runeclans.bot.accountgate;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.accountgate.AccountGateConfig.Action;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -37,6 +38,7 @@ public class AccountGateListener extends ListenerAdapter implements BotListener 
         try {
             User user = event.getUser();
             if (user.isBot()) return;
+            if (AutoPostRouter.skipSweep("account gate")) return; // kicks, bans and alerts in the real server: only the live bot does that (T-187, B-82)
             Guild guild = event.getGuild();
             AccountGateConfig config = repository.get(guild.getIdLong());
             Instant created = user.getTimeCreated().toInstant();

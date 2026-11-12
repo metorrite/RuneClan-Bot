@@ -1,5 +1,6 @@
 package com.runeclans.bot.welcome;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
@@ -62,6 +63,7 @@ public class WelcomeService {
     /** A real join: sends this server's welcome if it is switched on. Never throws; a failure is logged. */
     public void welcomeNewMember(Member member) {
         if (member.getUser().isBot()) return;
+        if (AutoPostRouter.skipSweep("welcome")) return; // posts and DMs in the real server: only the live bot does that (T-187, B-82)
         Guild guild = member.getGuild();
         WelcomeConfig config = repository.get(guild.getIdLong());
         if (!config.enabled()) return;

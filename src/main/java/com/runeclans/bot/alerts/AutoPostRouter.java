@@ -23,7 +23,9 @@ import java.util.function.BooleanSupplier;
  *     not set, and never pings anybody ({@link #noPings});</li>
  *     <li>anything tied to stored state or a person (a post the bot later edits, a DM) is skipped and logged ({@link #skip});</li>
  *     <li>a background sweep that changes the real server by itself (auto-clean deleting messages, autoroles, timed roles, event roles, event
- *     wrap-up, the daily clan sync's Member/Guest roles) does not run at all ({@link #skipSweep}, T-187). The live bot runs the same sweeps, so nothing is lost in the server.</li>
+ *     wrap-up, the daily clan sync's Member/Guest roles) does not run at all ({@link #skipSweep}, T-187). The live bot runs the same sweeps, so nothing is lost in the server.
+ *     The same goes for what the bot does by itself when someone joins, leaves, chats or changes roles (welcome and goodbye, the account gate and honeypot,
+ *     autoroles and kept roles on join, server tag, role rules, chat level-ups, B-82).</li>
  * </ul>
  * What somebody runs on purpose (a command, a button, a dashboard action) never goes through here and replies where it was run. Sites reach this
  * through the static methods so the many posters need no new constructor arguments; with no router built (a unit test) everything passes through.

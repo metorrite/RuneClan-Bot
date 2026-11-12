@@ -91,6 +91,7 @@ public class EventAnnounceService {
     }
 
     public void deleted(long guildId, long eventId) {
+        if (AutoPostRouter.diverting()) return; // edits the announcement and deletes the event role: a bot that is not live made none (B-82)
         worker.execute(() -> {
             try {
                 repository.tracked(eventId).ifPresent(t -> finish(guildId, t, null, State.CANCELED));

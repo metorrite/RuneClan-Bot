@@ -1,5 +1,6 @@
 package com.runeclans.bot.honeypot;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.honeypot.HoneypotRules.Trigger;
 import com.runeclans.bot.moderation.ModAction;
@@ -51,6 +52,7 @@ public class HoneypotListener extends ListenerAdapter implements BotListener {
             if (!config.enabled() || config.channelId() == null || config.channelId() != event.getChannel().getIdLong()) return;
             Member member = event.getMember();
             if (!decide(config, guild, member, Trigger.POSTED_IN_CHANNEL, event.getChannel().getIdLong(), 0)) return;
+            if (AutoPostRouter.skipSweep("honeypot")) return; // deletes, kicks, bans and alerts in the real server: only the live bot does that (T-187, B-82)
             // the decoy message goes too, so a raid bot's links don't sit there for real members
             event.getMessage().delete().queue(ok -> {}, error -> log.debug("Couldn't delete the decoy message in {}: {}", event.getChannel().getId(), error.getMessage()));
             act(guild, member, config, Trigger.POSTED_IN_CHANNEL);
@@ -69,6 +71,7 @@ public class HoneypotListener extends ListenerAdapter implements BotListener {
             if (decoy == null) return;
             Member member = event.getMember();
             if (!decide(config, guild, member, Trigger.TOOK_ROLE, 0, decoy.getIdLong())) return;
+            if (AutoPostRouter.skipSweep("honeypot")) return;
             act(guild, member, config, Trigger.TOOK_ROLE);
         } catch (Exception e) {
             log.error("Honeypot failed for a role change in guild {}", event.getGuild().getId(), e);

@@ -125,16 +125,19 @@ class RoleKeepServiceTest {
     // ---------- rejoining ----------
 
     @Test
-    void onRejoiningTheKeptMutedRoleIsGivenBackInOneChangeAndNeverTheClanRole() {
+    void onRejoiningTheKeptMutedRoleIsGivenBackOnItsOwnAndNeverTheClanRole() {
         Member back = member(5);
         when(repository.keptFor(GUILD, 5)).thenReturn(List.of(kept(1, MUTED), kept(2, CLAN_ROLE)));
         when(repository.tempFor(GUILD, 5)).thenReturn(List.of());
         AuditableRestAction<Void> action = action();
-        when(guild.modifyMemberRoles(eq(back), argThat((Collection<Role> add) -> add.size() == 1 && add.contains(muted)), eq(List.<Role>of()))).thenReturn(action);
+        when(guild.addRoleToMember(back, muted)).thenReturn(action);
 
         service.onJoin(back);
 
-        verify(guild).modifyMemberRoles(eq(back), argThat((Collection<Role> add) -> add.size() == 1 && add.contains(muted)), eq(List.<Role>of()));
+        // one role at a time, never the whole list: a whole-list write would overwrite the autoroles given on the same join (B-89)
+        verify(guild).addRoleToMember(back, muted);
+        verify(guild, never()).addRoleToMember(back, clanRole);
+        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
         verify(repository).forgetSticky(GUILD, 5);
     }
 
@@ -146,7 +149,7 @@ class RoleKeepServiceTest {
 
         service.onJoin(back);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
     }
 
     @Test
@@ -157,11 +160,11 @@ class RoleKeepServiceTest {
         when(repository.keptFor(GUILD, 5)).thenReturn(List.of());
         when(repository.tempFor(GUILD, 5)).thenReturn(List.of(new Temp(1, GUILD, 5, 400, Instant.now().plusSeconds(600), 1)));
         AuditableRestAction<Void> give = action();
-        when(guild.modifyMemberRoles(eq(back), any(Collection.class), any(Collection.class))).thenReturn(give);
+        when(guild.addRoleToMember(back, event)).thenReturn(give);
 
         service.onJoin(back);
 
-        verify(guild).modifyMemberRoles(eq(back), argThat((Collection<Role> add) -> add.contains(event) && add.size() == 1), eq(List.<Role>of()));
+        verify(guild).addRoleToMember(back, event);
     }
 
     @Test
@@ -172,7 +175,7 @@ class RoleKeepServiceTest {
 
         service.onJoin(back);
 
-        verify(guild, never()).modifyMemberRoles(any(Member.class), any(Collection.class), any(Collection.class));
+        verify(guild, never()).addRoleToMember(any(Member.class), any(Role.class));
         verify(repository, never()).forgetSticky(anyLong(), anyLong());
     }
 

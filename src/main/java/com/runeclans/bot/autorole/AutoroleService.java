@@ -39,6 +39,7 @@ public class AutoroleService {
 
     /** A real join: gives this server's autoroles, now or after its delay. Never throws; a failure is logged. */
     public void onJoin(Member member) {
+        if (AutoPostRouter.skipSweep("autorole on join")) return; // gives roles in the real server: only the live bot does that (T-187, B-82)
         Guild guild = member.getGuild();
         AutoroleConfig config = repository.get(guild.getIdLong());
         if (!config.enabled() || !config.anythingFor(member.getUser().isBot())) return;
@@ -114,9 +115,17 @@ public class AutoroleService {
                 toRemove.add(role);
             }
         }
-        if (toAdd.isEmpty() && toRemove.isEmpty()) return;
-        guild.modifyMemberRoles(member, toAdd, toRemove).reason("Autorole").queue(
-                done -> {},
-                error -> log.warn("Autorole: couldn't give {} their roles in guild {}", member.getId(), guild.getId(), error));
+        // One request per role (add or remove just that role), never modifyMemberRoles: that sends the member's whole role list built from
+        // the cached roles, so on a join it would overwrite the kept roles RoleKeepService gives in the same moment, or be overwritten by them (B-89).
+        for (Role role : toAdd) {
+            guild.addRoleToMember(member, role).reason("Autorole").queue(
+                    done -> {},
+                    error -> log.warn("Autorole: couldn't give {} @{} in guild {}", member.getId(), role.getName(), guild.getId(), error));
+        }
+        for (Role role : toRemove) {
+            guild.removeRoleFromMember(member, role).reason("Autorole").queue(
+                    done -> {},
+                    error -> log.warn("Autorole: couldn't take @{} from {} in guild {}", role.getName(), member.getId(), guild.getId(), error));
+        }
     }
 }

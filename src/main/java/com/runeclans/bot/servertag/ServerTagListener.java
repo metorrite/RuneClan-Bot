@@ -1,5 +1,6 @@
 package com.runeclans.bot.servertag;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.BotListener;
 import com.runeclans.bot.moderation.ModAction;
@@ -66,6 +67,7 @@ public class ServerTagListener extends ListenerAdapter implements BotListener {
     }
 
     void check(Guild guild, Member member) {
+        if (AutoPostRouter.skipSweep("server tag")) return; // reports and acts in the real server: only the live bot does that (T-187, B-82)
         try {
             ServerTagConfig config = repository.get(guild.getIdLong());
             if (!config.enabled()) return;

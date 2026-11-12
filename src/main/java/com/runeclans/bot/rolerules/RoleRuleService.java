@@ -1,5 +1,6 @@
 package com.runeclans.bot.rolerules;
 
+import com.runeclans.bot.alerts.AutoPostRouter;
 import com.runeclans.bot.cachebus.CacheBus;
 import com.runeclans.bot.cachebus.CacheInvalidator;
 import com.runeclans.bot.configure.GuildSettings;
@@ -132,6 +133,7 @@ public class RoleRuleService implements CacheInvalidator {
 
     /** A member's roles just changed ({@code changed} gained or lost). Applies whatever the rules ask, within the guards. */
     public void onRoleChange(Guild guild, Member member, Set<Long> changed, boolean added) {
+        if (AutoPostRouter.skipSweep("role rules")) return; // gives and takes roles in the real server: only the live bot does that (T-187, B-82)
         List<Rule> rules = rules(guild.getIdLong());
         if (rules.isEmpty() || member.getUser().isBot()) return;
 
