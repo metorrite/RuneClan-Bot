@@ -67,15 +67,19 @@ public class PollPanel {
         return text.toString();
     }
 
-    /** Ending a poll can't be undone, so it asks first — with the option to be DMed the full voter breakdown. */
+    /**
+     * Ending a poll can't be undone, so it asks first — with the option to be DMed the full voter breakdown, except on an anonymous poll,
+     * whose voters were promised nobody sees who voted for what.
+     */
     public Container buildEndConfirm(PollSession poll) {
+        List<Button> buttons = new ArrayList<>();
+        buttons.add(Button.danger("poll_end_go:" + poll.pollId() + ":0", "End Poll"));
+        if (!poll.anonymous()) buttons.add(Button.danger("poll_end_go:" + poll.pollId() + ":1", "End Poll & DM Me Who Voted"));
+        buttons.add(Button.secondary("poll_end_cancel:_", "Cancel"));
         return Containers.card(Containers.DANGER,
                 TextDisplay.of("### End “" + poll.title() + "”?\n" + pollService.totalVotes(poll.pollId())
                         + " votes so far. The poll's message stays, closed, with the final results — it can't be reopened."),
-                ActionRow.of(
-                        Button.danger("poll_end_go:" + poll.pollId() + ":0", "End Poll"),
-                        Button.danger("poll_end_go:" + poll.pollId() + ":1", "End Poll & DM Me Who Voted"),
-                        Button.secondary("poll_end_cancel:_", "Cancel")),
+                ActionRow.of(buttons),
                 Containers.autoCloseNote());
     }
 }

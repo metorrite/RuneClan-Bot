@@ -203,7 +203,7 @@ public class MemberEventsApi {
      */
     public DataObject detail(Guild guild, long userId, long eventId) {
         long guildId = guild.getIdLong();
-        if (guild.getMemberById(userId) == null) throw new EventProblem(403, notInServerMessage(guild));
+        requireInServer(guild, userId); // the bot caches only online members: an offline member is asked of Discord
         Event event = events.event(guildId, eventId);
         // one roster read gives the member's own place and the player count
         List<Participant> players = events.participants(eventId);

@@ -131,7 +131,8 @@ public class PointsAdminApi implements AdminRouteExtension {
         String rawId = body.getString("userId", "").strip();
         if (!rawId.matches("\\d{1,20}")) throw new ApiError(400, Text.of(guild, "dashboard.pick_a_member"));
         long userId = Long.parseLong(rawId);
-        Member target = guild.getMemberById(userId);
+        // the bot caches only online members: ask Discord for anyone else (a 503 "try again" when it's slow, never a wrong "not here")
+        Member target = com.runeclans.bot.discord.DiscordLookups.memberOrSlow(guild, userId);
         if (target == null) throw new ApiError(400, Text.of(guild, "dashboard.that_member_isn_t_in_this"));
         if (target.getUser().isBot()) throw new ApiError(400, Text.of(guild, "dashboard.bots_can_t_hold_points"));
         long points;

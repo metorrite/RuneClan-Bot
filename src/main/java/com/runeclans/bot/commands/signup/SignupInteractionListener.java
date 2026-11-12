@@ -62,13 +62,24 @@ public class SignupInteractionListener extends ListenerAdapter {
     }
 
     private boolean isAdmin(ButtonInteractionEvent event) {
-        var member = event.getMember();
-        return member != null && member.hasPermission(Permission.MANAGE_SERVER);
+        return isAdmin(event.getGuild(), event.getMember());
     }
 
     private boolean isAdmin(ModalInteractionEvent event) {
-        var member = event.getMember();
-        return member != null && member.hasPermission(Permission.MANAGE_SERVER);
+        return isAdmin(event.getGuild(), event.getMember());
+    }
+
+    /**
+     * Who may run a signup's admin panel: the bot's Admin group (the same people {@code /signup} lets build signups) or anyone with Discord's
+     * Manage Server, as the event buttons do. Manage Server alone left the staff who made a sheet unable to run it.
+     */
+    boolean isAdmin(net.dv8tion.jda.api.entities.Guild guild, net.dv8tion.jda.api.entities.Member member) {
+        return mayManage(member != null && member.hasPermission(Permission.MANAGE_SERVER), () -> guild != null && member != null && adminRoleFilter.isAuthorized(guild, member));
+    }
+
+    /** The rule of {@link #isAdmin}, pure for the tests: Manage Server, else the Admin group (asked only when needed). */
+    static boolean mayManage(boolean manageServer, java.util.function.BooleanSupplier adminGroup) {
+        return manageServer || adminGroup.getAsBoolean();
     }
 
     private void replyNoPermission(ButtonInteractionEvent event) {

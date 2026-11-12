@@ -104,6 +104,62 @@ class PollJobsTest {
         assertFalse(jobs.idempotent(PollJobs.CREATE), "a second run would make a second poll");
     }
 
+    // ---------- B-117: a member's poll limit is checked again when the queued job runs ----------
+
+    private static DataObject memberPayload() {
+        return PollJobs.createPayload(CHANNEL, "Raid?", false, false, List.of("Yes", "No"), null, 3);
+    }
+
+    private static List<com.runeclans.bot.commands.poll.PollSession> running(int count) {
+        List<com.runeclans.bot.commands.poll.PollSession> list = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) list.add(new com.runeclans.bot.commands.poll.PollSession(100 + i, GUILD, CHANNEL, 500L + i, "P" + i, false, false, "ACTIVE", ACTOR));
+        return list;
+    }
+
+    @Test
+    void aMemberPollQueuedPastTheLimitIsRefusedWithoutStoringOne() {
+        postable();
+        when(polls.activePollsOwnedBy(GUILD, ACTOR)).thenReturn(running(3));
+        DiscordJobs.Refused refused = assertThrows(DiscordJobs.Refused.class, () -> jobs.run(jda, job(memberPayload())));
+        assertEquals("You already have 3 polls running — end one first.", refused.getMessage());
+        neverStored();
+    }
+
+    @Test
+    void aMemberPollUnderTheLimitIsStoredAndPosted() {
+        GuildMessageChannel channel = postable();
+        when(polls.activePollsOwnedBy(GUILD, ACTOR)).thenReturn(running(2));
+        Message message = mock(Message.class);
+        when(message.getId()).thenReturn("77");
+        when(polls.storePoll(eq(guild), eq(channel), anyString(), anyBoolean(), anyBoolean(), any(), eq(ACTOR), any())).thenReturn(42L);
+        postsAs(message);
+        assertEquals("42", jobs.run(jda, job(memberPayload())).getString("pollId"));
+    }
+
+    @Test
+    void aDashboardPollHasNoPerPersonLimit() {
+        GuildMessageChannel channel = postable();
+        Message message = mock(Message.class);
+        when(message.getId()).thenReturn("77");
+        when(polls.storePoll(eq(guild), eq(channel), anyString(), anyBoolean(), anyBoolean(), any(), eq(ACTOR), any())).thenReturn(42L);
+        postsAs(message);
+        jobs.run(jda, job(payload(null)));
+        verify(polls, never()).activePollsOwnedBy(anyLong(), anyLong());
+    }
+
+    @Test
+    void aKeptMemberPollIsNotCountedAgainstItself() {
+        GuildMessageChannel channel = postable();
+        keptPollIsOpen();
+        when(polls.activePollsOwnedBy(GUILD, ACTOR)).thenReturn(running(3)); // the kept poll is one of the 3
+        Message message = mock(Message.class);
+        when(message.getId()).thenReturn("77");
+        postsAs(message);
+        jobs.run(jda, job(DataObject.fromJson(memberPayload().toJson()).put(PollJobs.POLL_ID, "42"), 1));
+        verify(polls).postStored(eq(42L), eq(channel), any(), anyBoolean());
+        neverStored();
+    }
+
     @Test
     void aGoneChannelMakesNoPoll() {
         DiscordJobs.Refused refused = assertThrows(DiscordJobs.Refused.class, () -> jobs.run(jda, job(payload(null))));

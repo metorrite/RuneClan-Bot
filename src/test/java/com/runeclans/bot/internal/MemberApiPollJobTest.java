@@ -109,6 +109,8 @@ class MemberApiPollJobTest {
         assertEquals(Long.toString(CHANNEL), payload.getValue().getString("channelId"));
         assertEquals("Raid night?", payload.getValue().getString("title"));
         assertTrue(payload.getValue().getBoolean("multiple"));
+        assertEquals(MemberApi.MAX_WEBSITE_POLLS, payload.getValue().getInt(PollJobs.OWNER_LIMIT), "the job checks the member's limit again (B-117)");
+        assertEquals(3, MemberApi.MAX_WEBSITE_POLLS);
         Instant closesAt = Instant.parse(payload.getValue().getString("closesAt"));
         assertTrue(!closesAt.isBefore(before.plus(Duration.ofHours(24))) && closesAt.isBefore(Instant.now().plus(Duration.ofHours(24)).plusSeconds(1)),
                 "the end time is fixed when the member asks");

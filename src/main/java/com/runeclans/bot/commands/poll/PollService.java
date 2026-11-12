@@ -152,10 +152,7 @@ public class PollService {
      * JDA refused before sending (missing permission), or the outbox refused or held it back for a rate limit before sending.
      */
     static boolean certainlyNotPosted(RuntimeException e) {
-        if (e instanceof net.dv8tion.jda.api.exceptions.ErrorResponseException error) return !error.isServerError();
-        return e instanceof net.dv8tion.jda.api.exceptions.PermissionException
-                || e instanceof com.runeclans.bot.discord.jobs.DiscordJobs.Refused
-                || e instanceof com.runeclans.bot.discord.jobs.DiscordJobs.RetryLater;
+        return com.runeclans.bot.discord.jobs.DiscordJobs.certainlyNotSent(e);
     }
 
     private record Stored(PollSession session, List<PollOption> options) {}
@@ -519,12 +516,15 @@ public class PollService {
 
         List<PollOption> options = getOptions(pollId);
         Map<Long, Integer> counts = pollRepository.getVoteCounts(pollId);
-        Map<Long, List<Long>> voters = pollRepository.getVotersByOption(pollId);
+        // an anonymous poll promised its voters nobody sees who voted for what: the summary carries the numbers only
+        boolean anonymous = session.anonymous();
+        Map<Long, List<Long>> voters = anonymous ? Map.of() : pollRepository.getVotersByOption(pollId);
 
         int total = counts.values().stream().mapToInt(Integer::intValue).sum();
 
         StringBuilder sb = new StringBuilder();
         sb.append("**📊 Full Results: ").append(session.title()).append("**\n");
+        if (anonymous) sb.append("*Anonymous poll: who voted isn't shown.*\n");
         sb.append("Total votes: **").append(total).append("**\n\n");
 
         for (PollOption option : options) {
@@ -535,7 +535,9 @@ public class PollService {
               .append(String.format(" (%.1f%%)", pct)).append("\n");
 
             List<Long> voterIds = voters.getOrDefault(option.optionId(), List.of());
-            if (voterIds.isEmpty()) {
+            if (anonymous) {
+                // numbers only
+            } else if (voterIds.isEmpty()) {
                 sb.append("*No votes*\n");
             } else {
                 for (long uid : voterIds) sb.append("• <@").append(uid).append(">\n");

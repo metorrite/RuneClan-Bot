@@ -64,6 +64,7 @@ class CommunityAdminApiPollJobTest {
         assertEquals("Raid night?", payload.getValue().getString("title"));
         assertEquals(2, payload.getValue().getArray("options").length());
         assertTrue(payload.getValue().getBoolean("multiple"));
+        assertTrue(payload.getValue().isNull(PollJobs.OWNER_LIMIT), "a dashboard poll has no per-person limit");
         Instant closesAt = Instant.parse(payload.getValue().getString("closesAt"));
         assertTrue(!closesAt.isBefore(before.plus(Duration.ofHours(2))), "the end time is fixed when the poll is asked for");
         verify(polls, never()).createPoll(any(), any(), anyString(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean(), any(), anyLong(), any());

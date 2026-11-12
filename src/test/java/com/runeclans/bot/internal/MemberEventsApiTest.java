@@ -235,6 +235,26 @@ class MemberEventsApiTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void anOfflineMemberTheBotHasNotCachedCanStillOpenTheEventPage() {
+        long offline = 598L;
+        com.runeclans.bot.discord.DiscordLookups.forgetAll();
+        try {
+            net.dv8tion.jda.api.requests.restaction.CacheRestAction<Member> asked = Mockito.mock(net.dv8tion.jda.api.requests.restaction.CacheRestAction.class);
+            Member found = Mockito.mock(Member.class);
+            net.dv8tion.jda.api.entities.User user = Mockito.mock(net.dv8tion.jda.api.entities.User.class);
+            when(user.getIdLong()).thenReturn(offline);
+            when(found.getUser()).thenReturn(user);
+            when(asked.submit()).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(found));
+            when(guild.retrieveMemberById(offline)).thenReturn(asked);
+            onHub(12, "Open to read", Status.SIGNUPS, "{}");
+            assertEquals("Open to read", api.detail(guild, offline, 12).getObject("event").getString("name"), "asked of Discord, not 'not in the server'");
+        } finally {
+            com.runeclans.bot.discord.DiscordLookups.forgetAll();
+        }
+    }
+
+    @Test
     void anEventTakingSignupsCanBeReadByAMemberWhoHasntJoinedButARunningOneCannot() {
         onHub(12, "Open to read", Status.SIGNUPS, "{}");
         DataObject page = api.detail(guild, INSIDE, 12);

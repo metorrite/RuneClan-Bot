@@ -488,6 +488,9 @@ public class MemberApi {
         return DataObject.empty().put("polls", array);
     }
 
+    /** How many running polls one member may have started from the website; checked here and again when the queued job runs. */
+    static final int MAX_WEBSITE_POLLS = 3;
+
     /**
      * A member starts a poll from the website: same rules and limits as /poll, posted in the channel an admin chose for member polls. The
      * post is queued ({@link PollJobs}), so the answer never waits on Discord and carries the job the page follows.
@@ -516,13 +519,13 @@ public class MemberApi {
         if (problem == null) problem = PollRules.validateDuration(hours);
         if (problem != null) throw new Rejected(400, problem);
 
-        if (pollService.activePollsOwnedBy(guild.getIdLong(), userId).size() >= 3) throw new Rejected(409, "You already have 3 polls running — end one first.");
+        if (pollService.activePollsOwnedBy(guild.getIdLong(), userId).size() >= MAX_WEBSITE_POLLS) throw new Rejected(409, PollJobs.limitReached(MAX_WEBSITE_POLLS));
 
         // a website-triggered Discord write: the outbox stores and posts it (the same job as a dashboard poll), and keeps no open poll if
         // Discord refuses; the page follows the job. The end time is fixed now, not when the bot gets to the post.
         java.time.Instant closesAt = hours == null ? null : java.time.Instant.now().plus(java.time.Duration.ofHours(hours));
         DiscordJob job = outbox.enqueue(PollJobs.CREATE, guild.getIdLong(), userId, null, PollJobs.createPayload(channel.getIdLong(), title,
-                body.getBoolean("anonymous", false), body.getBoolean("multiple", false), options, closesAt));
+                body.getBoolean("anonymous", false), body.getBoolean("multiple", false), options, closesAt, MAX_WEBSITE_POLLS));
         return DataObject.empty().put("created", true).put("queued", true).put("channel", channel.getName()).put("job", job.ticket());
     }
 

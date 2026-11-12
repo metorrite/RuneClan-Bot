@@ -86,6 +86,16 @@ public final class DiscordJobs {
         return new RetryLater(wait, "Discord asked the bot to wait " + seconds + " s; it will try again by itself.");
     }
 
+    /**
+     * Whether a failed send certainly never reached Discord: Discord answered with a refusal (a 4xx error such as missing permissions), JDA
+     * refused before sending (missing permission), or the job refused or held it back for a rate limit before sending. After anything else (a
+     * timeout, a Discord server error) the message may be live.
+     */
+    public static boolean certainlyNotSent(RuntimeException e) {
+        if (e instanceof ErrorResponseException error) return !error.isServerError();
+        return e instanceof net.dv8tion.jda.api.exceptions.PermissionException || e instanceof Refused || e instanceof RetryLater;
+    }
+
     /** What happens to a job after a try threw. */
     public sealed interface Next permits Retry, Fail {}
 
