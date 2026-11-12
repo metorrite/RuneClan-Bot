@@ -117,6 +117,8 @@ public class VerificationRoleSyncService {
                             error -> log.warn("Failed to take verification role {} from user {}", role.getId(), discordUserId, error));
                 }
             };
+            // every role to give was deleted since the plan: keep the old one rather than leave them holding neither
+            if (add.isEmpty() && !plan.add().isEmpty()) return;
             if (add.isEmpty()) {
                 takeOff.run();
                 return;
