@@ -109,6 +109,17 @@ public class RuneClansHubClient {
         return HubRetry.withoutRetries(work);
     }
 
+    /**
+     * Runs {@code work} with its hub calls on this thread tried once and all done within {@code budget} ({@link HubRetry#withinBudget}): for
+     * work inside a web request, which the website gives up on after 8 seconds (B-36, B-38). Past the budget a call answers as an unreachable hub.
+     */
+    public static <T> T withinBudget(Duration budget, java.util.function.Supplier<T> work) {
+        return HubRetry.withinBudget(budget, work);
+    }
+
+    /** The budget for the hub calls of one web request: under the website's 8 seconds, with room for the bot's own work and the answer. */
+    public static final Duration WEB_BUDGET = Duration.ofSeconds(6);
+
     /** A raw call, for {@code RsLinkAuth}'s transport. Null when off or unreachable. */
     public Answer call(String method, String path, String body) {
         if (!enabled()) return null;
@@ -306,6 +317,12 @@ public class RuneClansHubClient {
         return URLEncoder.encode(s, StandardCharsets.UTF_8);
     }
 
+    /** One call's timeout: {@link #REQUEST_TIMEOUT}, or less when this thread's {@link #withinBudget} has less left (never 0: the client refuses it). Public so tests elsewhere can see a call's budget. */
+    public static Duration callTimeout() {
+        Duration left = HubRetry.timeLeft(REQUEST_TIMEOUT);
+        return left.compareTo(Duration.ofMillis(1)) < 0 ? Duration.ofMillis(1) : left;
+    }
+
     static Transport http(RuneClansSettings settings) {
         // one client for the bot's life: HTTP/1.1 keeps its connections to the hub open between calls (no connect cost per call)
         HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(3)).build();
@@ -323,7 +340,7 @@ public class RuneClansHubClient {
             @Override
             public byte[] bytes(String path, Map<String, String> headers) {
                 try {
-                    HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(REQUEST_TIMEOUT)
+                    HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(callTimeout())
                             .header("Authorization", "Bearer " + settings.apiKey()).header("User-Agent", "JonnyBot runeclans-client");
                     headers.forEach(request::header);
                     HttpResponse<byte[]> response = client.send(request.GET().build(), HttpResponse.BodyHandlers.ofByteArray());
@@ -338,7 +355,7 @@ public class RuneClansHubClient {
 
     private static Answer send(HttpClient client, RuneClansSettings settings, String method, String path, String body, Map<String, String> headers) {
         try {
-            HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(REQUEST_TIMEOUT)
+            HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(settings.baseUrl() + path)).timeout(callTimeout())
                     .header("Authorization", "Bearer " + settings.apiKey()).header("Content-Type", "application/json").header("User-Agent", "JonnyBot runeclans-client");
             // the website's request id, when this call is part of an internal API request (T-674), so the hub's log line carries it too
             String requestId = com.runeclans.bot.ops.OpsTelemetry.currentRequestId();

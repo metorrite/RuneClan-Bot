@@ -102,6 +102,45 @@ class HubClientPartsTest {
         assertEquals(Duration.ofSeconds(8), RuneClansHubClient.REQUEST_TIMEOUT, "the website gives up on the bot after 8 seconds");
     }
 
+    /** B-36, B-38: a web request's hub calls are tried once, each waits only what is left, and once the budget is spent none is made. */
+    @Test
+    void callsInsideABudgetAreTriedOnceAndStopWhenItIsSpent() {
+        TestClock clock = new TestClock();
+        Clock before = HubRetry.clock;
+        HubRetry.clock = clock;
+        try {
+            AtomicInteger calls = new AtomicInteger();
+            List<Duration> left = new ArrayList<>();
+            HubRetry slow = new HubRetry((m, p, b) -> {
+                calls.incrementAndGet();
+                left.add(RuneClansHubClient.callTimeout());
+                clock.advance(Duration.ofSeconds(4)); // each answer takes 4 s, then the hub is busy
+                return new RuneClansHubClient.Answer(503, null);
+            }, w -> { });
+            RuneClansHubClient.Answer last = RuneClansHubClient.withinBudget(RuneClansHubClient.WEB_BUDGET, () -> {
+                slow.call("PUT", "/v1/x", "{}");
+                slow.call("GET", "/v1/y", null);
+                return slow.call("GET", "/v1/z", null);
+            });
+            assertEquals(null, last, "the third call is past the budget: not made, answered as an unreachable hub");
+            assertEquals(2, calls.get(), "one try each, no retries");
+            assertEquals(List.of(Duration.ofSeconds(6), Duration.ofSeconds(2)), left, "each call may take only what is left");
+            assertTrue(RuneClansHubClient.WEB_BUDGET.compareTo(RuneClansHubClient.REQUEST_TIMEOUT) < 0, "under the website's 8 seconds");
+
+            // nested: the earlier deadline wins; outside any budget a call has its full timeout again
+            RuneClansHubClient.withinBudget(Duration.ofSeconds(2), () -> RuneClansHubClient.withinBudget(Duration.ofSeconds(30), () -> {
+                assertEquals(Duration.ofSeconds(2), RuneClansHubClient.callTimeout());
+                return null;
+            }));
+            assertEquals(RuneClansHubClient.REQUEST_TIMEOUT, RuneClansHubClient.callTimeout());
+            calls.set(0);
+            slow.call("GET", "/v1/x", null);
+            assertEquals(1 + HubRetry.BACKOFF.size(), calls.get(), "outside a budget the retries are back");
+        } finally {
+            HubRetry.clock = before;
+        }
+    }
+
     @Test
     void aReadWithItsOwnBudgetIsTriedOnceWithoutTheSleeps() {
         List<Duration> waits = new ArrayList<>();

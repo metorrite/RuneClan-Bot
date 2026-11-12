@@ -54,8 +54,40 @@ final class HubRetry implements RuneClansHubClient.Transport {
         }
     }
 
+    /** When this thread's hub calls must be done by ({@link #withinBudget}); null for no limit beyond each call's own timeout. */
+    private static final ThreadLocal<java.time.Instant> DEADLINE = new ThreadLocal<>();
+    /** Replaced in tests so a budget can run out without waiting. */
+    static volatile java.time.Clock clock = java.time.Clock.systemUTC();
+
+    /**
+     * Runs {@code work} with every hub call on this thread made once (as {@link #withoutRetries}) and all of them done within {@code budget}
+     * (B-36, B-38): each call waits at most what is left, and once it is spent a call isn't made at all (no answer, as when the hub is down).
+     * For a web request the website gives up on after 8 seconds. Nested, the earlier deadline wins.
+     */
+    static <T> T withinBudget(Duration budget, java.util.function.Supplier<T> work) {
+        java.time.Instant before = DEADLINE.get();
+        java.time.Instant mine = clock.instant().plus(budget);
+        DEADLINE.set(before != null && before.isBefore(mine) ? before : mine);
+        try {
+            return withoutRetries(work);
+        } finally {
+            if (before == null) DEADLINE.remove();
+            else DEADLINE.set(before);
+        }
+    }
+
+    /** What is left of this thread's budget ({@link #withinBudget}), at most {@code max}; {@code max} with no budget, zero once spent. */
+    static Duration timeLeft(Duration max) {
+        java.time.Instant deadline = DEADLINE.get();
+        if (deadline == null) return max;
+        Duration left = Duration.between(clock.instant(), deadline);
+        if (left.isNegative()) return Duration.ZERO;
+        return left.compareTo(max) < 0 ? left : max;
+    }
+
     @Override
     public RuneClansHubClient.Answer call(String method, String path, String body, Map<String, String> headers) {
+        if (timeLeft(Duration.ofDays(1)).isZero()) return null; // the budget is spent: answer as an unreachable hub, at once
         boolean repeatable = REPEATABLE.contains(method.toUpperCase(Locale.ROOT)) && !NO_RETRY.get();
         RuneClansHubClient.Answer answer = inner.call(method, path, body, headers);
         for (int attempt = 0; repeatable && attempt < BACKOFF.size() && worthRetrying(answer); attempt++) {
@@ -76,6 +108,7 @@ final class HubRetry implements RuneClansHubClient.Transport {
     /** Binary reads (board images) go straight through: without this the default {@code bytes} answered null for every image. */
     @Override
     public byte[] bytes(String path, Map<String, String> headers) {
+        if (timeLeft(Duration.ofDays(1)).isZero()) return null;
         return inner.bytes(path, headers);
     }
 

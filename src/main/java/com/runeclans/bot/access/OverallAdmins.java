@@ -26,6 +26,10 @@ import java.util.function.LongSupplier;
  * The hub's list is remembered for {@link #CACHE_MILLIS}; once it is older, the last known list answers while a fresh one is read in the
  * background, so a request never waits on the hub after the first read. A failed read keeps the last known list (a hub blip never makes
  * every overall admin a stranger, and never adds anyone); with the hub client off, only the bot's owners are admins.
+ * <p>
+ * The hub's {@code admins.changed} feed entry ({@link AdminListFeed}, B-32) reads the list again at once. After a removal the read is made
+ * there and then, and if it fails the added admins are not trusted until a read works (the built-in ones still are): the entry doesn't say
+ * who was removed, and a removed admin (perhaps a stolen account) must not keep access while the hub is unreachable.
  */
 @BService
 public class OverallAdmins {
@@ -54,6 +58,8 @@ public class OverallAdmins {
     private volatile long freshUntil;
     private final AtomicBoolean refreshing = new AtomicBoolean();
     private final Object firstLoad = new Object();
+    /** Bumped by a removal ({@link #changed}); a read started before it is dropped, so it can't put a removed admin back. */
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
 
     public OverallAdmins(RuneClansHubClient hub, BotOwners owners) {
         this.owners = owners;
@@ -84,6 +90,32 @@ public class OverallAdmins {
         freshUntil = 0;
     }
 
+    /**
+     * The hub's list changed ({@code admins.changed}, B-32). After an add or a note change the next question reads it again; after a removal
+     * it is read now, on the caller's thread (the feed's lane, never a web request), and a failed read stops trusting the added admins until
+     * one works. Returns whether a fresh list was read.
+     */
+    public boolean changed(boolean removed) {
+        if (!removed) {
+            forget();
+            return false;
+        }
+        synchronized (firstLoad) {
+            generation.incrementAndGet();
+            try {
+                known = source.read();
+                freshUntil = clock.getAsLong() + CACHE_MILLIS;
+                loaded = true;
+                return true;
+            } catch (RuntimeException e) {
+                log.warn("Couldn't read the RuneClan Admins after a removal ({}); only the built-in admins count until the hub answers.", e.getMessage());
+                known = new HubList(known.builtIn(), Set.of());
+                freshUntil = clock.getAsLong() + RETRY_MILLIS;
+                return false;
+            }
+        }
+    }
+
     private HubList list() {
         if (!loaded) {
             // One thread reads the hub the first time; the others wait for its answer instead of all calling.
@@ -109,14 +141,26 @@ public class OverallAdmins {
     }
 
     private void refresh() {
+        long started = generation.get();
+        HubList read;
         try {
-            known = source.read();
-            freshUntil = clock.getAsLong() + CACHE_MILLIS;
+            read = source.read();
         } catch (RuntimeException e) {
             log.warn("Couldn't read the RuneClan Admins from the hub ({}); keeping the list already known.", e.getMessage());
-            freshUntil = clock.getAsLong() + RETRY_MILLIS;
+            synchronized (firstLoad) {
+                if (generation.get() == started) freshUntil = clock.getAsLong() + RETRY_MILLIS;
+                loaded = true;
+            }
+            return;
         }
-        loaded = true;
+        synchronized (firstLoad) {
+            // a removal while this read was on its way already read a newer list: this one may still hold the removed admin
+            if (generation.get() == started) {
+                known = read;
+                freshUntil = clock.getAsLong() + CACHE_MILLIS;
+            }
+            loaded = true;
+        }
     }
 
     /** {@code GET /v1/admins} with the bot's first-party key: tried once, so a down hub costs one timeout, not the retries. */

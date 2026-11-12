@@ -87,7 +87,9 @@ public class ClanPointsRepository {
     /**
      * Saves the amounts given (a null amount is left as the hub has it, so a thresholds-only save never touches them) and the thresholds
      * given ({@code rankOrder -> threshold}, any number) for {@code actorId}. The hub's answer after the save (settings and ladder), or null
-     * when the hub didn't take it (no clan site for the server, the hub down, or refused).
+     * when the hub didn't take it (no clan site for the server, the hub down, or refused). Tried once, within
+     * {@link RuneClansHubClient#WEB_BUDGET} (B-36): the dashboard and Discord wait on it, so a slow hub is "didn't save, try again" well before
+     * the website gives up at 8 seconds, never a save still running behind its back. Saving again is safe: the same values set the same state.
      */
     public DataObject save(long guildId, long actorId, Long daily, Long visit, Long cap, java.util.Map<Long, Long> thresholds) {
         DataArray ranks = DataArray.empty();
@@ -96,7 +98,7 @@ public class ClanPointsRepository {
         if (daily != null) body.put("dailyMembershipPoints", daily);
         if (visit != null) body.put("citadelVisitPoints", visit);
         if (cap != null) body.put("citadelCapPoints", cap);
-        RuneClansHubClient.Answer a = hub.call("PUT", path(guildId), body.toString());
+        RuneClansHubClient.Answer a = RuneClansHubClient.withinBudget(RuneClansHubClient.WEB_BUDGET, () -> hub.call("PUT", path(guildId), body.toString()));
         hub.forget(tag(guildId));
         if (a != null && a.ok()) noClan.remove(guildId);
         return a != null && a.ok() ? a.json() : null;
@@ -180,9 +182,19 @@ public class ClanPointsRepository {
         return new MemberPointsRow(rsn, 0, false, null);
     }
 
-    /** Every member currently flagged as needing a promotion — what the daily Clan Report is built from. */
+    /** Every member currently flagged as needing a promotion; empty when the hub can't say. */
     public List<MemberPointsRow> getAllNeedingPromotion(long guildId) {
-        return members(guildId).stream().filter(MemberPointsRow::promotionNeeded).toList();
+        return needingPromotionIfKnown(guildId).orElse(List.of());
+    }
+
+    /**
+     * {@link #getAllNeedingPromotion}, but empty (not an empty list) when the hub didn't answer (B-10), so the daily Clan Report can try that
+     * server again later and the dashboard can say "didn't load" instead of "nobody is due". A server the hub has no clan for has nobody: an
+     * empty list.
+     */
+    public java.util.Optional<List<MemberPointsRow>> needingPromotionIfKnown(long guildId) {
+        java.util.Optional<DataObject> got = readKnown(path(guildId), guildId);
+        return got.map(json -> membersOf(json == NO_CLAN ? null : json).stream().filter(MemberPointsRow::promotionNeeded).toList());
     }
 
     /** An admin promoted {@code rsn} in game: the flag clears until the hub's next daily check. False when the hub didn't take it. */
@@ -193,7 +205,10 @@ public class ClanPointsRepository {
     }
 
     private List<MemberPointsRow> members(long guildId) {
-        DataObject json = read(guildId);
+        return membersOf(read(guildId));
+    }
+
+    private static List<MemberPointsRow> membersOf(DataObject json) {
         List<MemberPointsRow> out = new ArrayList<>();
         if (json == null || !json.hasKey("members")) return out;
         DataArray members = json.getArray("members");

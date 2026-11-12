@@ -162,4 +162,122 @@ class OverallAdminsTest {
         assertTrue(admins.isOverallAdmin(jda, BOT_OWNER));
         assertFalse(admins.isOverallAdmin(jda, ADDED));
     }
+
+    /** B-32: the hub's admins.changed entry. A removal is read at once; if that read fails, only the built-in admins count until one works. */
+    @Test
+    void aRemovalIsReadAtOnceAndAFailedReadStopsTrustingTheAddedAdmins() {
+        AtomicReference<Set<Long>> hub = new AtomicReference<>(Set.of(ADDED));
+        AtomicReference<RuntimeException> failure = new AtomicReference<>();
+        AtomicInteger reads = new AtomicInteger();
+        OverallAdmins admins = OverallAdmins.of(() -> {
+            reads.incrementAndGet();
+            if (failure.get() != null) throw failure.get();
+            return new OverallAdmins.HubList(Set.of(HUB_OWNER), hub.get());
+        }, owners());
+        AtomicLong now = new AtomicLong(1_000_000);
+        admins.clock = now::get;
+        List<Runnable> queued = new ArrayList<>();
+        admins.refresher = queued::add;
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+
+        hub.set(Set.of());
+        assertTrue(admins.changed(true), "read there and then");
+        assertFalse(admins.isOverallAdmin(jda, ADDED), "removed: refused on the very next question, inside the cache time");
+        assertTrue(queued.isEmpty(), "no background read needed");
+
+        // an add: the next question reads again
+        hub.set(Set.of(ADDED));
+        assertFalse(admins.changed(false));
+        admins.isOverallAdmin(jda, ADDED);
+        queued.forEach(Runnable::run);
+        queued.clear();
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+
+        // a removal while the hub can't be read: the added admins aren't trusted, the built-in ones still are
+        failure.set(new IllegalStateException("no answer"));
+        assertFalse(admins.changed(true));
+        assertFalse(admins.isOverallAdmin(jda, ADDED));
+        assertTrue(admins.isOverallAdmin(jda, HUB_OWNER));
+        assertTrue(admins.isOverallAdmin(jda, BOT_OWNER));
+
+        // once the hub answers again, so does the list
+        failure.set(null);
+        now.addAndGet(OverallAdmins.RETRY_MILLIS);
+        admins.isOverallAdmin(jda, ADDED);
+        queued.forEach(Runnable::run);
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+    }
+
+    @Test
+    void theFeedEntryReadsTheListAndEmptiesTheSiteRoleCache() {
+        AtomicReference<Set<Long>> hub = new AtomicReference<>(Set.of(ADDED));
+        OverallAdmins admins = OverallAdmins.of(() -> new OverallAdmins.HubList(Set.of(), hub.get()), owners());
+        com.runeclans.bot.clansite.SiteRoleGuard siteRoles = mock(com.runeclans.bot.clansite.SiteRoleGuard.class);
+        AdminListFeed feed = new AdminListFeed(admins, siteRoles);
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+
+        hub.set(Set.of());
+        feed.onHubFeed("access.changed", DataObject.empty());
+        org.mockito.Mockito.verifyNoInteractions(siteRoles);
+        assertTrue(admins.isOverallAdmin(jda, ADDED), "another kind changes nothing");
+
+        feed.onHubFeed(AdminListFeed.KIND, DataObject.empty().put("data", DataObject.empty().put("removed", true)));
+        org.mockito.Mockito.verify(siteRoles).forgetAll();
+        assertFalse(admins.isOverallAdmin(jda, ADDED));
+
+        // an entry without its data counts as a removal (the safe reading)
+        hub.set(Set.of(ADDED));
+        feed.onHubFeed(AdminListFeed.KIND, null);
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+    }
+
+    /** Review 2: an entry with no data is read as a removal, so with the hub down the added admins stop counting. */
+    @Test
+    void anEntryWithNoDataIsARemoval() {
+        AtomicReference<RuntimeException> failure = new AtomicReference<>();
+        OverallAdmins admins = OverallAdmins.of(() -> {
+            if (failure.get() != null) throw failure.get();
+            return new OverallAdmins.HubList(Set.of(HUB_OWNER), Set.of(ADDED));
+        }, owners());
+        AdminListFeed feed = new AdminListFeed(admins, mock(com.runeclans.bot.clansite.SiteRoleGuard.class));
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+        failure.set(new IllegalStateException("no answer"));
+        feed.onHubFeed(AdminListFeed.KIND, null);
+        assertFalse(admins.isOverallAdmin(jda, ADDED), "read as a removal: the added admins aren't trusted until the hub answers");
+        assertTrue(admins.isOverallAdmin(jda, HUB_OWNER));
+
+        failure.set(null);
+        feed.onHubFeed(AdminListFeed.KIND, DataObject.empty()); // payload without its data: also a removal, read at once
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+    }
+
+    /** Review 2: a background read that started before a removal can't write the old list back over the newer one. */
+    @Test
+    void aReadFromBeforeARemovalIsDropped() {
+        AtomicReference<Set<Long>> hub = new AtomicReference<>(Set.of(ADDED));
+        AtomicReference<Runnable> duringRead = new AtomicReference<>();
+        OverallAdmins[] holder = new OverallAdmins[1];
+        holder[0] = OverallAdmins.of(() -> {
+            Set<Long> seen = hub.get(); // what the hub had when this read was answered
+            Runnable hook = duringRead.getAndSet(null);
+            if (hook != null) hook.run();
+            return new OverallAdmins.HubList(Set.of(), seen);
+        }, owners());
+        OverallAdmins admins = holder[0];
+        AtomicLong now = new AtomicLong(1_000_000);
+        admins.clock = now::get;
+        List<Runnable> queued = new ArrayList<>();
+        admins.refresher = queued::add;
+        assertTrue(admins.isOverallAdmin(jda, ADDED));
+
+        now.addAndGet(OverallAdmins.CACHE_MILLIS);
+        admins.isOverallAdmin(jda, ADDED); // stale: a background read is queued
+        // that read is answered with the old list, and the removal (and its own read) lands before it is stored
+        duringRead.set(() -> {
+            hub.set(Set.of());
+            holder[0].changed(true);
+        });
+        queued.forEach(Runnable::run);
+        assertFalse(admins.isOverallAdmin(jda, ADDED), "the older read was dropped");
+    }
 }

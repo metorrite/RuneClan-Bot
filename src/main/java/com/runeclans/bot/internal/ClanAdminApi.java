@@ -146,8 +146,10 @@ public class ClanAdminApi {
         var byRsn = new java.util.HashMap<String, SiteStatsRepository.MemberRow>();
         stats.members(guildId).forEach(m -> byRsn.put(m.rsn().toLowerCase(), m));
 
+        // the hub's flags (T-978): with no answer, say so (503, B-10) rather than show "nobody is due"
+        var flagged = points.needingPromotionIfKnown(guildId).orElseThrow(() -> new ApiError(503, Text.of(guild, "dashboard.clan_points_didn_t_load")));
         DataArray array = DataArray.empty();
-        for (var row : points.getAllNeedingPromotion(guildId)) {
+        for (var row : flagged) {
             var member = byRsn.get(row.rsn().toLowerCase());
             if (member == null) continue; // left the clan since
             var next = ranks.stream().filter(r -> r.rankOrder() > member.rankOrder()).min(java.util.Comparator.comparingInt(RankConfigRow::rankOrder)).orElse(null);
@@ -328,6 +330,11 @@ public class ClanAdminApi {
         // the hub's (T-978): with no answer, say so (503) rather than show zeros the page could save back
         DataObject known = points.known(guild.getIdLong());
         if (known == null) throw new ApiError(503, Text.of(guild, "dashboard.clan_points_didn_t_load"));
+        return clanPointsJson(guild, known);
+    }
+
+    /** The panel from a points answer: the hub's read, or its answer to a save (settings and ladder). */
+    private static DataObject clanPointsJson(Guild guild, DataObject known) {
         var settings = ClanPointsRepository.settingsOf(known);
         DataArray ranks = DataArray.empty();
         for (RankConfigRow rank : ClanPointsRepository.ranksOf(guild.getIdLong(), known)) {
@@ -362,9 +369,11 @@ public class ClanAdminApi {
 
         java.util.Map<Long, Long> thresholds = new java.util.LinkedHashMap<>();
         for (long[] update : updates) thresholds.put(update[0], update[1]);
-        if (points.save(guild.getIdLong(), actor.getIdLong(), daily, visit, cap, thresholds) == null) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
+        DataObject saved = points.save(guild.getIdLong(), actor.getIdLong(), daily, visit, cap, thresholds);
+        if (saved == null) throw new ApiError(503, Text.of(guild, "dashboard.that_didn_t_save_try_again"));
         log.info("Dashboard: {} updated clan points settings and {} rank threshold(s)", actor.getId(), updates.size());
-        return clanPoints(guild);
+        // drawn from the save's own answer (B-36): a second hub read here could push the request past the website's 8 seconds
+        return clanPointsJson(guild, saved);
     }
 
     private static Long givenPoints(DataObject json, String key) {

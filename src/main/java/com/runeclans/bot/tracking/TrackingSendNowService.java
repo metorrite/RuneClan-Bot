@@ -174,6 +174,10 @@ public class TrackingSendNowService {
         long guildId = guild.getIdLong();
         int listed = clanPointsService.runDailyPointsAndPromotionCheck(guild);
         lines.add("Read points and promotion flags from RuneClans (awarded there after each day's roster check).");
+        if (listed == ClanPointsService.HUB_DIDNT_ANSWER) {
+            lines.add("⚠️ RuneClans didn't answer, so no Clan Report was sent. Try again in a few minutes.");
+            return;
+        }
 
         if (clanPointsRepository.known(guildId) == null) {
             lines.add("⚠️ RuneClans didn't answer for this server's clan points (or the server has no clan site), so the report may be empty.");

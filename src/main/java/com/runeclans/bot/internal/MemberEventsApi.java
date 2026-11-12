@@ -1,5 +1,6 @@
 package com.runeclans.bot.internal;
 
+import com.runeclans.bot.runeclans.RuneClansHubClient;
 import com.runeclans.bot.clanprofile.ClanProfileRepository;
 import com.runeclans.bot.clanprofile.JoinLinks;
 import com.runeclans.bot.discord.DiscordLookups;
@@ -202,6 +203,12 @@ public class MemberEventsApi {
      * While XP tiles are counted (T-707), also the XP tiles ({@link #xpTiles}) and whether the last XP pass listed this player as not counted.
      */
     public DataObject detail(Guild guild, long userId, long eventId) {
+        // about nine hub reads one after another (B-38): each tried once, all within one budget under the website's 8 seconds, so a slow hub is
+        // a "try again" (503) the page can show instead of the website giving up on the bot
+        return RuneClansHubClient.withinBudget(RuneClansHubClient.WEB_BUDGET, () -> detailNow(guild, userId, eventId));
+    }
+
+    private DataObject detailNow(Guild guild, long userId, long eventId) {
         long guildId = guild.getIdLong();
         requireInServer(guild, userId); // the bot caches only online members: an offline member is asked of Discord
         Event event = events.event(guildId, eventId);
