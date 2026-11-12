@@ -41,10 +41,13 @@ public class ClanPointsService {
         this.trackingIconCatalog = trackingIconCatalog;
     }
 
+    /** What {@link #runDailyPointsAndPromotionCheck} answers when the hub didn't answer: nothing was sent, and the server should be tried again (B-10). */
+    public static final int HUB_DIDNT_ANSWER = -1;
+
     /**
      * Called once a day by {@code ClanPointsScheduler}: sends the Clan Report from the hub's flags if anyone needs a promotion. Returns how
-     * many members the report listed (0 if nobody needed one, so nothing was sent) — the scheduler ignores it; {@code /dev clanreport}
-     * reports it back.
+     * many members the report listed (0 if nobody needed one, so nothing was sent), or {@link #HUB_DIDNT_ANSWER} when the hub couldn't say
+     * who is flagged (the scheduler tries that server again later); {@code /dev clanreport} reports it back.
      */
     public int runDailyPointsAndPromotionCheck(Guild guild) {
         return sendClanReport(guild);
@@ -80,10 +83,12 @@ public class ClanPointsService {
         return sorted;
     }
 
-    /** Returns how many members the report listed — 0 means nothing was sent. */
+    /** Returns how many members the report listed — 0 means nothing was sent, {@link #HUB_DIDNT_ANSWER} that the hub didn't answer. */
     private int sendClanReport(Guild guild) {
         long guildId = guild.getIdLong();
-        List<ClanPointsRepository.MemberPointsRow> flagged = repository.getAllNeedingPromotion(guildId);
+        var known = repository.needingPromotionIfKnown(guildId);
+        if (known.isEmpty()) return HUB_DIDNT_ANSWER; // "unknown" is not "nobody" (B-10): the scheduler asks again later
+        List<ClanPointsRepository.MemberPointsRow> flagged = known.get();
         if (flagged.isEmpty()) return 0;
 
         List<ClanPointsRepository.RankConfigRow> ranks = repository.getRanksOrdered(guildId);

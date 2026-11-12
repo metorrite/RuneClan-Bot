@@ -26,6 +26,10 @@ import java.util.function.LongSupplier;
  * The hub's list is remembered for {@link #CACHE_MILLIS}; once it is older, the last known list answers while a fresh one is read in the
  * background, so a request never waits on the hub after the first read. A failed read keeps the last known list (a hub blip never makes
  * every overall admin a stranger, and never adds anyone); with the hub client off, only the bot's owners are admins.
+ * <p>
+ * The hub's {@code admins.changed} feed entry ({@link AdminListFeed}, B-32) reads the list again at once. After a removal the read is made
+ * there and then, and if it fails the added admins are not trusted until a read works (the built-in ones still are): the entry doesn't say
+ * who was removed, and a removed admin (perhaps a stolen account) must not keep access while the hub is unreachable.
  */
 @BService
 public class OverallAdmins {
@@ -82,6 +86,31 @@ public class OverallAdmins {
     /** Reads the hub's list again on the next question (after a change the bot heard of). */
     public void forget() {
         freshUntil = 0;
+    }
+
+    /**
+     * The hub's list changed ({@code admins.changed}, B-32). After an add or a note change the next question reads it again; after a removal
+     * it is read now, on the caller's thread (the feed's lane, never a web request), and a failed read stops trusting the added admins until
+     * one works. Returns whether a fresh list was read.
+     */
+    public boolean changed(boolean removed) {
+        if (!removed) {
+            forget();
+            return false;
+        }
+        synchronized (firstLoad) {
+            try {
+                known = source.read();
+                freshUntil = clock.getAsLong() + CACHE_MILLIS;
+                loaded = true;
+                return true;
+            } catch (RuntimeException e) {
+                log.warn("Couldn't read the RuneClan Admins after a removal ({}); only the built-in admins count until the hub answers.", e.getMessage());
+                known = new HubList(known.builtIn(), Set.of());
+                freshUntil = clock.getAsLong() + RETRY_MILLIS;
+                return false;
+            }
+        }
     }
 
     private HubList list() {

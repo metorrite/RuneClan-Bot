@@ -98,4 +98,23 @@ class ClanPointsRepositoryTest {
         when(noClan.read(anyString(), any(Duration.class), any(String[].class))).thenReturn(answer(409, DataObject.empty()));
         assertEquals(java.util.Optional.of(List.of()), new ClanPointsRepository(noClan).earnedIfKnown(GUILD, from, to, null, false), "no clan: nothing earned");
     }
+
+    /** B-10: the Clan Report tells "the hub didn't answer" from "nobody is flagged". */
+    @Test
+    void whoNeedsAPromotionIsUnknownWhenTheHubIsSilent() {
+        RuneClansHubClient silent = mock(RuneClansHubClient.class);
+        when(silent.read(anyString(), any(Duration.class), any(String[].class))).thenReturn(answer(503, null));
+        assertTrue(new ClanPointsRepository(silent).needingPromotionIfKnown(GUILD).isEmpty(), "unknown, so the report tries again later");
+
+        RuneClansHubClient noClan = mock(RuneClansHubClient.class);
+        when(noClan.read(anyString(), any(Duration.class), any(String[].class))).thenReturn(answer(409, DataObject.empty()));
+        assertEquals(java.util.Optional.of(List.of()), new ClanPointsRepository(noClan).needingPromotionIfKnown(GUILD), "no clan: nobody");
+
+        RuneClansHubClient hub = mock(RuneClansHubClient.class);
+        when(hub.read(eq(BASE), any(Duration.class), any(String[].class))).thenReturn(answer(200, DataObject.empty().put("members", DataArray.empty()
+                .add(DataObject.empty().put("rsn", "Due One").put("totalPoints", 90).put("promotionNeeded", true).put("promotionNeededSince", "2026-11-01"))
+                .add(DataObject.empty().put("rsn", "Not Due").put("totalPoints", 5).put("promotionNeeded", false)))));
+        var flagged = new ClanPointsRepository(hub).needingPromotionIfKnown(GUILD).orElseThrow();
+        assertEquals(List.of(new ClanPointsRepository.MemberPointsRow("Due One", 90, true, LocalDate.of(2026, 11, 1))), flagged);
+    }
 }

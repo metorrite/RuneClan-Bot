@@ -35,6 +35,7 @@ class BotOwnersTest {
         jda = mock(JDA.class);
         owners = new BotOwners(config);
         owners.clock = now::get;
+        owners.lookups = Runnable::run;
     }
 
     @SuppressWarnings("unchecked")
@@ -106,5 +107,54 @@ class BotOwnersTest {
         owners.isOwner(jda, APP_OWNER);
         assertTrue(owners.isKnownOwner(APP_OWNER), "known once a lookup found them");
         assertFalse(owners.isKnownOwner(99));
+    }
+
+    /** B-40: a slow Discord never holds a web request for long, and many requests make one lookup. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void aSlowDiscordIsWaitedOnBrieflyOnlyBeforeTheFirstAnswerAndAskedOnce() throws Exception {
+        java.util.concurrent.ExecutorService lane = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            owners.lookups = lane;
+            java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+            ApplicationInfo info = mock(ApplicationInfo.class);
+            User user = mock(User.class);
+            when(user.getIdLong()).thenReturn(APP_OWNER);
+            when(info.getOwner()).thenReturn(user);
+            CacheRestAction<ApplicationInfo> action = mock(CacheRestAction.class);
+            when(action.complete()).thenAnswer(a -> {
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                return info;
+            });
+            when(jda.retrieveApplicationInfo()).thenReturn(action);
+
+            long start = System.nanoTime();
+            assertFalse(owners.isOwner(jda, APP_OWNER), "not known yet");
+            assertTrue(owners.isOwner(jda, CONFIGURED), "configured owners never wait on Discord");
+            long waited = java.time.Duration.ofNanos(System.nanoTime() - start).toMillis();
+            assertTrue(waited < 3 * BotOwners.FIRST_WAIT.toMillis() + 1_000, "waited " + waited + " ms");
+            verify(jda, times(1)).retrieveApplicationInfo();
+
+            release.countDown();
+            lane.submit(() -> { }).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            assertTrue(owners.isOwner(jda, APP_OWNER), "the lookup finished behind the requests");
+
+            // stale after ten minutes: answered at once from who is known while the list is read again
+            java.util.concurrent.CountDownLatch again = new java.util.concurrent.CountDownLatch(1);
+            when(action.complete()).thenAnswer(a -> {
+                again.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                return info;
+            });
+            now.addAndGet(11 * 60_000L);
+            start = System.nanoTime();
+            assertTrue(owners.isOwner(jda, APP_OWNER));
+            assertTrue(owners.isOwner(jda, APP_OWNER));
+            assertTrue(java.time.Duration.ofNanos(System.nanoTime() - start).toMillis() < BotOwners.FIRST_WAIT.toMillis(), "no wait once known");
+            again.countDown();
+            lane.submit(() -> { }).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            verify(jda, times(2)).retrieveApplicationInfo();
+        } finally {
+            lane.shutdownNow();
+        }
     }
 }

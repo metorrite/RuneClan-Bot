@@ -77,4 +77,21 @@ class ClanPointsServiceTest {
         List<ClanPointsRepository.MemberPointsRow> flagged = List.of(unknown, later, earlier);
         assertEquals(List.of(earlier, later, unknown), ClanPointsService.longestWaitingFirst(flagged));
     }
+
+    /** B-10: with no answer from the hub nothing is sent and the scheduler is told to try again, rather than "nobody flagged". */
+    @Test
+    void aSilentHubIsATryAgainNotAnEmptyReport() {
+        ClanPointsRepository points = org.mockito.Mockito.mock(ClanPointsRepository.class);
+        TrackingEventRouter router = org.mockito.Mockito.mock(TrackingEventRouter.class);
+        net.dv8tion.jda.api.entities.Guild guild = org.mockito.Mockito.mock(net.dv8tion.jda.api.entities.Guild.class);
+        org.mockito.Mockito.when(guild.getIdLong()).thenReturn(Long.parseLong("6".repeat(18)));
+        org.mockito.Mockito.when(points.needingPromotionIfKnown(org.mockito.ArgumentMatchers.anyLong())).thenReturn(java.util.Optional.empty());
+        ClanPointsService service = new ClanPointsService(points, org.mockito.Mockito.mock(com.runeclans.bot.runescape.ClanMemberRepository.class), router,
+                org.mockito.Mockito.mock(TrackingIconCatalog.class));
+        assertEquals(ClanPointsService.HUB_DIDNT_ANSWER, service.runDailyPointsAndPromotionCheck(guild));
+
+        org.mockito.Mockito.when(points.needingPromotionIfKnown(org.mockito.ArgumentMatchers.anyLong())).thenReturn(java.util.Optional.of(List.of()));
+        assertEquals(0, service.runDailyPointsAndPromotionCheck(guild), "known and nobody flagged: nothing to send");
+        org.mockito.Mockito.verifyNoInteractions(router);
+    }
 }
