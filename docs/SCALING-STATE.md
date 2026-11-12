@@ -245,6 +245,7 @@ has more than one replica).
 | `clan-site-race` | `clansite/ClanSitePluginFeed` (the leaderboard race's hub reads) | api (website reads only) |
 | `command-usage` | `commandusage/CommandUsageListener` | every process (flushes add up) |
 | `phishing-list` | `automod/PhishingList` | every process (each needs the list) |
+| `bot-owners` | `notice/BotOwners` | every process (its own cache of who owns the bot, looked up off the request thread, B-40) |
 | `debouncer`, `site-invalidator` | `internal/Debouncer`, `internal/SiteInvalidator` | every process (local batching) |
 | `hub-link-sync` | `runescape/HubLinkSync` | every process (sends the link changes it made to the hub; the daily catch-up is idempotent adds, T-839) |
 | `hub-member-privacy` | `member/HubMemberPrivacy` | every process (sends the member privacy changes it saved to the hub, T-750) |

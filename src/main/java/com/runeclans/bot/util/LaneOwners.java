@@ -81,6 +81,7 @@ public final class LaneOwners {
             // every process for itself
             Map.entry("command-usage", Owner.EVERY),
             Map.entry("phishing-list", Owner.EVERY),
+            Map.entry("bot-owners", Owner.EVERY), // B-40: each process asks Discord who owns the bot, off the request thread
             Map.entry("debouncer", Owner.EVERY),
             Map.entry("site-invalidator", Owner.EVERY),
             Map.entry("hub-link-sync", Owner.EVERY), // the link changes this process made, on to the hub, and the catch-up (idempotent adds, T-839)
