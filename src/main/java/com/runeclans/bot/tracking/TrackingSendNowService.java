@@ -28,7 +28,7 @@ import java.util.Optional;
  */
 @BService
 public class TrackingSendNowService {
-    private static final String RUNEMETRICS = "RuneMetrics";
+    private static final String RUNEMETRICS = "Adventurer's Log";
     private static final String CITADEL = "Clan Citadel";
     private static final String ROSTER = "Clan Roster";
     private static final String POINTS = "Points & Promotions";
@@ -78,8 +78,8 @@ public class TrackingSendNowService {
     /** One line for the section screen, saying what its Send Now button will actually do. */
     public String describeSection(String source) {
         return switch (source) {
-            case RUNEMETRICS -> "-# **Send Now** polls every clan member's RuneMetrics profile right now (a couple of minutes) and posts anything new, one entry at a time, to these groups' channels.";
-            case CITADEL -> "-# **Send Now** polls every clan member's RuneMetrics profile right now (a couple of minutes), posting any Citadel visits/caps, then sends this past week's Citadel report.";
+            case RUNEMETRICS -> "-# **Send Now** polls every clan member's Jagex hiscores and Adventurer's Log right now (a couple of minutes) and posts anything new, one entry at a time, to these groups' channels.";
+            case CITADEL -> "-# **Send Now** polls every clan member's Adventurer's Log right now (a couple of minutes), posting any Citadel visits/caps, then sends this past week's Citadel report.";
             case ROSTER -> "-# **Send Now** refreshes the clan roster right now (a couple of minutes), posting any joins/leaves it finds, then sends this past week's joins/leaves report.";
             case POINTS -> "-# **Send Now** recomputes everyone's points and who needs a promotion, then sends the Clan Report.";
             default -> "";
@@ -147,7 +147,7 @@ public class TrackingSendNowService {
             lines.add("⚠️ The clan roster is empty — refresh it from the Clan Roster section first.");
             return;
         }
-        lines.add("Polled **" + poll.polled() + "** of **" + total + "** clan members' RuneMetrics profiles; anything new was posted as it was found."
+        lines.add("Polled **" + poll.polled() + "** of **" + total + "** clan members' Jagex profiles; anything new was posted as it was found."
                 + (poll.pollFailed() > 0 ? " (" + poll.pollFailed() + " private or unavailable profile(s) were skipped.)" : ""));
     }
 

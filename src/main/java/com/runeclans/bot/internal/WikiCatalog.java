@@ -65,7 +65,7 @@ public class WikiCatalog {
         }
         // The items the adventure log actually reports: the only ones that can ever be non-zero today.
         for (String name : trackedNames()) trackedItemKeys.add(slug(name));
-        log.info("Boss catalogue loaded: {} bosses, {} distinct items, {} tracked by RuneMetrics", bosses.size(), itemsByKey.size(), trackedItemKeys.size());
+        log.info("Boss catalogue loaded: {} bosses, {} distinct items, {} tracked by the Adventurer's Log", bosses.size(), itemsByKey.size(), trackedItemKeys.size());
     }
 
     private static List<String> trackedNames() {
