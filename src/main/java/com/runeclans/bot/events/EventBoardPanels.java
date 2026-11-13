@@ -363,7 +363,7 @@ public class EventBoardPanels {
     /** Under a bingo whose XP tiles are counted from RuneSync (T-543, {@code EVENT_XP_TILES_ENABLED}), the same note as the website's event pages (T-707). */
     static String xpTilesNote(Event event, List<ObjectiveSpec> objectives) {
         if (!PluginObjectiveMatcher.xpTilesOffered() || PluginObjectiveMatcher.shownXpTiles(ClanVsClan.game(event), event.status(), objectives).isEmpty()) return "";
-        return "\n-# XP tiles count RuneSync XP only: players without RuneSync (RuneMetrics only) make no progress on them.";
+        return "\n-# XP tiles count RuneSync XP only: players without RuneSync (Jagex hiscores only) make no progress on them.";
     }
 
     /**

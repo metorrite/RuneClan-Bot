@@ -81,11 +81,11 @@ public class CompetitionTemplate implements EventTemplate {
                 EventOptions.Option.number("config.xpPerPoint", "XP per point", "How much XP earns one point. A larger number keeps points small.", EventOptions.Step.RULES,
                         DEFAULT_XP_PER_POINT, 1, EventRules.MAX_TARGET)));
         if (pluginSourceOffered) {
-            list.add(EventOptions.Option.choice("config.xpSource", "Where XP comes from", "RuneMetrics reads public profiles every few minutes. RuneSync counts within a minute or two, private profiles too, but only "
+            list.add(EventOptions.Option.choice("config.xpSource", "Where XP comes from", "The Jagex hiscores are read for everyone every few minutes. RuneSync counts within a minute or two, but only "
                             + "players who run the RuneSync plugin and share XP with this bot; with RuneSync only, the others score nothing. Auto counts RuneSync players from RuneSync and everyone "
-                            + "else from RuneMetrics. It can't be changed once the event exists.", EventOptions.Step.RULES, SOURCE_RUNEMETRICS,
-                    List.of(new EventOptions.Choice(SOURCE_RUNEMETRICS, "RuneMetrics (public profiles)"), new EventOptions.Choice(SOURCE_PLUGIN, "RuneSync plugin"),
-                            new EventOptions.Choice(SOURCE_AUTO, "Auto (RuneSync where players run it, else RuneMetrics)"))));
+                            + "else from the Jagex hiscores. It can't be changed once the event exists.", EventOptions.Step.RULES, SOURCE_RUNEMETRICS,
+                    List.of(new EventOptions.Choice(SOURCE_RUNEMETRICS, "Jagex hiscores (everyone)"), new EventOptions.Choice(SOURCE_PLUGIN, "RuneSync plugin"),
+                            new EventOptions.Choice(SOURCE_AUTO, "Auto (RuneSync where players run it, else Jagex hiscores)"))));
             // PARKED (T-815, Drake 2026-10-30): RuneLink links are taken on trust, so none is ever confirmed and this option would leave
             // everyone out. Events that already have it keep it.
             if (CONFIRMED_LINKS_OFFERED) list.add(EventOptions.Option.of("config.confirmedLinksOnly", "Count confirmed links only", "Only players whose RuneLink the RuneClans hub has confirmed from "
@@ -217,7 +217,7 @@ public class CompetitionTemplate implements EventTemplate {
         long per = xpPerPoint(config);
         if (per < 1 || per > EventRules.MAX_TARGET) problems.add("XP per point has to be between 1 and " + EventRules.MAX_TARGET + ".");
         if (config.hasKey("xpSource") && !config.isNull("xpSource") && !validSource(String.valueOf(config.get("xpSource")))) {
-            problems.add("XP comes from RuneMetrics, the RuneSync plugin, or auto.");
+            problems.add("XP comes from the Jagex hiscores, the RuneSync plugin, or auto.");
         }
         return problems;
     }
@@ -227,7 +227,7 @@ public class CompetitionTemplate implements EventTemplate {
         int skill = skillOf(config);
         long per = xpPerPoint(config);
         String name = skillName(skill);
-        String from = countsFromPlugin(config) ? " Counted from RuneSync." : countsAuto(config) ? " Counted from RuneSync where players run it, RuneMetrics for the rest." : "";
+        String from = countsFromPlugin(config) ? " Counted from RuneSync." : countsAuto(config) ? " Counted from RuneSync where players run it, the Jagex hiscores for the rest." : "";
         String rule = countsWholeSpan(config) ? "Ranked by the XP gained from the start to the end, whenever you joined." // standings(): a point is an XP
                 : "One point for every " + String.format("%,d", per) + " XP gained while the event runs.";
         return List.of(new ObjectiveSpec(OBJECTIVE_KEY, name + " XP gained", rule + from,

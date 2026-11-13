@@ -985,9 +985,9 @@ public class RsAdminInteractionListener extends ListenerAdapter {
             case ProfileResult.Private ignored -> children.add(TextDisplay.of(
                     "🔒 This player's **Adventurer's Log is set to private** — RuneScape won't return stats until they make it public in-game (Settings → Privacy)."));
             case ProfileResult.NotFound ignored -> children.add(TextDisplay.of(
-                    "❓ No RuneMetrics profile found for **" + rsn + "** — check the spelling, or they may have never opened their Adventurer's Log."));
+                    "❓ No player found on the Jagex hiscores for **" + rsn + "** — check the spelling, or they may not be ranked yet."));
             case ProfileResult.RateLimited ignored -> children.add(TextDisplay.of(
-                    "⏳ RuneMetrics is rate-limiting us right now — this player's been queued for a slower automatic retry. Try again in a few minutes."));
+                    "⏳ The Jagex hiscores are rate-limiting us right now — this player's been queued for a slower automatic retry. Try again in a few minutes."));
             case ProfileResult.Unavailable ignored -> children.add(TextDisplay.of(
                     "⚠️ Couldn't fetch stats right now — the RuneScape API may be temporarily unavailable. Try again shortly."));
         }

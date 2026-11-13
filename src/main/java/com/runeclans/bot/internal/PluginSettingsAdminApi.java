@@ -44,7 +44,7 @@ public class PluginSettingsAdminApi implements AdminRouteExtension {
             }
             String source = sourceSent && !input.isNull("competitionXpSource") ? String.valueOf(input.get("competitionXpSource")) : null;
             if (source != null && !CompetitionTemplate.validSource(source)) {
-                throw AdminRouteExtension.refuse(400, "New competitions count XP from RuneMetrics, the RuneSync plugin or auto (competitionXpSource: runemetrics, plugin or auto).");
+                throw AdminRouteExtension.refuse(400, "New competitions count XP from the Jagex hiscores, the RuneSync plugin or auto (competitionXpSource: runemetrics, plugin or auto).");
             }
             if (CompetitionTemplate.needsHub(source) && !CompetitionTemplate.pluginSourceOffered()) {
                 throw AdminRouteExtension.refuse(409, "Counting competitions from RuneSync needs the bot connected to the RuneClans hub, and it isn't.");

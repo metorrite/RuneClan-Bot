@@ -249,7 +249,7 @@ public final class PluginObjectiveMatcher {
             String step = ScavengerHuntTemplate.KEY.equals(template) ? " A step that unlocks after another counts XP from when it unlocks." : "";
             return new Hint(true, "Auto with RuneSync: " + String.format(Locale.ROOT, "%,d", goal.xp()) + " " + goal.what() + " gained while the event runs, read from the "
                     + "RuneClans hub. In a team event the team's XP adds up." + step + " XP gained while RuneSync wasn't watching doesn't count, and players without RuneSync "
-                    + "(RuneMetrics only) make no progress on this tile.");
+                    + "(Jagex hiscores only) make no progress on this tile.");
         }
         if (label.contains("clue") || label.contains("treasure trail")) {
             String rest = CLUE_FILLER.matcher(label.replaceAll("[^a-z ]", " ")).replaceAll(" ").strip().replaceAll("\\s+", " ");

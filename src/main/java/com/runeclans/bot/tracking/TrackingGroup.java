@@ -12,14 +12,14 @@ package com.runeclans.bot.tracking;
  * lives in {@link TrackingRepository}.
  */
 public enum TrackingGroup {
-    SKILL_MILESTONES("RuneMetrics", "Skill Milestones"),
-    QUESTS("RuneMetrics", "Quests & Quest Points"),
-    NOTABLE_DROPS("RuneMetrics", "Notable Drops"),
-    CLUE_SCROLLS("RuneMetrics", "Clue Scrolls & Treasure Trails"),
-    PETS("RuneMetrics", "Pets"),
-    BOSS_KILLS("RuneMetrics", "Boss & Monster Milestones"),
-    MINIGAME_MISC("RuneMetrics", "Minigame & Activity Milestones"),
-    ARCHAEOLOGY("RuneMetrics", "Archaeology"),
+    SKILL_MILESTONES("Adventurer's Log", "Skill Milestones"),
+    QUESTS("Adventurer's Log", "Quests & Quest Points"),
+    NOTABLE_DROPS("Adventurer's Log", "Notable Drops"),
+    CLUE_SCROLLS("Adventurer's Log", "Clue Scrolls & Treasure Trails"),
+    PETS("Adventurer's Log", "Pets"),
+    BOSS_KILLS("Adventurer's Log", "Boss & Monster Milestones"),
+    MINIGAME_MISC("Adventurer's Log", "Minigame & Activity Milestones"),
+    ARCHAEOLOGY("Adventurer's Log", "Archaeology"),
     CITADEL_ACTIVITY("Clan Citadel", "Citadel Activity"),
     WEEKLY_CITADEL_REPORT("Clan Citadel", "Weekly Citadel Report"),
     CLAN_JOINS_LEAVES("Clan Roster", "Clan Joins & Leaves"),
@@ -40,7 +40,7 @@ public enum TrackingGroup {
         this.displayName = displayName;
     }
 
-    /** Which of the four sources (RuneMetrics, Clan Citadel, Clan Roster, Discord Admin Log) feeds this group — for grouping the Tracking panel's display only. */
+    /** Which of the sources (Adventurer's Log, Clan Citadel, Clan Roster, Discord Admin Log) feeds this group — for grouping the Tracking panel's display only. */
     public String source() {
         return source;
     }
