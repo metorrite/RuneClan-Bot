@@ -231,6 +231,8 @@ has more than one replica).
 | `signup-maintenance` | `commands/signup/SignupMaintenanceScheduler` | gateway (own shards) |
 | `lookup-reminders` | `lookup/LookupReminderScheduler` | gateway (own shards) |
 | `member-notifier` | `member/MemberNotifier` | gateway (own shards) |
+| `hub-name-changes` | `runescape/HubNameChanges` | gateway (own shards): moves rows, posts the rename line, re-syncs roles; nicknames through the outbox |
+| `name-change-buttons` | `commands/runescape/RsnRenameInteractionListener` | gateway (the interaction's shard) |
 | `autorole`, `role-keep`, `temp-voice`, `autopurge` | `autorole/...`, `rolekeep/...`, `tempvoice/...`, `autopurge/...` | gateway (own shards) |
 | `clan-anniversaries` | `anniversary/AnniversaryService` | gateway (own shards) |
 | `staff-digest` | `internal/StaffDigestService` | gateway (own shards) |

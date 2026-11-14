@@ -38,6 +38,8 @@ public final class LaneOwners {
             Map.entry("clan-sync-scheduler", Owner.GATEWAY),
             Map.entry("clan-points-scheduler", Owner.GATEWAY),
             Map.entry("runeclans-feed", Owner.GATEWAY),
+            Map.entry("hub-name-changes", Owner.GATEWAY), // T-1160: follows the hub's name changes; posts and roles in the bot's servers
+            Map.entry("name-change-buttons", Owner.GATEWAY), // T-1160: the Name Changes buttons' hub calls, answered on the interaction
             Map.entry("plugin-xp-points", Owner.GATEWAY),
             Map.entry("clan-seasons", Owner.GATEWAY),
             // the rank-up advisor's weekly update reads Discord names and channels from the cache
