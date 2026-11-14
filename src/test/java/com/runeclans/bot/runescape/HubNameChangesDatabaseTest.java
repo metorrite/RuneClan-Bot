@@ -28,6 +28,7 @@ import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -47,6 +48,7 @@ class HubNameChangesDatabaseTest {
     private static PlayerLinkRepository links;
 
     private final List<String> discord = new ArrayList<>();
+    private HubNameChangeReads reads;
     private HubNameChanges.Follower follower;
 
     @BeforeAll
@@ -61,6 +63,7 @@ class HubNameChangesDatabaseTest {
         var initializer = new RuneScapeDatabaseInitializer(connections);
         new AdminToolsStore(connections);
         new SiteRankStore(connections, initializer, Mockito.mock(ClanPointsRepository.class));
+        new com.runeclans.bot.member.MemberProfileRepository(connections);
         store = new HubNameChangeStore(connections, initializer);
         links = new PlayerLinkRepository(connections, initializer);
     }
@@ -75,8 +78,10 @@ class HubNameChangesDatabaseTest {
         clean();
         discord.clear();
         Map<Long, String> clanNames = Map.of(HOME, "Younglings", ELSEWHERE, "Other Clan");
-        Map<String, String> clanIds = Map.of("Younglings", CLAN, "Other Clan", OTHER_CLAN);
-        follower = new HubNameChanges.Follower(store, clanNames::get, name -> Optional.ofNullable(clanIds.get(name)), Supplier::get,
+        reads = Mockito.mock(HubNameChangeReads.class);
+        Mockito.when(reads.clanId("Younglings")).thenReturn(Optional.of(CLAN));
+        Mockito.when(reads.clanId("Other Clan")).thenReturn(Optional.of(OTHER_CLAN));
+        follower = new HubNameChanges.Follower(store, clanNames::get, reads, Supplier::get,
                 new HubNameChanges.Discord() {
                     @Override
                     public void announce(long guildId, String from, String to) {
@@ -99,7 +104,7 @@ class HubNameChangesDatabaseTest {
         try (Connection c = DriverManager.getConnection(TestDatabaseUrl.jdbc()); Statement s = c.createStatement()) {
             s.execute("TRUNCATE younglings.player_link, younglings.player_account, younglings.player_link_exclusion, younglings.clan_member, "
                     + "younglings.clan_member_points, younglings.clan_points_award, younglings.clan_roster_event, younglings.rsn_rename_candidate, "
-                    + "younglings.hub_name_change_applied, younglings.admin_note, younglings.site_rank_hold RESTART IDENTITY");
+                    + "younglings.hub_name_change_applied, younglings.admin_note, younglings.site_rank_hold, younglings.member_recap_seen RESTART IDENTITY");
         }
     }
 
@@ -247,5 +252,117 @@ class HubNameChangesDatabaseTest {
 
         assertEquals(List.of("2026-11-01|Old Name", "2026-11-08|New Name", "2026-11-08|Old Name"),
                 rows("SELECT awarded_for_date, rsn FROM younglings.clan_points_award ORDER BY awarded_for_date, rsn"));
+    }
+
+    @Test
+    void recapSeenMarksMoveLowerCasedAsTheTableKeepsThem() throws SQLException {
+        member(HOME, "Old Name", true, "2026-01-05");
+        sql("INSERT INTO younglings.member_recap_seen (guild_id, rsn, period_key, discord_user_id) VALUES (?, 'old name', '2026-10', 1)", HOME);
+
+        follower.handle(HubNameChanges.KIND_RENAMED, renamed(16, "Old Name", "New Name", CLAN));
+        assertEquals(List.of("new name|2026-10"), rows("SELECT rsn, period_key FROM younglings.member_recap_seen"));
+
+        follower.handle(HubNameChanges.KIND_UNDONE, undone(16, "Old Name", "New Name"));
+        assertEquals(List.of("old name|2026-10"), rows("SELECT rsn, period_key FROM younglings.member_recap_seen"));
+    }
+
+    @Test
+    void aClanLookupTheHubDidNotAnswerKeepsNothingAndTheRetryDoesItAll() throws SQLException {
+        member(HOME, "Old Name", true, "2026-01-05");
+        member(ELSEWHERE, "Old Name", true, "2026-01-05");
+        Mockito.when(reads.clanId("Other Clan")).thenThrow(new HubNameChangeReads.Unanswered("busy"));
+
+        assertThrows(HubNameChangeReads.Unanswered.class,
+                () -> follower.handle(HubNameChanges.KIND_RENAMED, renamed(17, "Old Name", "New Name", CLAN, OTHER_CLAN)));
+        assertNull(store.state(17), "not recorded, so a retry is not a no-op");
+        assertEquals(List.of("Old Name|true|2026-01-05"), roster(HOME));
+        assertTrue(discord.isEmpty());
+
+        Mockito.reset(reads);
+        Mockito.when(reads.clanId("Younglings")).thenReturn(Optional.of(CLAN));
+        Mockito.when(reads.clanId("Other Clan")).thenReturn(Optional.of(OTHER_CLAN));
+        follower.handle(HubNameChanges.KIND_RENAMED, renamed(17, "Old Name", "New Name", CLAN, OTHER_CLAN));
+
+        assertEquals(List.of("New Name|true|2026-01-05"), roster(HOME));
+        assertEquals(List.of("New Name|true|2026-01-05"), roster(ELSEWHERE), "both servers moved");
+    }
+
+    @Test
+    void aFailureInsideTheMoveRollsEverythingBack() throws SQLException {
+        member(HOME, "Old Name", true, "2026-01-05");
+        links.createLink(HOME, OWNER, "Old Name", PlayerLinkService.METHOD_ADMIN_MANUAL);
+        sql("ALTER TABLE younglings.admin_note ADD CONSTRAINT t1160_no_new CHECK (rsn <> 'New Name')");
+        sql("INSERT INTO younglings.admin_note (guild_id, rsn, note, author_id) VALUES (?, 'Old Name', 'x', 'x')", HOME);
+        try {
+            assertThrows(RuntimeException.class, () -> follower.handle(HubNameChanges.KIND_RENAMED, renamed(18, "Old Name", "New Name", CLAN)));
+        } finally {
+            sql("ALTER TABLE younglings.admin_note DROP CONSTRAINT t1160_no_new");
+        }
+
+        assertNull(store.state(18), "no journal row");
+        assertEquals("Old Name", links.getLinkForRsn(HOME, "Old Name").rsn(), "the link moved before the failure went back too");
+        assertEquals(List.of("Old Name|true|2026-01-05"), roster(HOME));
+        assertTrue(discord.isEmpty());
+    }
+
+    @Test
+    void undoingAMergedTotalWhenTheOldNameHasPointsAgainLosesNothing() throws SQLException {
+        member(HOME, "Old Name", false, "2026-01-05");
+        member(HOME, "New Name", true, "2026-11-14");
+        points(HOME, "Old Name", 50);
+        points(HOME, "New Name", 5);
+        follower.handle(HubNameChanges.KIND_RENAMED, renamed(19, "Old Name", "New Name", CLAN));
+        points(HOME, "Old Name", 3); // the old name earned points again before the undo
+
+        follower.handle(HubNameChanges.KIND_UNDONE, undone(19, "Old Name", "New Name"));
+
+        assertEquals(List.of("New Name|5", "Old Name|53"), rows("SELECT rsn, total_points FROM younglings.clan_member_points ORDER BY rsn"));
+    }
+
+    @Test
+    void anOlderRealLeaveOrJoinIsNotTakenAsThePair() throws SQLException {
+        member(HOME, "Old Name", false, "2026-01-05");
+        member(HOME, "New Name", true, "2026-11-14");
+        sql("INSERT INTO younglings.clan_roster_event (guild_id, rsn, event_type, event_at) VALUES (?, 'Old Name', 'LEAVE', NOW() - INTERVAL '20 days'), "
+                + "(?, 'New Name', 'JOIN', NOW())", HOME, HOME);
+
+        follower.handle(HubNameChanges.KIND_RENAMED, renamed(20, "Old Name", "New Name", CLAN));
+
+        assertEquals(List.of("New Name|JOIN", "Old Name|LEAVE"), rows("SELECT rsn, event_type FROM younglings.clan_roster_event ORDER BY rsn"));
+    }
+
+    @Test
+    void theCatchUpFollowsLinksAndUndosTheFeedMissed() throws SQLException {
+        member(HOME, "Old Name", true, "2026-01-05");
+        member(HOME, "Was", true, "2026-01-05");
+        follower.handle(HubNameChanges.KIND_RENAMED, renamed(22, "Was", "Now", CLAN)); // followed; its undo is missed below
+        discord.clear();
+        Instant now = Instant.now();
+        DataObject missed = DataObject.empty().put("id", 21).put("from", "Old Name").put("to", "New Name").put("status", "linked")
+                .put("decidedAt", now.minusSeconds(600).toString());
+        DataObject old = DataObject.empty().put("id", 23).put("from", "Ancient").put("to", "Later").put("status", "linked")
+                .put("decidedAt", now.minusSeconds(5 * 86400).toString());
+        DataObject undoneMissed = DataObject.empty().put("id", 22).put("from", "Was").put("to", "Now").put("status", "undone")
+                .put("undoneAt", now.minusSeconds(60).toString());
+        Mockito.when(reads.changes(CLAN, "linked")).thenReturn(List.of(missed, old));
+        Mockito.when(reads.changes(CLAN, "undone")).thenReturn(List.of(undoneMissed));
+
+        follower.catchUp(now);
+        follower.catchUp(now);
+
+        assertEquals(List.of("New Name|true|2026-01-05", "Was|true|2026-01-05"), roster(HOME));
+        assertEquals(List.of("announce 1 Old Name -> New Name"), discord, "once, and nothing for the change outside the window");
+        assertNull(store.state(23));
+        assertEquals("undone", store.state(22));
+    }
+
+    @Test
+    void theCatchUpDoesNothingWhenAClanLookupGoesUnanswered() throws SQLException {
+        member(HOME, "Old Name", true, "2026-01-05");
+        member(ELSEWHERE, "Someone", true, "2026-01-05");
+        Mockito.when(reads.clanId("Other Clan")).thenThrow(new HubNameChangeReads.Unanswered("busy"));
+
+        assertThrows(HubNameChangeReads.Unanswered.class, () -> follower.catchUp(Instant.now()));
+        Mockito.verify(reads, Mockito.never()).changes(Mockito.anyString(), Mockito.anyString());
     }
 }

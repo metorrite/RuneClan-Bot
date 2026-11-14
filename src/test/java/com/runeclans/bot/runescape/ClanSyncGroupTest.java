@@ -52,7 +52,7 @@ class ClanSyncGroupTest {
 
         service = new ClanSyncService(apiClient, clanMembers, settings,
                 mock(TrackingEventRouter.class), mock(WeeklyDigestRepository.class), mock(TrackingIconCatalog.class),
-                roleSync = mock(VerificationRoleSyncService.class), links = mock(PlayerLinkService.class));
+                roleSync = mock(VerificationRoleSyncService.class), links = mock(PlayerLinkService.class), mock(HubNameChangeReads.class));
     }
 
     @AfterEach
@@ -182,7 +182,7 @@ class ClanSyncGroupTest {
         botlessClan(20L, "Younglings");
         TrackingEventRouter router = mock(TrackingEventRouter.class);
         service = new ClanSyncService(apiClient, clanMembers, settings, router, mock(WeeklyDigestRepository.class),
-                mock(TrackingIconCatalog.class), mock(VerificationRoleSyncService.class), mock(PlayerLinkService.class));
+                mock(TrackingIconCatalog.class), mock(VerificationRoleSyncService.class), mock(PlayerLinkService.class), mock(HubNameChangeReads.class));
         when(clanMembers.getAll(20L, true)).thenReturn(List.of(row(20L, "A"), row(20L, "Gone")));
 
         Map<Long, ClanSyncService.SyncResult> results = service.syncAndPollGroup(List.of(one), List.of(20L));

@@ -55,7 +55,11 @@ public class HubNameChangeStore {
      * null, not both); {@code rowCols} tell one of the name's rows from another; {@code uniqueCols} are the columns that, with the server and
      * the name, may hold only one row (empty: one row per name; null: no limit).
      */
-    record Table(String name, boolean perGuild, String nameCol, String keyCol, List<String> rowCols, List<String> uniqueCols) {}
+    record Table(String name, boolean perGuild, String nameCol, String keyCol, List<String> rowCols, List<String> uniqueCols, boolean lowerName) {
+        Table(String name, boolean perGuild, String nameCol, String keyCol, List<String> rowCols, List<String> uniqueCols) {
+            this(name, perGuild, nameCol, keyCol, rowCols, uniqueCols, false);
+        }
+    }
 
     static final List<Table> GLOBAL = List.of(
             new Table("player_account", false, "rsn", null, List.of("account_id"), List.of()),
@@ -66,7 +70,7 @@ public class HubNameChangeStore {
             new Table("clan_points_award", true, "rsn", null, List.of("id"), List.of("award_type", "awarded_for_date")),
             new Table("member_goal", true, "rsn", null, List.of("id"), null),
             new Table("admin_note", true, "rsn", null, List.of("id"), null),
-            new Table("member_recap_seen", true, "rsn", null, List.of("period_key"), List.of("period_key")),
+            new Table("member_recap_seen", true, "rsn", null, List.of("period_key"), List.of("period_key"), true), // stored lower-cased
             new Table("site_season_standing", true, "rsn", null, List.of("season"), List.of("season")),
             new Table("site_cockpit_mark", true, null, "rsn_key", List.of("kind"), List.of("kind")),
             new Table("site_rank_tick", true, null, "rsn_key", List.of("rank_name"), List.of("rank_name")),
@@ -94,6 +98,20 @@ public class HubNameChangeStore {
             return out;
         } catch (SQLException e) {
             throw new RuntimeException("Failed to read the servers holding a name", e);
+        }
+    }
+
+    /** Every server the bot keeps a clan roster for (bot-less sites included). */
+    public Set<Long> knownGuilds() {
+        try (Connection c = connections.getConnection();
+             PreparedStatement s = c.prepareStatement("SELECT DISTINCT guild_id FROM younglings.clan_member")) {
+            Set<Long> out = new LinkedHashSet<>();
+            try (ResultSet rs = s.executeQuery()) {
+                while (rs.next()) out.add(rs.getLong(1));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read the servers with a roster", e);
         }
     }
 
@@ -264,7 +282,7 @@ public class HubNameChangeStore {
     }
 
     private static int bindSetName(PreparedStatement s, Table t, String rsn, int i) throws SQLException {
-        if (t.nameCol() != null) s.setString(i++, rsn);
+        if (t.nameCol() != null) s.setString(i++, t.lowerName() ? rsn.toLowerCase(Locale.ROOT) : rsn);
         if (t.keyCol() != null) s.setString(i++, keyOf(rsn));
         return i;
     }
@@ -433,33 +451,43 @@ public class HubNameChangeStore {
                 .put("needed", needed).put("since", since == null ? null : since.toString()));
     }
 
-    /** The newest leave of the old name and join of the new one since {@code since}: the pair this change replaces. */
-    private static void dropSupersededEvents(Connection c, long guildId, String from, String to, Instant since, DataArray journal) throws SQLException {
-        for (String[] pair : new String[][]{{from, "LEAVE"}, {to, "JOIN"}}) {
-            long id;
-            String rsn;
-            Timestamp at;
-            try (PreparedStatement s = c.prepareStatement("""
-                    SELECT id, rsn, event_at FROM younglings.clan_roster_event
-                    WHERE guild_id = ? AND LOWER(rsn) = LOWER(?) AND event_type = ? AND event_at >= ? ORDER BY event_at DESC, id DESC LIMIT 1
-                    """)) {
-                s.setLong(1, guildId);
-                s.setString(2, pair[0]);
-                s.setString(3, pair[1]);
-                s.setTimestamp(4, Timestamp.from(since));
-                try (ResultSet rs = s.executeQuery()) {
-                    if (!rs.next()) continue;
-                    id = rs.getLong(1);
-                    rsn = rs.getString(2);
-                    at = rs.getTimestamp(3);
-                }
+    /** How close in time the roster sync's leave and join must be to count as the pair one name change replaces. */
+    static final Duration PAIR_WITHIN = Duration.ofHours(1);
+
+    private record RosterEvent(long id, String rsn, Timestamp at) {}
+
+    private static RosterEvent newestEvent(Connection c, long guildId, String rsn, String type, Instant since) throws SQLException {
+        try (PreparedStatement s = c.prepareStatement("""
+                SELECT id, rsn, event_at FROM younglings.clan_roster_event
+                WHERE guild_id = ? AND LOWER(rsn) = LOWER(?) AND event_type = ? AND event_at >= ? ORDER BY event_at DESC, id DESC LIMIT 1
+                """)) {
+            s.setLong(1, guildId);
+            s.setString(2, rsn);
+            s.setString(3, type);
+            s.setTimestamp(4, Timestamp.from(since));
+            try (ResultSet rs = s.executeQuery()) {
+                return rs.next() ? new RosterEvent(rs.getLong(1), rs.getString(2), rs.getTimestamp(3)) : null;
             }
+        }
+    }
+
+    /**
+     * The leave of the old name and the join of the new one the roster sync recorded for this change (it saw it first): taken out only as a
+     * pair, close together in time ({@link #PAIR_WITHIN}), so an older real leave of the old name or join of the new one stays.
+     */
+    private static void dropSupersededEvents(Connection c, long guildId, String from, String to, Instant since, DataArray journal) throws SQLException {
+        RosterEvent leave = newestEvent(c, guildId, from, "LEAVE", since);
+        RosterEvent join = newestEvent(c, guildId, to, "JOIN", since);
+        if (leave == null || join == null) return;
+        if (Duration.between(leave.at().toInstant(), join.at().toInstant()).abs().compareTo(PAIR_WITHIN) > 0) return;
+        for (Object[] e : new Object[][]{{leave, "LEAVE"}, {join, "JOIN"}}) {
+            RosterEvent ev = (RosterEvent) e[0];
             try (PreparedStatement s = c.prepareStatement("DELETE FROM younglings.clan_roster_event WHERE id = ?")) {
-                s.setLong(1, id);
+                s.setLong(1, ev.id());
                 s.executeUpdate();
             }
-            journal.add(DataObject.empty().put("op", "event_drop").put("guild", guildId).put("id", id).put("rsn", rsn).put("type", pair[1])
-                    .put("at", at.toInstant().toString()));
+            journal.add(DataObject.empty().put("op", "event_drop").put("guild", guildId).put("id", ev.id()).put("rsn", ev.rsn()).put("type", e[1])
+                    .put("at", ev.at().toInstant().toString()));
         }
     }
 
@@ -550,9 +578,17 @@ public class HubNameChangeStore {
                     s.setLong(2, e.getLong("id"));
                     s.executeUpdate();
                 }
+                // the old name may hold a points row again (the roster sync added it since): the total goes back onto that one
+                try (PreparedStatement s = c.prepareStatement(
+                        "UPDATE younglings.clan_member_points SET total_points = total_points + ? WHERE guild_id = ? AND LOWER(rsn) = LOWER(?)")) {
+                    s.setLong(1, total);
+                    s.setLong(2, guildId);
+                    s.setString(3, from);
+                    if (s.executeUpdate() > 0) return;
+                }
                 try (PreparedStatement s = c.prepareStatement("""
                         INSERT INTO younglings.clan_member_points (id, guild_id, rsn, total_points, promotion_needed, promotion_needed_since)
-                        VALUES (?, ?, ?, ?, ?, ?::date) ON CONFLICT DO NOTHING
+                        VALUES (?, ?, ?, ?, ?, ?::date)
                         """)) {
                     s.setLong(1, e.getLong("oldId"));
                     s.setLong(2, guildId);

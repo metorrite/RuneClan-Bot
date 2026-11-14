@@ -11,7 +11,6 @@ import com.runeclans.bot.tracking.TrackingEventRouter;
 import com.runeclans.bot.tracking.TrackingGroup;
 import com.runeclans.bot.tracking.TrackingIconCatalog;
 import com.runeclans.bot.util.BotScheduler;
-import com.runeclans.bot.util.TtlCache;
 import io.github.freya022.botcommands.api.core.annotations.BEventListener;
 import io.github.freya022.botcommands.api.core.events.InjectedJDAEvent;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
@@ -22,8 +21,6 @@ import net.dv8tion.jda.api.utils.data.DataObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -34,6 +31,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -48,7 +46,9 @@ import java.util.function.Supplier;
  *   <li>{@code player.rename_undone}: the rows go back, and so does the nickname; the next roster sync then reports the leave and the join.</li>
  *   <li>Admin decisions in Discord use the hub's routes ({@link #changes}, {@link #decide}, {@link #undo}), the same ones the website uses.</li>
  * </ul>
- * A change delivered twice does nothing twice (the hub's change id is remembered). Work runs on its own lane, never the feed's.
+ * A change delivered twice does nothing twice (the hub's change id is remembered). Work runs on its own lane, never the feed's. A change
+ * the bot couldn't follow (the hub didn't answer a lookup, the database failed) is recorded as nothing, tried again after 1, 5 and 15
+ * minutes, and then by the hourly catch-up, which reads the last 48 hours of linked and undone changes of every clan the bot keeps.
  */
 @BService
 public class HubNameChanges implements HubFeedListener {
@@ -56,37 +56,76 @@ public class HubNameChanges implements HubFeedListener {
     public static final String KIND_RENAMED = "player.renamed";
     public static final String KIND_UNDONE = "player.rename_undone";
 
+    /** Waits before trying a feed entry that failed again (the hourly catch-up is the backstop after these). */
+    static final List<Duration> RETRY_AFTER = List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15));
+    static final Duration CATCH_UP_EVERY = Duration.ofHours(1);
+
     private final Follower follower;
     private final LiveDiscord discord;
     private final RuneClansHubClient hub;
-    private final ClanIds clanIds;
+    private final HubNameChangeReads reads;
     private final GuildSettingsService settings;
+    private final PlayerLinkService links;
+    private final VerificationRoleSyncService roleSync;
     private final ScheduledExecutorService lane = BotScheduler.lane("hub-name-changes");
 
-    public HubNameChanges(HubNameChangeStore store, RuneClansHubClient hub, GuildSettingsService settings, ClanSyncService clanSync,
-                          TrackingEventRouter router, TrackingIconCatalog icons, VerificationRoleSyncService roleSync, DiscordOutbox outbox) {
+    public HubNameChanges(HubNameChangeStore store, RuneClansHubClient hub, HubNameChangeReads reads, GuildSettingsService settings, ClanSyncService clanSync,
+                          TrackingEventRouter router, TrackingIconCatalog icons, VerificationRoleSyncService roleSync, DiscordOutbox outbox,
+                          PlayerLinkService links) {
         this.hub = hub;
+        this.reads = reads;
         this.settings = settings;
-        this.clanIds = new ClanIds(hub);
+        this.links = links;
+        this.roleSync = roleSync;
         this.discord = new LiveDiscord(router, icons, roleSync, outbox);
-        this.follower = new Follower(store, guildId -> settings.getEffective(guildId).clanName(), clanIds::of, clanSync::withRosterLock, discord);
+        this.follower = new Follower(store, guildId -> settings.getEffective(guildId).clanName(), reads, clanSync::withRosterLock, discord);
     }
 
     @BEventListener
     public void onJdaReady(InjectedJDAEvent event) {
         discord.jda = event.getJda();
+        if (!hub.enabled()) return;
+        lane.scheduleWithFixedDelay(() -> {
+            try {
+                follower.catchUp(Instant.now());
+            } catch (RuntimeException e) {
+                log.warn("The name change catch-up didn't run this time ({}); next hour.", e.getMessage());
+            }
+        }, 2 * 60, CATCH_UP_EVERY.toSeconds(), TimeUnit.SECONDS);
     }
 
     @Override
     public void onHubFeed(String kind, DataObject data) {
         if (data == null || !(KIND_RENAMED.equals(kind) || KIND_UNDONE.equals(kind))) return;
-        lane.execute(() -> {
-            try {
-                follower.handle(kind, data);
-            } catch (RuntimeException e) {
-                log.warn("Following a hub name change failed: {}", e.toString());
+        lane.execute(() -> attempt(kind, data, 0));
+    }
+
+    /** One try at a feed entry; a failure is tried again after {@link #RETRY_AFTER}, then left to the hourly catch-up. */
+    private void attempt(String kind, DataObject data, int tries) {
+        try {
+            follower.handle(kind, data);
+        } catch (RuntimeException e) {
+            String change = data.hasKey("changeId") ? String.valueOf(data.get("changeId")) : "?";
+            if (tries < RETRY_AFTER.size()) {
+                log.error("Following hub name change {} ({}) failed; trying again in {}", change, kind, RETRY_AFTER.get(tries), e);
+                lane.schedule(() -> attempt(kind, data, tries + 1), RETRY_AFTER.get(tries).toSeconds(), TimeUnit.SECONDS);
+            } else {
+                log.error("Following hub name change {} ({}) failed {} times; the hourly catch-up will try it again", change, kind, tries + 1, e);
             }
-        });
+        }
+    }
+
+    /**
+     * After a reject from Discord: the roster sync left the old name's linked player their roles while the change waited
+     * ({@link ClanSyncService}); the old name has really left, so the player goes back to Guest (unless still in the clan another way).
+     */
+    public void afterReject(Guild guild, Change change) {
+        try {
+            PlayerLink link = links.getLinkForRsn(guild.getIdLong(), change.from());
+            if (link != null) roleSync.syncLeftClan(guild, link.discordUserId());
+        } catch (RuntimeException e) {
+            log.warn("Couldn't update roles after rejecting name change {}: {}", change.id(), e.toString());
+        }
     }
 
     // ---------------------------------------------------------------- admin decisions (the hub's routes)
@@ -108,12 +147,17 @@ public class HubNameChanges implements HubFeedListener {
 
     /** This server's clan on the hub, if its clan is registered there. */
     public Optional<String> clanIdOf(long guildId) {
-        return clanIds.of(settings.getEffective(guildId).clanName());
+        return reads.clanId(settings.getEffective(guildId).clanName());
     }
 
     /** The hub's name changes for this server's clan with {@code status} ({@code open} = waiting for an admin, {@code linked}), newest first. */
     public Result<List<Change>> changes(long guildId, String status) {
-        Optional<String> clan = clanIdOf(guildId);
+        Optional<String> clan;
+        try {
+            clan = clanIdOf(guildId);
+        } catch (HubNameChangeReads.Unanswered e) {
+            return new Result<>(null, problem(null));
+        }
         if (clan.isEmpty()) return new Result<>(null, "This server's clan isn't on RuneClans yet, so there are no name changes to show.");
         RuneClansHubClient.Answer a = hub.call("GET", "/v1/clans/" + clan.get() + "/name-changes?status=" + status, null);
         if (a == null || !a.ok() || a.json() == null) return new Result<>(null, problem(a));
@@ -125,7 +169,12 @@ public class HubNameChanges implements HubFeedListener {
 
     /** Links ({@code link}) or rejects ({@code reject}) a waiting change for this server's clan, as {@code bot:<discord user id>}. */
     public Result<Change> decide(long guildId, long changeId, String decision, long actorId) {
-        Optional<String> clan = clanIdOf(guildId);
+        Optional<String> clan;
+        try {
+            clan = clanIdOf(guildId);
+        } catch (HubNameChangeReads.Unanswered e) {
+            return new Result<>(null, problem(null));
+        }
         if (clan.isEmpty()) return new Result<>(null, "This server's clan isn't on RuneClans yet.");
         String body = DataObject.empty().put("decision", decision).put("decidedBy", decidedBy(actorId)).toString();
         RuneClansHubClient.Answer a = hub.call("PUT", "/v1/clans/" + clan.get() + "/name-changes/" + changeId, body);
@@ -135,7 +184,12 @@ public class HubNameChanges implements HubFeedListener {
 
     /** Undoes a linked change for this server's clan (allowed for 30 days after the link), as {@code bot:<discord user id>}. */
     public Result<Change> undo(long guildId, long changeId, long actorId) {
-        Optional<String> clan = clanIdOf(guildId);
+        Optional<String> clan;
+        try {
+            clan = clanIdOf(guildId);
+        } catch (HubNameChangeReads.Unanswered e) {
+            return new Result<>(null, problem(null));
+        }
         if (clan.isEmpty()) return new Result<>(null, "This server's clan isn't on RuneClans yet.");
         String body = DataObject.empty().put("decidedBy", decidedBy(actorId)).toString();
         RuneClansHubClient.Answer a = hub.call("POST", "/v1/clans/" + clan.get() + "/name-changes/" + changeId + "/undo", body);
@@ -178,59 +232,125 @@ public class HubNameChanges implements HubFeedListener {
 
     /** The feed-following logic, apart from the framework's one-constructor service so tests can drive it. */
     static final class Follower {
+        /** How far back the hourly catch-up looks for links and undos the feed didn't bring (or that failed every try). */
+        static final Duration CATCH_UP_WINDOW = Duration.ofHours(48);
+
         private final HubNameChangeStore store;
         private final Function<Long, String> clanNameOf;
-        private final Function<String, Optional<String>> clanIdOf;
+        private final HubNameChangeReads reads;
         private final Function<Supplier<HubNameChangeStore.Applied>, HubNameChangeStore.Applied> rosterLock;
         private final Discord discord;
 
-        Follower(HubNameChangeStore store, Function<Long, String> clanNameOf, Function<String, Optional<String>> clanIdOf,
+        Follower(HubNameChangeStore store, Function<Long, String> clanNameOf, HubNameChangeReads reads,
                  Function<Supplier<HubNameChangeStore.Applied>, HubNameChangeStore.Applied> rosterLock, Discord discord) {
             this.store = store;
             this.clanNameOf = clanNameOf;
-            this.clanIdOf = clanIdOf;
+            this.reads = reads;
             this.rosterLock = rosterLock;
             this.discord = discord;
         }
 
+        /** Follows one feed entry. Throws when it couldn't (the hub didn't answer a lookup, or the database failed): nothing is kept then. */
         void handle(String kind, DataObject data) {
             if (!data.hasKey("changeId") || data.isNull("changeId")) return;
             long changeId = data.getLong("changeId");
             String from = data.getString("from", null);
             String to = data.getString("to", null);
             if (from == null || to == null || from.isBlank() || to.isBlank()) return;
-            if (KIND_RENAMED.equals(kind)) renamed(changeId, from, to, data);
-            else if (KIND_UNDONE.equals(kind)) undone(changeId, from, to);
+            if (KIND_RENAMED.equals(kind)) {
+                Set<String> clans = new HashSet<>();
+                DataArray ids = data.optArray("clanIds").orElse(DataArray.empty());
+                for (int i = 0; i < ids.length(); i++) clans.add(ids.getString(i).toLowerCase(java.util.Locale.ROOT));
+                renamed(changeId, from, to, clans, parse(data.getString("at", null)));
+            } else if (KIND_UNDONE.equals(kind)) {
+                undone(changeId, from, to);
+            }
         }
 
-        private void renamed(long changeId, String from, String to, DataObject data) {
+        /**
+         * Applies a linked change to the servers whose clan is in {@code clans}. Every server's clan is looked up before anything is kept: a
+         * lookup the hub didn't answer throws, so the change is never recorded as done with a server left out.
+         */
+        void renamed(long changeId, String from, String to, Set<String> clans, Instant at) {
             if (store.state(changeId) != null) return; // delivered before
-            Set<String> clans = new HashSet<>();
-            DataArray ids = data.optArray("clanIds").orElse(DataArray.empty());
-            for (int i = 0; i < ids.length(); i++) clans.add(ids.getString(i).toLowerCase(java.util.Locale.ROOT));
             List<Long> guilds = new ArrayList<>();
             for (long guildId : store.guildsHolding(from, to)) {
                 String clanName = clanNameOf.apply(guildId);
                 if (clanName == null) continue;
-                Optional<String> clanId = clanIdOf.apply(clanName);
+                Optional<String> clanId = reads.clanId(clanName); // throws when unanswered
                 if (clanId.isPresent() && clans.contains(clanId.get().toLowerCase(java.util.Locale.ROOT))) guilds.add(guildId);
             }
-            Instant at = parse(data.getString("at", null));
             HubNameChangeStore.Applied applied = rosterLock.apply(() -> store.apply(changeId, from, to, at, guilds));
             if (applied == null) return;
             for (long guildId : applied.rosterGuildIds()) {
-                discord.announce(guildId, from, to);
-                if (applied.ownerDiscordId() != null) {
-                    discord.followRoles(guildId, applied.ownerDiscordId(), to);
-                    discord.followNickname(guildId, applied.ownerDiscordId(), from, to);
+                try {
+                    discord.announce(guildId, from, to);
+                    if (applied.ownerDiscordId() != null) {
+                        discord.followRoles(guildId, applied.ownerDiscordId(), to);
+                        discord.followNickname(guildId, applied.ownerDiscordId(), from, to);
+                    }
+                } catch (RuntimeException e) {
+                    log.error("Name change {} moved, but its Discord follow-up failed in guild {}", changeId, guildId, e);
                 }
             }
         }
 
-        private void undone(long changeId, String from, String to) {
+        void undone(long changeId, String from, String to) {
             HubNameChangeStore.Applied back = rosterLock.apply(() -> store.undoApplied(changeId));
             if (back == null || back.ownerDiscordId() == null) return;
-            for (long guildId : back.rosterGuildIds()) discord.followNickname(guildId, back.ownerDiscordId(), to, from);
+            for (long guildId : back.rosterGuildIds()) {
+                try {
+                    discord.followNickname(guildId, back.ownerDiscordId(), to, from);
+                } catch (RuntimeException e) {
+                    log.error("Name change {} undone, but the nickname follow-up failed in guild {}", changeId, guildId, e);
+                }
+            }
+        }
+
+        /**
+         * The backstop for a feed entry that never arrived or failed every try: reads the linked and undone changes of every clan the bot
+         * keeps a roster for, and follows any from the last {@link #CATCH_UP_WINDOW} it hasn't. Every clan is looked up first; if the hub
+         * doesn't answer one, nothing is done this time (a change found through one clan must still reach every server it belongs to).
+         */
+        void catchUp(Instant now) {
+            Set<String> clanIds = new java.util.LinkedHashSet<>();
+            for (long guildId : store.knownGuilds()) {
+                String clanName = clanNameOf.apply(guildId);
+                if (clanName == null) continue;
+                reads.clanId(clanName).ifPresent(clanIds::add);
+            }
+            record Linked(long id, String from, String to, Instant at, Set<String> clans) {}
+            java.util.Map<Long, Linked> linked = new java.util.LinkedHashMap<>();
+            java.util.Map<Long, DataObject> undone = new java.util.LinkedHashMap<>();
+            Instant since = now.minus(CATCH_UP_WINDOW);
+            for (String clanId : clanIds) {
+                for (DataObject c : reads.changes(clanId, "linked")) {
+                    Instant at = parse(c.getString("decidedAt", null));
+                    if (at == null || at.isBefore(since)) continue;
+                    Linked l = linked.computeIfAbsent(c.getLong("id"), id -> new Linked(id, c.getString("from", ""), c.getString("to", ""), at, new HashSet<>()));
+                    l.clans().add(clanId.toLowerCase(java.util.Locale.ROOT));
+                }
+                for (DataObject c : reads.changes(clanId, "undone")) {
+                    Instant at = parse(c.getString("undoneAt", null));
+                    if (at != null && !at.isBefore(since)) undone.put(c.getLong("id"), c);
+                }
+            }
+            for (Linked l : linked.values()) {
+                if (l.from().isBlank() || l.to().isBlank()) continue;
+                try {
+                    renamed(l.id(), l.from(), l.to(), l.clans(), l.at());
+                } catch (RuntimeException e) {
+                    log.error("The catch-up couldn't follow name change {}", l.id(), e);
+                }
+            }
+            for (DataObject c : undone.values()) {
+                if (!"linked".equals(store.state(c.getLong("id")))) continue;
+                try {
+                    undone(c.getLong("id"), c.getString("from", ""), c.getString("to", ""));
+                } catch (RuntimeException e) {
+                    log.error("The catch-up couldn't undo name change {}", c.getLong("id"), e);
+                }
+            }
         }
 
         private static Instant parse(String at) {
@@ -239,29 +359,6 @@ public class HubNameChanges implements HubFeedListener {
             } catch (RuntimeException e) {
                 return null;
             }
-        }
-    }
-
-    /** The hub's id of a clan, by name, kept for ten minutes (only found ones). */
-    static final class ClanIds {
-        private final RuneClansHubClient hub;
-        private final TtlCache<String, String> ids = new TtlCache<>(Duration.ofMinutes(10));
-
-        ClanIds(RuneClansHubClient hub) {
-            this.hub = hub;
-        }
-
-        Optional<String> of(String clanName) {
-            if (clanName == null || clanName.isBlank()) return Optional.empty();
-            String key = ClanSyncService.clanKey(clanName);
-            Optional<String> cached = ids.get(key);
-            if (cached.isPresent()) return cached;
-            RuneClansHubClient.Answer a = hub.call("GET", "/v1/clans/by-name/" + URLEncoder.encode(clanName.strip(), StandardCharsets.UTF_8).replace("+", "%20"), null);
-            if (a == null || !a.ok() || a.json() == null) return Optional.empty();
-            String id = a.json().getString("clanId", "");
-            if (id.isBlank()) return Optional.empty();
-            ids.put(key, id);
-            return Optional.of(id);
         }
     }
 

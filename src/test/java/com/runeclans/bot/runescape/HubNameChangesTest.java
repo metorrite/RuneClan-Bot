@@ -24,6 +24,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -51,8 +52,9 @@ class HubNameChangesTest {
         when(effective.clanName()).thenReturn("Younglings");
         when(settings.getEffective(GUILD)).thenReturn(effective);
         when(hub.call("GET", "/v1/clans/by-name/Younglings", null)).thenReturn(new RuneClansHubClient.Answer(200, DataObject.empty().put("clanId", CLAN)));
-        service = new HubNameChanges(mock(HubNameChangeStore.class), hub, settings, mock(ClanSyncService.class), mock(TrackingEventRouter.class),
-                mock(TrackingIconCatalog.class), mock(VerificationRoleSyncService.class), mock(DiscordOutbox.class));
+        service = new HubNameChanges(mock(HubNameChangeStore.class), hub, new HubNameChangeReads(hub), settings, mock(ClanSyncService.class),
+                mock(TrackingEventRouter.class), mock(TrackingIconCatalog.class), mock(VerificationRoleSyncService.class), mock(DiscordOutbox.class),
+                mock(PlayerLinkService.class));
     }
 
     private static DataObject change(long id, String status, boolean canUndo) {
@@ -104,6 +106,23 @@ class HubNameChangesTest {
         assertFalse(service.changes(GUILD, "open").ok());
         assertFalse(service.decide(GUILD, 4, "link", 1L).ok());
         verify(hub, never()).call(eq("PUT"), anyString(), anyString());
+    }
+
+    @Test
+    void aClanLookupTheHubDidNotAnswerIsAPlainProblemNotNoClan() {
+        when(hub.call("GET", "/v1/clans/by-name/Younglings", null)).thenReturn(new RuneClansHubClient.Answer(503, DataObject.empty()));
+
+        assertTrue(service.changes(GUILD, "open").problem().contains("didn't answer"));
+        assertThrows(HubNameChangeReads.Unanswered.class, () -> new HubNameChangeReads(hub).clanId("Younglings"));
+        assertThrows(HubNameChangeReads.Unanswered.class, () -> new HubNameChangeReads(hub).waitingOldNames("Younglings"));
+    }
+
+    @Test
+    void theWaitingOldNamesAreTheOpenChangesFromNames() {
+        when(hub.call("GET", "/v1/clans/" + CLAN + "/name-changes?status=open&limit=100", null))
+                .thenReturn(new RuneClansHubClient.Answer(200, DataObject.empty().put("changes", DataArray.empty().add(change(4, "open", false)))));
+
+        assertEquals(java.util.Set.of("old name"), new HubNameChangeReads(hub).waitingOldNames("Younglings"));
     }
 
     @Test

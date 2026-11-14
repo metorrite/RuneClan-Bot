@@ -84,6 +84,7 @@ public class RsnRenameInteractionListener extends ListenerAdapter {
                     case REJECT -> nameChanges.decide(guildId, changeId, "reject", actor);
                     default -> nameChanges.undo(guildId, changeId, actor);
                 };
+                if (done.ok() && action.equals(REJECT)) nameChanges.afterReject(guild, done.value()); // the old name really left
                 show(hook, guildId, done.ok() ? outcome(action, done.value()) : "⚠️ " + done.problem());
             }));
         } catch (RuntimeException e) {

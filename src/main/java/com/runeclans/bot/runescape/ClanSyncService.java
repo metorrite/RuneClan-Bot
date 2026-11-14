@@ -41,6 +41,7 @@ public class ClanSyncService {
     private final TrackingIconCatalog trackingIconCatalog;
     private final VerificationRoleSyncService roleSyncService;
     private final PlayerLinkService linkService;
+    private final HubNameChangeReads nameChanges;
 
     /** Held while a refresh reads the stored roster, rewrites it and announces the difference. */
     private final Object rosterLock = new Object();
@@ -54,7 +55,7 @@ public class ClanSyncService {
                             GuildSettingsService guildSettingsService,
                             TrackingEventRouter trackingEventRouter, WeeklyDigestRepository weeklyDigestRepository,
                             TrackingIconCatalog trackingIconCatalog, VerificationRoleSyncService roleSyncService,
-                            PlayerLinkService linkService) {
+                            PlayerLinkService linkService, HubNameChangeReads nameChanges) {
         this.apiClient = apiClient;
         this.clanMemberRepository = clanMemberRepository;
         this.guildSettingsService = guildSettingsService;
@@ -63,6 +64,7 @@ public class ClanSyncService {
         this.trackingIconCatalog = trackingIconCatalog;
         this.roleSyncService = roleSyncService;
         this.linkService = linkService;
+        this.nameChanges = nameChanges;
     }
 
     public record SyncResult(int rosterSize, int newMembers, int departedMembers, int polled, int pollFailed) {}
@@ -321,7 +323,8 @@ public class ClanSyncService {
     /**
      * Brings Discord roles in line with a roster refresh: a linked player whose RSN just joined gets Member,
      * one whose RSN just left goes back to Guest (unless another of their accounts is still in the clan).
-     * Skipped for departures altogether when an implausible share of the roster vanished at
+     * A departed name with a name change waiting for an admin on the hub keeps its roles (it was renamed, not lost); when the hub can't
+     * say, no departure is applied this time. Skipped for departures altogether when an implausible share of the roster vanished at
      * once, which is far likelier a bad response from Jagex than a real exodus. Returns the Discord users
      * whose joins were applied.
      */
@@ -346,14 +349,34 @@ public class ClanSyncService {
                     change.departedNames().size(), change.before().size(), guildId);
             return joined;
         }
+        Map<String, PlayerLink> leaving = new java.util.LinkedHashMap<>();
         for (String name : change.departedNames()) {
             try {
                 PlayerLink link = linkService.getLinkForRsn(guildId, name);
-                if (link != null) roleSyncService.syncLeftClan(guild, link.discordUserId());
+                if (link != null) leaving.put(name, link);
+            } catch (Exception e) {
+                log.warn("Couldn't read the link of '{}' leaving the clan", name, e);
+            }
+        }
+        if (leaving.isEmpty()) return joined;
+        // T-1160: a name with a change waiting on the hub was renamed, not lost: its player keeps their roles until an admin decides
+        // (linked: HubNameChanges gives the new name the roles; rejected from Discord: the Name Changes button takes them off)
+        Set<String> waiting;
+        try {
+            waiting = nameChanges.waitingOldNames(getClanName(guildId));
+        } catch (RuntimeException e) {
+            log.warn("Couldn't read the hub's waiting name changes for guild {} ({}); leaving the roles of {} departed member(s) alone this time.",
+                    guildId, e.getMessage(), leaving.size());
+            return joined;
+        }
+        leaving.forEach((name, link) -> {
+            if (waiting.contains(name.toLowerCase(java.util.Locale.ROOT))) return;
+            try {
+                roleSyncService.syncLeftClan(guild, link.discordUserId());
             } catch (Exception e) {
                 log.warn("Couldn't update roles for '{}' leaving the clan", name, e);
             }
-        }
+        });
         return joined;
     }
 
