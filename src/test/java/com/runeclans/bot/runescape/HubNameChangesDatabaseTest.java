@@ -97,6 +97,11 @@ class HubNameChangesDatabaseTest {
                     public void followNickname(long guildId, long discordUserId, String from, String to) {
                         discord.add("nickname " + guildId + " " + discordUserId + " " + from + " -> " + to);
                     }
+
+                    @Override
+                    public void releaseRoles(long guildId, String oldRsn) {
+                        discord.add("release " + guildId + " " + oldRsn);
+                    }
                 });
     }
 
@@ -364,5 +369,38 @@ class HubNameChangesDatabaseTest {
 
         assertThrows(HubNameChangeReads.Unanswered.class, () -> follower.catchUp(Instant.now()));
         Mockito.verify(reads, Mockito.never()).changes(Mockito.anyString(), Mockito.anyString());
+    }
+
+    @Test
+    void theCatchUpReleasesTheRolesHeldForARejectedChangeOnceAndNotForANameBackOnTheRoster() throws SQLException {
+        member(HOME, "Gone", false, "2026-01-05");
+        member(HOME, "Back", true, "2026-01-05");
+        Instant now = Instant.now();
+        DataObject gone = DataObject.empty().put("id", 31).put("from", "Gone").put("to", "Stranger").put("status", "rejected")
+                .put("decidedAt", now.minusSeconds(600).toString());
+        DataObject back = DataObject.empty().put("id", 32).put("from", "Back").put("to", "Other").put("status", "rejected")
+                .put("decidedAt", now.minusSeconds(600).toString());
+        DataObject old = DataObject.empty().put("id", 33).put("from", "Long Ago").put("to", "X").put("status", "rejected")
+                .put("decidedAt", now.minusSeconds(5 * 86400).toString());
+        Mockito.when(reads.changes(CLAN, "rejected")).thenReturn(List.of(gone, back, old));
+
+        follower.catchUp(now);
+        follower.catchUp(now);
+
+        assertEquals(List.of("release 1 Gone"), discord, "once; not for a name still on the roster, nor outside the window");
+    }
+
+    @Test
+    void theCatchUpFollowsTwoMissedRenamesInTheOrderTheyHappened() throws SQLException {
+        member(HOME, "A", true, "2026-01-05");
+        Instant now = Instant.now();
+        DataObject first = DataObject.empty().put("id", 41).put("from", "A").put("to", "B").put("decidedAt", now.minusSeconds(3600).toString());
+        DataObject second = DataObject.empty().put("id", 42).put("from", "B").put("to", "C").put("decidedAt", now.minusSeconds(600).toString());
+        Mockito.when(reads.changes(CLAN, "linked")).thenReturn(List.of(second, first)); // the hub lists newest first
+
+        follower.catchUp(now);
+
+        assertEquals(List.of("C|true|2026-01-05"), roster(HOME));
+        assertEquals(List.of("announce 1 A -> B", "announce 1 B -> C"), discord);
     }
 }

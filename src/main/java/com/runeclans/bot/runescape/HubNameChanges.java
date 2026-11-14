@@ -48,7 +48,8 @@ import java.util.function.Supplier;
  * </ul>
  * A change delivered twice does nothing twice (the hub's change id is remembered). Work runs on its own lane, never the feed's. A change
  * the bot couldn't follow (the hub didn't answer a lookup, the database failed) is recorded as nothing, tried again after 1, 5 and 15
- * minutes, and then by the hourly catch-up, which reads the last 48 hours of linked and undone changes of every clan the bot keeps.
+ * minutes, and then by the hourly catch-up, which reads the last 48 hours of linked and undone changes of every clan the bot keeps. The
+ * catch-up also reads rejected changes: their old name really left, so the roles the roster sync held for it are released.
  */
 @BService
 public class HubNameChanges implements HubFeedListener {
@@ -77,7 +78,7 @@ public class HubNameChanges implements HubFeedListener {
         this.settings = settings;
         this.links = links;
         this.roleSync = roleSync;
-        this.discord = new LiveDiscord(router, icons, roleSync, outbox);
+        this.discord = new LiveDiscord(router, icons, roleSync, outbox, links);
         this.follower = new Follower(store, guildId -> settings.getEffective(guildId).clanName(), reads, clanSync::withRosterLock, discord);
     }
 
@@ -228,6 +229,12 @@ public class HubNameChanges implements HubFeedListener {
 
         /** Swaps {@code from} for {@code to} in the member's nickname, if it has it. */
         void followNickname(long guildId, long discordUserId, String from, String to);
+
+        /**
+         * A change from {@code oldRsn} was rejected: the roster sync held its linked player's roles while it waited, and the name really left,
+         * so the player goes back to Guest (unless still in the clan on another account).
+         */
+        void releaseRoles(long guildId, String oldRsn);
     }
 
     /** The feed-following logic, apart from the framework's one-constructor service so tests can drive it. */
@@ -314,14 +321,19 @@ public class HubNameChanges implements HubFeedListener {
          */
         void catchUp(Instant now) {
             Set<String> clanIds = new java.util.LinkedHashSet<>();
+            java.util.Map<String, List<Long>> guildsOfClan = new java.util.HashMap<>();
             for (long guildId : store.knownGuilds()) {
                 String clanName = clanNameOf.apply(guildId);
                 if (clanName == null) continue;
-                reads.clanId(clanName).ifPresent(clanIds::add);
+                reads.clanId(clanName).ifPresent(id -> {
+                    clanIds.add(id);
+                    guildsOfClan.computeIfAbsent(id, k -> new ArrayList<>()).add(guildId);
+                });
             }
             record Linked(long id, String from, String to, Instant at, Set<String> clans) {}
             java.util.Map<Long, Linked> linked = new java.util.LinkedHashMap<>();
             java.util.Map<Long, DataObject> undone = new java.util.LinkedHashMap<>();
+            List<Released> rejected = new ArrayList<>();
             Instant since = now.minus(CATCH_UP_WINDOW);
             for (String clanId : clanIds) {
                 for (DataObject c : reads.changes(clanId, "linked")) {
@@ -334,8 +346,17 @@ public class HubNameChanges implements HubFeedListener {
                     Instant at = parse(c.getString("undoneAt", null));
                     if (at != null && !at.isBefore(since)) undone.put(c.getLong("id"), c);
                 }
+                for (DataObject c : reads.changes(clanId, "rejected")) {
+                    Instant at = parse(c.getString("decidedAt", null));
+                    String from = c.getString("from", "");
+                    if (at == null || at.isBefore(since) || from.isBlank()) continue;
+                    for (long guildId : guildsOfClan.getOrDefault(clanId, List.of())) rejected.add(new Released(c.getLong("id"), guildId, from));
+                }
             }
-            for (Linked l : linked.values()) {
+            // oldest first: two renames in a row (A to B, then B to C) must be followed in that order, or the rows end on B
+            List<Linked> inOrder = new ArrayList<>(linked.values());
+            inOrder.sort(java.util.Comparator.comparingLong(Linked::id));
+            for (Linked l : inOrder) {
                 if (l.from().isBlank() || l.to().isBlank()) continue;
                 try {
                     renamed(l.id(), l.from(), l.to(), l.clans(), l.at());
@@ -351,7 +372,23 @@ public class HubNameChanges implements HubFeedListener {
                     log.error("The catch-up couldn't undo name change {}", c.getLong("id"), e);
                 }
             }
+            // a rejected change (by an admin anywhere, or by the hub itself) means the old name really left: release the roles the roster
+            // sync held for it, once per change and server, unless the name is back on the roster
+            for (Released r : rejected) {
+                if (!released.add(r.changeId() + ":" + r.guildId())) continue;
+                try {
+                    if (!store.activeOnRoster(r.guildId(), r.oldRsn())) discord.releaseRoles(r.guildId(), r.oldRsn());
+                } catch (RuntimeException e) {
+                    released.remove(r.changeId() + ":" + r.guildId());
+                    log.error("The catch-up couldn't release the roles held for rejected name change {} in guild {}", r.changeId(), r.guildId(), e);
+                }
+            }
         }
+
+        private record Released(long changeId, long guildId, String oldRsn) {}
+
+        /** Rejected changes already released, as {@code changeId:guildId} (the 48-hour window lists each for two days). */
+        private final Set<String> released = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
         private static Instant parse(String at) {
             try {
@@ -371,12 +408,23 @@ public class HubNameChanges implements HubFeedListener {
         private final TrackingIconCatalog icons;
         private final VerificationRoleSyncService roleSync;
         private final DiscordOutbox outbox;
+        private final PlayerLinkService links;
 
-        LiveDiscord(TrackingEventRouter router, TrackingIconCatalog icons, VerificationRoleSyncService roleSync, DiscordOutbox outbox) {
+        LiveDiscord(TrackingEventRouter router, TrackingIconCatalog icons, VerificationRoleSyncService roleSync, DiscordOutbox outbox, PlayerLinkService links) {
             this.router = router;
             this.icons = icons;
             this.roleSync = roleSync;
             this.outbox = outbox;
+            this.links = links;
+        }
+
+        @Override
+        public void releaseRoles(long guildId, String oldRsn) {
+            if (AutoPostRouter.skipSweep("rejected name change roles")) return;
+            Guild guild = guild(guildId);
+            if (guild == null) return;
+            PlayerLink link = links.getLinkForRsn(guildId, oldRsn);
+            if (link != null) roleSync.syncLeftClan(guild, link.discordUserId());
         }
 
         private Guild guild(long guildId) {

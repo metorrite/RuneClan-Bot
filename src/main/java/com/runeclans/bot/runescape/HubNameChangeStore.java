@@ -115,6 +115,20 @@ public class HubNameChangeStore {
         }
     }
 
+    /** Whether {@code rsn} is an active member on this server's stored roster. */
+    public boolean activeOnRoster(long guildId, String rsn) {
+        try (Connection c = connections.getConnection();
+             PreparedStatement s = c.prepareStatement("SELECT 1 FROM younglings.clan_member WHERE guild_id = ? AND LOWER(rsn) = LOWER(?) AND active")) {
+            s.setLong(1, guildId);
+            s.setString(2, rsn);
+            try (ResultSet rs = s.executeQuery()) {
+                return rs.next();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to read the roster", e);
+        }
+    }
+
     /** Whether this change was already applied (and not undone). */
     public boolean isApplied(long changeId) {
         return "linked".equals(state(changeId));

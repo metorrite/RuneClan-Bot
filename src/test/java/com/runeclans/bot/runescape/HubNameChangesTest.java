@@ -138,7 +138,7 @@ class HubNameChangesTest {
         when(repository.isEnabled(GUILD, TrackingGroup.CLAN_JOINS_LEAVES.name())).thenReturn(true);
         when(repository.getAllDestinations(GUILD)).thenReturn(Map.of(TrackingGroup.CLAN_JOINS_LEAVES.name(), List.of(new TrackingRepository.Destination(7L, 9L))));
         HubNameChanges.LiveDiscord discord = new HubNameChanges.LiveDiscord(new TrackingEventRouter(repository, toggle), mock(TrackingIconCatalog.class),
-                mock(VerificationRoleSyncService.class), mock(DiscordOutbox.class));
+                mock(VerificationRoleSyncService.class), mock(DiscordOutbox.class), mock(PlayerLinkService.class));
         JDA jda = mock(JDA.class);
         Guild guild = mock(Guild.class);
         when(guild.getIdLong()).thenReturn(GUILD);
