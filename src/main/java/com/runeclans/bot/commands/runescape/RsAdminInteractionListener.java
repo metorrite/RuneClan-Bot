@@ -245,9 +245,8 @@ public class RsAdminInteractionListener extends ListenerAdapter {
 
     /**
      * Repoints an existing link at a new RSN in place — the manual fallback for a name change,
-     * always available regardless of whether {@link RsnRenameService}'s automated detection ever
-     * catches it (it only runs during **Sync Clan**, and only for clan-roster members in the first
-     * place). Historical snapshots/activity stay under the old name; only the link moves.
+     * for a link the RuneClans hub's name changes ({@link com.runeclans.bot.runescape.HubNameChanges}) don't cover. Historical
+     * snapshots/activity stay under the old name; only the link moves.
      */
     private void handleRenameModal(ModalInteractionEvent event, Guild guild, String oldRsn) {
         String newRsn = event.getValue("new_rsn").getAsString().trim();
@@ -1119,7 +1118,7 @@ public class RsAdminInteractionListener extends ListenerAdapter {
                     Button.secondary("rsnadmin_clanoverview:_", "Clan Overview"),
                     Button.secondary("rsnadmin_citadel:_", "Citadel Viewer")
             ));
-            children.add(ActionRow.of(Button.secondary("rsnadmin_coffer:_", "Clan Coffer")));
+            children.add(ActionRow.of(Button.secondary("rsnadmin_coffer:_", "Clan Coffer"), Button.secondary("namechg_list:_", "Name Changes")));
             children.add(Separator.createDivider(Separator.Spacing.SMALL));
         }
 

@@ -1,11 +1,11 @@
 package com.runeclans.bot.commands.runescape;
 
 import com.runeclans.bot.permission.AdminRoleFilter;
-import com.runeclans.bot.runescape.PlayerLink;
-import com.runeclans.bot.runescape.PlayerLinkService;
-import com.runeclans.bot.runescape.RsnRenameRepository;
-import com.runeclans.bot.runescape.RsnRenameService;
-import com.runeclans.bot.runescape.VerificationRoleSyncService;
+import com.runeclans.bot.runescape.HubNameChanges;
+import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
+import net.dv8tion.jda.api.components.tree.ComponentTree;
+import net.dv8tion.jda.api.components.buttons.Button;
+import net.dv8tion.jda.api.components.container.Container;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
@@ -13,112 +13,123 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-import java.time.OffsetDateTime;
+import java.util.List;
 
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Who may press Confirm / Reject on a possible-rename card. */
+/** T-1160: the Name Changes buttons decide through the hub, for staff only; the old rename cards point there. */
 class RsnRenameButtonsTest {
     private static final long GUILD = 10L;
-    private static final long OTHER_GUILD = 20L;
-    private static final long CANDIDATE = 5L;
-    private static final long OWNER = 700L;
-    private static final long SOMEONE_ELSE = 800L;
 
-    private RsnRenameService renameService;
-    private PlayerLinkService linkService;
-    private VerificationRoleSyncService roleSync;
+    private HubNameChanges nameChanges;
     private AdminRoleFilter adminFilter;
     private RsnRenameInteractionListener listener;
 
     @BeforeEach
     void setUp() {
-        renameService = mock(RsnRenameService.class);
-        linkService = mock(PlayerLinkService.class);
-        roleSync = mock(VerificationRoleSyncService.class);
+        nameChanges = mock(HubNameChanges.class);
         adminFilter = mock(AdminRoleFilter.class);
-        listener = new RsnRenameInteractionListener(renameService, linkService, roleSync, adminFilter);
-        when(renameService.getCandidate(CANDIDATE)).thenReturn(new RsnRenameRepository.RenameCandidate(
-                CANDIDATE, GUILD, "Old Name", "New Name", "MEDIUM", "stats", OffsetDateTime.now(), "PENDING"));
-        when(renameService.confirm(anyLong(), anyLong())).thenReturn(true);
-        when(renameService.reject(anyLong(), anyLong())).thenReturn(true);
-        when(linkService.getLinkForRsn(GUILD, "Old Name")).thenReturn(
-                new PlayerLink(1L, GUILD, OWNER, "Old Name", "MANUAL", OffsetDateTime.now(), null));
+        listener = new RsnRenameInteractionListener(nameChanges, adminFilter);
     }
 
-    private static Guild guild(long id) {
-        Guild guild = mock(Guild.class);
-        when(guild.getIdLong()).thenReturn(id);
-        return guild;
-    }
-
-    private static ButtonInteractionEvent press(String action, Guild guild, Member member, long userId) {
+    private static ButtonInteractionEvent press(String id, Guild guild, Member member) {
         ButtonInteractionEvent event = mock(ButtonInteractionEvent.class, Mockito.RETURNS_DEEP_STUBS);
-        when(event.getComponentId()).thenReturn("rsnrename_" + action + ":" + CANDIDATE);
+        when(event.getComponentId()).thenReturn(id);
         when(event.getGuild()).thenReturn(guild);
         when(event.getMember()).thenReturn(member);
-        when(event.getUser().getIdLong()).thenReturn(userId);
+        when(event.getUser().getIdLong()).thenReturn(1L);
         return event;
     }
 
+    private static Guild guild() {
+        Guild guild = mock(Guild.class);
+        when(guild.getIdLong()).thenReturn(GUILD);
+        return guild;
+    }
+
     @Test
-    void aMemberWhoIsNotStaffCannotConfirmOrRejectFromTheAlertChannel() {
-        Guild guild = guild(GUILD);
+    void aMemberWhoIsNotStaffCannotLinkRejectOrUndo() {
+        Guild guild = guild();
         Member member = mock(Member.class);
         when(adminFilter.isSupportTier(guild, member)).thenReturn(false);
 
-        ButtonInteractionEvent confirm = press("confirm", guild, member, SOMEONE_ELSE);
-        listener.onButtonInteraction(confirm);
-        ButtonInteractionEvent reject = press("reject", guild, member, SOMEONE_ELSE);
-        listener.onButtonInteraction(reject);
-
-        verify(renameService, never()).confirm(anyLong(), anyLong());
-        verify(renameService, never()).reject(anyLong(), anyLong());
-        verify(roleSync, never()).syncLeftClan(any(), anyLong());
-        verify(confirm).replyComponents(Mockito.anyList());
-        verify(reject).replyComponents(Mockito.anyList());
+        for (String id : List.of("namechg_link:4", "namechg_reject:4", "namechg_undo:4", "namechg_list:_")) {
+            ButtonInteractionEvent event = press(id, guild, member);
+            listener.onButtonInteraction(event);
+            verify(event).replyComponents(Mockito.anyList());
+        }
+        verify(nameChanges, never()).decide(anyLong(), anyLong(), anyString(), anyLong());
+        verify(nameChanges, never()).undo(anyLong(), anyLong(), anyLong());
     }
 
     @Test
-    void staffOfAnotherServerCannotResolveThisServersRename() {
-        Guild other = guild(OTHER_GUILD);
-        Member staff = mock(Member.class);
-        when(adminFilter.isSupportTier(other, staff)).thenReturn(true);
-
-        listener.onButtonInteraction(press("reject", other, staff, SOMEONE_ELSE));
-
-        verify(renameService, never()).reject(anyLong(), anyLong());
-        verify(roleSync, never()).syncLeftClan(any(), anyLong());
-    }
-
-    @Test
-    void staffOfTheServerCanConfirm() {
-        Guild guild = guild(GUILD);
+    void staffPressesAreAnsweredStraightAwayAndDoneInTheBackground() {
+        Guild guild = guild();
         Member staff = mock(Member.class);
         when(adminFilter.isSupportTier(guild, staff)).thenReturn(true);
 
-        listener.onButtonInteraction(press("confirm", guild, staff, SOMEONE_ELSE));
+        ButtonInteractionEvent link = press("namechg_link:4", guild, staff);
+        listener.onButtonInteraction(link);
+        ButtonInteractionEvent list = press("namechg_list:_", guild, staff);
+        listener.onButtonInteraction(list);
 
-        verify(renameService).confirm(CANDIDATE, SOMEONE_ELSE);
+        verify(link).deferEdit();
+        verify(list).deferReply(true);
     }
 
     @Test
-    void theLinkedPlayerCanAnswerFromTheirDm() {
-        listener.onButtonInteraction(press("confirm", null, null, OWNER));
+    void anOldRenameCardPointsToNameChanges() {
+        ButtonInteractionEvent event = press("rsnrename_confirm:5", null, null);
 
-        verify(renameService).confirm(CANDIDATE, OWNER);
+        listener.onButtonInteraction(event);
+
+        verify(event).replyComponents(Mockito.anyList());
+        verify(nameChanges, never()).decide(anyLong(), anyLong(), anyString(), anyLong());
+    }
+
+    private static List<String> buttons(Container card) {
+        return ComponentTree.of(List.of(card)).findAll(Button.class).stream().map(Button::getCustomId).toList();
+    }
+
+    private static String text(Container card) {
+        return String.join("\n", ComponentTree.of(List.of(card)).findAll(TextDisplay.class).stream().map(TextDisplay::getContent).toList());
     }
 
     @Test
-    void someoneElseCannotAnswerFromADm() {
-        listener.onButtonInteraction(press("reject", null, null, SOMEONE_ELSE));
+    void theListShowsLinkAndRejectForWaitingOnesAndUndoForUndoableLinks() {
+        var open = new HubNameChanges.Result<>(List.of(new HubNameChanges.Change(4, "Old", "New", "likely", "fits", "open", false)), null);
+        var linked = new HubNameChanges.Result<>(List.of(
+                new HubNameChanges.Change(3, "A", "B", "sure", "", "linked", true),
+                new HubNameChanges.Change(2, "C", "D", "sure", "", "linked", false)), null);
 
-        verify(renameService, never()).reject(anyLong(), anyLong());
-        verify(roleSync, never()).syncLeftClan(any(), anyLong());
+        Container card = RsnRenameInteractionListener.card(open, linked, null);
+
+        assertEquals(List.of("namechg_link:4", "namechg_reject:4", "namechg_undo:3"), buttons(card), "a final link has no Undo");
+    }
+
+    @Test
+    void aHubProblemIsShownInPlainWords() {
+        Container card = RsnRenameInteractionListener.card(new HubNameChanges.Result<>(null, "RuneClans didn't answer."), new HubNameChanges.Result<>(null, "x"), null);
+
+        assertTrue(text(card).contains("RuneClans didn't answer."));
+        assertEquals(List.of(), buttons(card));
+    }
+
+    @Test
+    void theListNeverHoldsMoreThanEightChanges() {
+        List<HubNameChanges.Change> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 20; i++) many.add(new HubNameChanges.Change(i, "O" + i, "N" + i, "possible", "", "open", false));
+
+        Container card = RsnRenameInteractionListener.card(new HubNameChanges.Result<>(many, null), new HubNameChanges.Result<>(List.of(), null), null);
+
+        assertEquals(RsnRenameInteractionListener.SHOWN * 2, buttons(card).size());
+        assertTrue(card.getComponents().size() + buttons(card).size() + 1 <= 40, "inside Discord's 40 components a message");
     }
 }

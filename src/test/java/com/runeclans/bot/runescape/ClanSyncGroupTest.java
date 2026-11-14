@@ -50,7 +50,7 @@ class ClanSyncGroupTest {
         when(clanMembers.getAll(1L, true)).thenReturn(List.of(row(1L, "A"), row(1L, "B")));
         when(clanMembers.getAll(2L, true)).thenReturn(List.of(row(2L, "A"), row(2L, "B")));
 
-        service = new ClanSyncService(apiClient, clanMembers, mock(RsnRenameService.class), settings,
+        service = new ClanSyncService(apiClient, clanMembers, settings,
                 mock(TrackingEventRouter.class), mock(WeeklyDigestRepository.class), mock(TrackingIconCatalog.class),
                 roleSync = mock(VerificationRoleSyncService.class), links = mock(PlayerLinkService.class));
     }
@@ -181,8 +181,7 @@ class ClanSyncGroupTest {
     void aBotlessSiteGetsItsOwnRosterRowsFromTheSharedFetchWithNothingPostedInDiscord() {
         botlessClan(20L, "Younglings");
         TrackingEventRouter router = mock(TrackingEventRouter.class);
-        RsnRenameService renames = mock(RsnRenameService.class);
-        service = new ClanSyncService(apiClient, clanMembers, renames, settings, router, mock(WeeklyDigestRepository.class),
+        service = new ClanSyncService(apiClient, clanMembers, settings, router, mock(WeeklyDigestRepository.class),
                 mock(TrackingIconCatalog.class), mock(VerificationRoleSyncService.class), mock(PlayerLinkService.class));
         when(clanMembers.getAll(20L, true)).thenReturn(List.of(row(20L, "A"), row(20L, "Gone")));
 
@@ -194,8 +193,6 @@ class ClanSyncGroupTest {
         assertEquals(2, results.get(20L).newMembers(), "B and New were not on that site's roster yet");
         assertEquals(1, results.get(20L).departedMembers());
         verify(router, times(1)).dispatchAll(eq(one), any()); // only the bot's own server gets join/leave posts
-        verify(renames, times(1)).detectAndNotify(eq(one), any(), any(), any(), any(), any()); // and only it is checked for renames
-        org.mockito.Mockito.verifyNoMoreInteractions(renames);
     }
 
     @Test

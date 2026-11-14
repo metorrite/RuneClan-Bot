@@ -275,6 +275,22 @@ public class RuneScapeDatabaseInitializer {
                 ON younglings.rsn_rename_candidate (guild_id, status);
                 """,
 
+                // T-1160: the hub spots and links name changes now; this remembers each linked change the bot followed (by the hub's change
+                // id) and what it moved (journal, JSON), so a repeated feed entry does nothing and an undo puts back exactly that. See
+                // HubNameChangeStore.
+                """
+                CREATE TABLE IF NOT EXISTS younglings.hub_name_change_applied (
+                    change_id BIGINT PRIMARY KEY,
+                    from_rsn TEXT NOT NULL,
+                    to_rsn TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    guild_ids TEXT NOT NULL DEFAULT '',
+                    journal TEXT NOT NULL DEFAULT '[]',
+                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    undone_at TIMESTAMPTZ NULL
+                );
+                """,
+
                 // Every join/leave ClanSyncService's daily roster diff detects, recorded permanently
                 // rather than only ever announced once in real time — this is what the weekly digest
                 // (WeeklyDigestScheduler/WeeklyDigestRepository) queries by date range. event_type is

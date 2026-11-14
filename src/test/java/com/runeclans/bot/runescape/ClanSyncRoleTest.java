@@ -30,7 +30,6 @@ class ClanSyncRoleTest {
 
     private RuneScapeApiClient apiClient;
     private ClanMemberRepository clanMembers;
-    private RsnRenameService renameService;
     private VerificationRoleSyncService roleSync;
     private PlayerLinkService linkService;
     private ClanSyncService service;
@@ -40,7 +39,6 @@ class ClanSyncRoleTest {
     void setUp() {
         apiClient = mock(RuneScapeApiClient.class);
         clanMembers = mock(ClanMemberRepository.class);
-        renameService = mock(RsnRenameService.class);
         roleSync = mock(VerificationRoleSyncService.class);
         linkService = mock(PlayerLinkService.class);
         guild = mock(Guild.class);
@@ -49,7 +47,7 @@ class ClanSyncRoleTest {
         GuildSettingsService settings = mock(GuildSettingsService.class);
         when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Younglings", null, null, null, 2L, 1L, 1L, null, true, "Younglings", null, null));
 
-        service = new ClanSyncService(apiClient, clanMembers, renameService, settings,
+        service = new ClanSyncService(apiClient, clanMembers, settings,
                 mock(TrackingEventRouter.class), mock(WeeklyDigestRepository.class),
                 mock(TrackingIconCatalog.class), roleSync, linkService);
     }
@@ -106,26 +104,14 @@ class ClanSyncRoleTest {
     }
 
     @Test
-    void aVanishedNameThatMayBeARenameIsLeftAloneUntilAnAdminDecides() {
+    void aVanishedNameIsALeaveEvenWhenANewNameAppearedTheHubLinksRenames() {
+        // T-1160: the bot no longer guesses renames; if the hub later links Gone -> Renamed, HubNameChanges gives the roles back
         roster(List.of("Old", "Gone"), List.of("Old", "Renamed"));
         link("Gone", 7L);
-        link("Renamed", 8L);
-        when(renameService.detectAndNotify(any(), any(), any(), any(), any(), any())).thenReturn(Set.of("gone"));
 
         service.refreshRosterIfStale(guild);
 
-        verify(roleSync, never()).syncLeftClan(any(), anyLong());
-    }
-
-    @Test
-    void ifRenameDetectionFailsNobodyIsDemoted() {
-        roster(List.of("Old", "Gone"), List.of("Old", "Renamed"));
-        link("Gone", 7L);
-        when(renameService.detectAndNotify(any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("boom"));
-
-        service.refreshRosterIfStale(guild);
-
-        verify(roleSync, never()).syncLeftClan(any(), anyLong());
+        verify(roleSync).syncLeftClan(guild, 7L);
     }
 
     @Test
