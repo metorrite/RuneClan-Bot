@@ -30,9 +30,9 @@ class ClanSyncRoleTest {
 
     private RuneScapeApiClient apiClient;
     private ClanMemberRepository clanMembers;
-    private RsnRenameService renameService;
     private VerificationRoleSyncService roleSync;
     private PlayerLinkService linkService;
+    private HubNameChangeReads nameChanges;
     private ClanSyncService service;
     private Guild guild;
 
@@ -40,18 +40,18 @@ class ClanSyncRoleTest {
     void setUp() {
         apiClient = mock(RuneScapeApiClient.class);
         clanMembers = mock(ClanMemberRepository.class);
-        renameService = mock(RsnRenameService.class);
         roleSync = mock(VerificationRoleSyncService.class);
         linkService = mock(PlayerLinkService.class);
+        nameChanges = mock(HubNameChangeReads.class);
         guild = mock(Guild.class);
         when(guild.getIdLong()).thenReturn(GUILD);
 
         GuildSettingsService settings = mock(GuildSettingsService.class);
         when(settings.getEffective(GUILD)).thenReturn(new GuildSettings(GUILD, "Younglings", null, null, null, 2L, 1L, 1L, null, true, "Younglings", null, null));
 
-        service = new ClanSyncService(apiClient, clanMembers, renameService, settings,
+        service = new ClanSyncService(apiClient, clanMembers, settings,
                 mock(TrackingEventRouter.class), mock(WeeklyDigestRepository.class),
-                mock(TrackingIconCatalog.class), roleSync, linkService);
+                mock(TrackingIconCatalog.class), roleSync, linkService, nameChanges);
     }
 
     private static ClanMemberRepository.ClanMemberRow row(String rsn) {
@@ -106,22 +106,34 @@ class ClanSyncRoleTest {
     }
 
     @Test
-    void aVanishedNameThatMayBeARenameIsLeftAloneUntilAnAdminDecides() {
+    void aVanishedNameIsALeaveEvenWhenANewNameAppearedTheHubLinksRenames() {
+        // T-1160: the bot no longer guesses renames; if the hub later links Gone -> Renamed, HubNameChanges gives the roles back
         roster(List.of("Old", "Gone"), List.of("Old", "Renamed"));
         link("Gone", 7L);
-        link("Renamed", 8L);
-        when(renameService.detectAndNotify(any(), any(), any(), any(), any(), any())).thenReturn(Set.of("gone"));
 
         service.refreshRosterIfStale(guild);
 
-        verify(roleSync, never()).syncLeftClan(any(), anyLong());
+        verify(roleSync).syncLeftClan(guild, 7L);
     }
 
     @Test
-    void ifRenameDetectionFailsNobodyIsDemoted() {
+    void aVanishedNameWithAChangeWaitingOnTheHubKeepsItsRolesUntilAnAdminDecides() {
+        roster(List.of("Old", "Gone", "Left"), List.of("Old", "Renamed"));
+        link("Gone", 7L);
+        link("Left", 8L);
+        when(nameChanges.waitingOldNames("Younglings")).thenReturn(Set.of("gone"));
+
+        service.refreshRosterIfStale(guild);
+
+        verify(roleSync, never()).syncLeftClan(guild, 7L);
+        verify(roleSync).syncLeftClan(guild, 8L);
+    }
+
+    @Test
+    void whenTheHubCantSayWhichNamesWaitNobodyIsDemotedThisTime() {
         roster(List.of("Old", "Gone"), List.of("Old", "Renamed"));
         link("Gone", 7L);
-        when(renameService.detectAndNotify(any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("boom"));
+        when(nameChanges.waitingOldNames("Younglings")).thenThrow(new HubNameChangeReads.Unanswered("down"));
 
         service.refreshRosterIfStale(guild);
 

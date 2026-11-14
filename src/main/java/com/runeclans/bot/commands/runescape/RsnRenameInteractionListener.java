@@ -1,106 +1,146 @@
 package com.runeclans.bot.commands.runescape;
 
-import com.runeclans.bot.discord.Shards;
 import com.runeclans.bot.discord.Containers;
-import com.runeclans.bot.i18n.Text;
 import com.runeclans.bot.permission.AdminRoleFilter;
-import com.runeclans.bot.runescape.PlayerLink;
-import com.runeclans.bot.runescape.PlayerLinkService;
-import com.runeclans.bot.runescape.RsnRenameRepository;
-import com.runeclans.bot.runescape.RsnRenameService;
-import com.runeclans.bot.runescape.VerificationRoleSyncService;
+import com.runeclans.bot.runescape.HubNameChanges;
+import com.runeclans.bot.util.BotScheduler;
 import io.github.freya022.botcommands.api.core.service.annotations.BService;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.buttons.Button;
+import net.dv8tion.jda.api.components.container.Container;
+import net.dv8tion.jda.api.components.container.ContainerChildComponent;
+import net.dv8tion.jda.api.components.separator.Separator;
+import net.dv8tion.jda.api.components.textdisplay.TextDisplay;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.InteractionHook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
+
 /**
- * Confirm/Reject buttons for a possible rename {@link RsnRenameService} detected. They arrive on both
- * the admin alert channel message and the linked player's own DM (if one was sent), so who may press
- * them depends on where the press came from (see {@link #mayResolve}): in a server, only Support-tier
- * staff of the server the candidate belongs to; in a DM, only the player linked to the old name.
+ * Name changes in Discord (T-1160): the admin panel's <b>Name Changes</b> button lists the RuneClans hub's name changes for the server's clan,
+ * the ones waiting for an admin (Link / Reject) and the recent links that can still be undone (Undo). Every press calls the hub's routes, the
+ * same ones the website's Site Admin uses, as {@code bot:<discord user id>}; the hub then tells the bot (and the website) through its feed.
+ * Only Support-tier staff of the server may press them.
+ * <p>
+ * The old "Possible RSN Rename" cards the bot posted before the hub took over still carry Confirm / Reject buttons; a press on one now points
+ * to Name Changes, since the bot no longer decides renames itself.
  */
 @BService
 public class RsnRenameInteractionListener extends ListenerAdapter {
     private static final Logger log = LoggerFactory.getLogger(RsnRenameInteractionListener.class);
+    static final String LIST = "namechg_list";
+    static final String LINK = "namechg_link";
+    static final String REJECT = "namechg_reject";
+    static final String UNDO = "namechg_undo";
+    /** Changes shown at once (each is a text and a row of buttons; a message holds at most 40 components). */
+    static final int SHOWN = 8;
 
-    private final RsnRenameService renameService;
-    private final PlayerLinkService linkService;
-    private final VerificationRoleSyncService roleSyncService;
+    private final HubNameChanges nameChanges;
     private final AdminRoleFilter adminRoleFilter;
+    private final ScheduledExecutorService lane = BotScheduler.lane("name-change-buttons");
 
-    public RsnRenameInteractionListener(RsnRenameService renameService, PlayerLinkService linkService,
-                                        VerificationRoleSyncService roleSyncService, AdminRoleFilter adminRoleFilter) {
-        this.renameService = renameService;
-        this.linkService = linkService;
-        this.roleSyncService = roleSyncService;
+    public RsnRenameInteractionListener(HubNameChanges nameChanges, AdminRoleFilter adminRoleFilter) {
+        this.nameChanges = nameChanges;
         this.adminRoleFilter = adminRoleFilter;
-    }
-
-    /**
-     * A press in a server counts only from that candidate's own server and from Support-tier staff. A press
-     * in a DM counts only from the player the old name is linked to (the DM the service sends them).
-     */
-    private boolean mayResolve(ButtonInteractionEvent event, RsnRenameRepository.RenameCandidate candidate) {
-        Guild guild = event.getGuild();
-        if (guild != null) {
-            Member member = event.getMember();
-            return guild.getIdLong() == candidate.guildId() && member != null && adminRoleFilter.isSupportTier(guild, member);
-        }
-        PlayerLink link = linkService.getLinkForRsn(candidate.guildId(), candidate.oldRsn());
-        return link != null && link.discordUserId() == event.getUser().getIdLong();
     }
 
     @Override
     public void onButtonInteraction(ButtonInteractionEvent event) {
         String id = event.getComponentId();
-        boolean isConfirm = id.startsWith("rsnrename_confirm:");
-        boolean isReject = id.startsWith("rsnrename_reject:");
-        if (!isConfirm && !isReject) return;
+        if (id.startsWith("rsnrename_confirm:") || id.startsWith("rsnrename_reject:")) {
+            Containers.replyEphemeral(event, Containers.INFO, "Name changes are decided on RuneClans now. Open **Name Changes** in the admin "
+                    + "panel (`/rsadmin`) or the clan website's Site Admin to link or reject it.");
+            return;
+        }
+        String action = id.split(":", 2)[0];
+        if (!List.of(LIST, LINK, REJECT, UNDO).contains(action)) return;
 
+        Guild guild = event.getGuild();
+        Member member = event.getMember();
+        if (guild == null || member == null || !adminRoleFilter.isSupportTier(guild, member)) {
+            Containers.replyEphemeral(event, Containers.WARNING, "Only staff can do this.");
+            return;
+        }
+        long guildId = guild.getIdLong();
+        long actor = event.getUser().getIdLong();
         try {
-            long candidateId = Long.parseLong(id.split(":", 2)[1]);
-
-            RsnRenameRepository.RenameCandidate candidate = renameService.getCandidate(candidateId);
-            if (candidate == null) {
-                Containers.edit(event, Containers.WARNING, Text.of(event, "runescape.this_rename_report_no_longer_exists"));
+            if (action.equals(LIST)) {
+                event.deferReply(true).queue(hook -> lane.execute(() -> show(hook, guildId, null)));
                 return;
             }
-            if (!mayResolve(event, candidate)) {
-                Containers.replyEphemeral(event, Containers.WARNING, Text.of(event, "runescape.only_staff_can_do_this"));
-                return;
-            }
-            if (!"PENDING".equals(candidate.status())) {
-                Containers.edit(event, Containers.INFO, Text.of(event, "runescape.already_handled_this_was_resolved_as", candidate.status()));
-                return;
-            }
-
-            boolean ok = isConfirm
-                    ? renameService.confirm(candidateId, event.getUser().getIdLong())
-                    : renameService.reject(candidateId, event.getUser().getIdLong());
-
-            if (!ok) {
-                Containers.edit(event, Containers.WARNING, Text.of(event, "runescape.couldn_t_process_this_it_may"));
-                return;
-            }
-
-            // The roster sync left this player's roles alone while the rename was open. Now that it's said to be
-            // somebody else, the old name really has left the clan, so the player goes back to Guest.
-            if (!isConfirm) {
-                Guild guild = Shards.guild(event.getJDA(), candidate.guildId());
-                PlayerLink link = linkService.getLinkForRsn(candidate.guildId(), candidate.oldRsn());
-                if (guild != null && link != null) roleSyncService.syncLeftClan(guild, link.discordUserId());
-            }
-
-            Containers.edit(event, isConfirm ? Containers.SUCCESS : Containers.DANGER,
-                    isConfirm ? Text.of(event, "runescape.confirmed_the_linked_account_if_any", candidate.oldRsn(), candidate.newRsn()) : Text.of(event, "runescape.rejected_and_will_be_treated_as", candidate.oldRsn(), candidate.newRsn()));
-
-        } catch (Exception e) {
-            log.error("Unhandled exception in rsnrename button interaction '{}'", id, e);
+            long changeId = Long.parseLong(id.split(":", 2)[1]);
+            event.deferEdit().queue(hook -> lane.execute(() -> {
+                HubNameChanges.Result<HubNameChanges.Change> done = switch (action) {
+                    case LINK -> nameChanges.decide(guildId, changeId, "link", actor);
+                    case REJECT -> nameChanges.decide(guildId, changeId, "reject", actor);
+                    default -> nameChanges.undo(guildId, changeId, actor);
+                };
+                if (done.ok() && action.equals(REJECT)) nameChanges.afterReject(guild, done.value()); // the old name really left
+                show(hook, guildId, done.ok() ? outcome(action, done.value()) : "⚠️ " + done.problem());
+            }));
+        } catch (RuntimeException e) {
+            log.error("Unhandled exception in name change button '{}'", id, e);
             Containers.replyError(event);
         }
+    }
+
+    private void show(InteractionHook hook, long guildId, String note) {
+        Container card;
+        try {
+            card = card(nameChanges.changes(guildId, "open"), nameChanges.changes(guildId, "linked"), note);
+        } catch (RuntimeException e) {
+            log.warn("Reading the hub's name changes failed: {}", e.toString());
+            card = Containers.card(Containers.WARNING, TextDisplay.of("RuneClans didn't answer. Try again in a minute."));
+        }
+        hook.editOriginalComponents(List.of(card)).useComponentsV2(true).setAllowedMentions(EnumSet.noneOf(Message.MentionType.class))
+                .queue(ok -> { }, error -> log.debug("Couldn't show the name changes: {}", error.toString()));
+    }
+
+    static String outcome(String action, HubNameChanges.Change c) {
+        return switch (action) {
+            case LINK -> "✅ Linked: **" + c.from() + "** is now **" + c.to() + "**. Everything follows the new name.";
+            case REJECT -> "Rejected: **" + c.from() + "** and **" + c.to() + "** stay two players.";
+            default -> "↩️ Undone: **" + c.to() + "** is **" + c.from() + "** again.";
+        };
+    }
+
+    /** The list: waiting changes with Link / Reject, then links that can still be undone with Undo. */
+    static Container card(HubNameChanges.Result<List<HubNameChanges.Change>> open, HubNameChanges.Result<List<HubNameChanges.Change>> linked, String note) {
+        List<ContainerChildComponent> children = new ArrayList<>();
+        children.add(TextDisplay.of("### Name Changes"));
+        if (note != null) children.add(TextDisplay.of(note));
+        if (!open.ok()) {
+            children.add(TextDisplay.of(open.problem()));
+            return Containers.card(Containers.WARNING, children);
+        }
+        int shown = 0;
+        children.add(TextDisplay.of("**Waiting for an admin**"));
+        if (open.value().isEmpty()) children.add(TextDisplay.of("-# Nothing waiting. RuneClans links the sure ones by itself."));
+        for (HubNameChanges.Change c : open.value()) {
+            if (shown++ >= SHOWN) break;
+            children.add(TextDisplay.of("**" + c.from() + "** → **" + c.to() + "** (" + c.confidence() + ")\n-# " + c.basis()));
+            children.add(ActionRow.of(Button.success(LINK + ":" + c.id(), "Link"), Button.danger(REJECT + ":" + c.id(), "Reject")));
+        }
+        List<HubNameChanges.Change> undoable = linked.ok() ? linked.value().stream().filter(HubNameChanges.Change::canUndo).toList() : List.of();
+        if (!undoable.isEmpty() && shown < SHOWN) {
+            children.add(Separator.createDivider(Separator.Spacing.SMALL));
+            children.add(TextDisplay.of("**Linked (can be undone for 30 days)**"));
+            for (HubNameChanges.Change c : undoable) {
+                if (shown++ >= SHOWN) break;
+                children.add(TextDisplay.of("**" + c.from() + "** → **" + c.to() + "**"));
+                children.add(ActionRow.of(Button.secondary(UNDO + ":" + c.id(), "Undo")));
+            }
+        }
+        children.add(TextDisplay.of("-# The same list is on the clan website under Site Admin."));
+        return Containers.card(Containers.INFO, children);
     }
 }

@@ -35,13 +35,13 @@ public class ClanSyncService {
 
     private final RuneScapeApiClient apiClient;
     private final ClanMemberRepository clanMemberRepository;
-    private final RsnRenameService renameService;
     private final GuildSettingsService guildSettingsService;
     private final TrackingEventRouter trackingEventRouter;
     private final WeeklyDigestRepository weeklyDigestRepository;
     private final TrackingIconCatalog trackingIconCatalog;
     private final VerificationRoleSyncService roleSyncService;
     private final PlayerLinkService linkService;
+    private final HubNameChangeReads nameChanges;
 
     /** Held while a refresh reads the stored roster, rewrites it and announces the difference. */
     private final Object rosterLock = new Object();
@@ -52,20 +52,19 @@ public class ClanSyncService {
     private static final int MIN_DEPARTURE_CAP = 5;
 
     public ClanSyncService(RuneScapeApiClient apiClient, ClanMemberRepository clanMemberRepository,
-                            RsnRenameService renameService,
                             GuildSettingsService guildSettingsService,
                             TrackingEventRouter trackingEventRouter, WeeklyDigestRepository weeklyDigestRepository,
                             TrackingIconCatalog trackingIconCatalog, VerificationRoleSyncService roleSyncService,
-                            PlayerLinkService linkService) {
+                            PlayerLinkService linkService, HubNameChangeReads nameChanges) {
         this.apiClient = apiClient;
         this.clanMemberRepository = clanMemberRepository;
-        this.renameService = renameService;
         this.guildSettingsService = guildSettingsService;
         this.trackingEventRouter = trackingEventRouter;
         this.weeklyDigestRepository = weeklyDigestRepository;
         this.trackingIconCatalog = trackingIconCatalog;
         this.roleSyncService = roleSyncService;
         this.linkService = linkService;
+        this.nameChanges = nameChanges;
     }
 
     public record SyncResult(int rosterSize, int newMembers, int departedMembers, int polled, int pollFailed) {}
@@ -95,9 +94,8 @@ public class ClanSyncService {
      * as inactive). The hub keeps every listed member's stats current, so nothing is polled here and every listed
      * member counts as up to date in the result.
      * <p>
-     * Also runs rename detection ({@link RsnRenameService}) against this cycle's departed/new sets
-     * — takes a {@link Guild}, not just a guild ID, since a detected rename may need to DM the
-     * linked player or post to the admin alert channel. Returns an all-zero {@link SyncResult} if
+     * Name changes are not spotted here: the RuneClans hub spots and links them, and {@link HubNameChanges} moves the bot's rows when it
+     * does (T-1160). Returns an all-zero {@link SyncResult} if
      * this guild has no clan name configured yet (via {@code /configure}) — callers should check
      * {@link #getClanName} first to tell that apart from "fetch failed" with a clearer message.
      */
@@ -114,7 +112,7 @@ public class ClanSyncService {
 
     /**
      * {@link #syncAndPoll} for every server that has set up the same clan, doing the shared work once: the clan list is fetched once, every roster
-     * player is polled once, and the result is then applied to each server on its own (roster rows, join/leave announcements, rename detection,
+     * player is polled once, and the result is then applied to each server on its own (roster rows, join/leave announcements,
      * role sync), so each server ends up exactly as if it had synced alone. A server with no clan configured, or whose clan is not the first
      * server's, is skipped. A server that fails is logged and does not stop the others. The answer holds one result per server that was synced.
      */
@@ -125,7 +123,7 @@ public class ClanSyncService {
     /**
      * {@link #syncAndPollGroup(List)} with bot-less sites of the same clan too ({@code botlessGuildIds}: servers the bot isn't in whose clan
      * website shows this clan). Their roster rows, join dates and roster events are stored by server id like any other server's, so their site
-     * shows the clan's stats; nothing is posted or changed in Discord for them (no join/leave posts, rename checks or roles), since the bot isn't
+     * shows the clan's stats; nothing is posted or changed in Discord for them (no join/leave posts or roles), since the bot isn't
      * there. The clan is still fetched and polled once for the whole group.
      */
     public Map<Long, SyncResult> syncAndPollGroup(List<Guild> guilds, List<Long> botlessGuildIds) {
@@ -161,12 +159,10 @@ public class ClanSyncService {
 
         Map<Guild, RosterChange> changes = new java.util.LinkedHashMap<>();
         Map<Long, RosterChange> botlessChanges = new java.util.LinkedHashMap<>();
-        Set<String> allNewLower = new HashSet<>();
         for (Guild guild : members) {
             try {
                 RosterChange change = refreshRoster(guild, roster);
                 changes.put(guild, change);
-                allNewLower.addAll(change.newLower());
             } catch (Exception e) {
                 log.error("Clan roster refresh failed for guild {}", guild.getIdLong(), e);
             }
@@ -180,18 +176,13 @@ public class ClanSyncService {
         }
         if (changes.isEmpty() && botlessChanges.isEmpty()) return results;
 
-        // Only kept for names that just appeared (in any of the servers) — the rename check is the only thing
-        // that needs the full profile result, not just pass/fail, and there's no reason to hold onto
-        // every other roster member's full skills/activities in memory once its snapshot is saved.
-        Map<String, ProfileResult> newMemberResults = new HashMap<>();
-        PollTally tally = pollRsns(roster.stream().map(RuneScapeApiClient.ClanMember::rsn).toList(), allNewLower, newMemberResults);
+        PollTally tally = pollRsns(roster.stream().map(RuneScapeApiClient.ClanMember::rsn).toList());
 
         for (var entry : changes.entrySet()) {
             Guild guild = entry.getKey();
             RosterChange change = entry.getValue();
             try {
-                Set<String> maybeRenamed = detectRenames(guild, change, newMemberResults);
-                if (!background || !AutoPostRouter.skipSweep("clan sync roles")) applyMembershipRoles(guild, change, maybeRenamed);
+                if (!background || !AutoPostRouter.skipSweep("clan sync roles")) applyMembershipRoles(guild, change);
                 log.info("Clan sync for '{}' (guild {}) finished: {} in roster, {} new, {} departed, {}/{} up to date.",
                         clanName, guild.getIdLong(), roster.size(), change.newLower().size(), change.departedLower().size(), tally.polled(), roster.size());
                 results.put(guild.getIdLong(), new SyncResult(roster.size(), change.newLower().size(), change.departedLower().size(), tally.polled(), tally.pollFailed()));
@@ -297,16 +288,12 @@ public class ClanSyncService {
     }
 
     /**
-     * Pairs this refresh's vanished names with its appeared ones as possible renames. Returns the vanished
-     * names it couldn't rule out (see {@link RsnRenameService#detectAndNotify}); if the check itself fails,
-     * that is every vanished name, so nobody is demoted on the strength of a roster diff nobody could vet.
+     * Runs {@code work} while no roster refresh is reading or rewriting a roster, so a name change the hub linked (T-1160) and a refresh
+     * never interleave (a refresh in between would announce the old name leaving and the new one joining).
      */
-    private Set<String> detectRenames(Guild guild, RosterChange change, Map<String, ProfileResult> newMemberResults) {
-        try {
-            return renameService.detectAndNotify(guild, change.before(), change.roster(), change.departedLower(), change.newLower(), newMemberResults);
-        } catch (Exception e) {
-            log.error("Rename detection failed during clan sync for guild {}", guild.getIdLong(), e);
-            return change.departedLower();
+    public <T> T withRosterLock(java.util.function.Supplier<T> work) {
+        synchronized (rosterLock) {
+            return work.get();
         }
     }
 
@@ -316,9 +303,6 @@ public class ClanSyncService {
      * — and, if their name (or anyone else's) has just appeared, gives that linked player their Member role
      * straight away instead of at the next daily sync. Guild-wide, at most one fetch a minute, so a run of
      * people pressing Update doesn't turn into a run of requests to Jagex; within that minute it does nothing.
-     * <p>
-     * Only when a name has both vanished and appeared does it poll anything (just the appeared names), because
-     * rename detection needs their profiles to tell a rename from a leave and a join.
      */
     public QuickRefresh refreshRosterIfStale(Guild guild) {
         long guildId = guild.getIdLong();
@@ -331,26 +315,20 @@ public class ClanSyncService {
         RosterChange change = refreshRoster(guild, clanName);
         if (change == null) return QuickRefresh.SKIPPED;
 
-        Map<String, ProfileResult> newMemberResults = new HashMap<>();
-        if (!change.newLower().isEmpty() && !change.departedLower().isEmpty()) {
-            pollRsns(change.newNames(), change.newLower(), newMemberResults);
-        }
-        Set<String> maybeRenamed = detectRenames(guild, change, newMemberResults);
-
         log.info("Quick roster refresh for '{}' (guild {}): {} in roster, {} new, {} departed.",
                 clanName, guildId, change.roster().size(), change.newLower().size(), change.departedLower().size());
-        return new QuickRefresh(true, applyMembershipRoles(guild, change, maybeRenamed));
+        return new QuickRefresh(true, applyMembershipRoles(guild, change));
     }
 
     /**
      * Brings Discord roles in line with a roster refresh: a linked player whose RSN just joined gets Member,
      * one whose RSN just left goes back to Guest (unless another of their accounts is still in the clan).
-     * Skipped for a name that might be a rename — its player hasn't left, they've changed name, and an admin
-     * hasn't yet said so — and for departures altogether when an implausible share of the roster vanished at
+     * A departed name with a name change waiting for an admin on the hub keeps its roles (it was renamed, not lost); when the hub can't
+     * say, no departure is applied this time. Skipped for departures altogether when an implausible share of the roster vanished at
      * once, which is far likelier a bad response from Jagex than a real exodus. Returns the Discord users
      * whose joins were applied.
      */
-    private Set<Long> applyMembershipRoles(Guild guild, RosterChange change, Set<String> maybeRenamedLower) {
+    private Set<Long> applyMembershipRoles(Guild guild, RosterChange change) {
         long guildId = guild.getIdLong();
         Set<Long> joined = new HashSet<>();
 
@@ -371,15 +349,34 @@ public class ClanSyncService {
                     change.departedNames().size(), change.before().size(), guildId);
             return joined;
         }
+        Map<String, PlayerLink> leaving = new java.util.LinkedHashMap<>();
         for (String name : change.departedNames()) {
-            if (maybeRenamedLower.contains(name.toLowerCase())) continue;
             try {
                 PlayerLink link = linkService.getLinkForRsn(guildId, name);
-                if (link != null) roleSyncService.syncLeftClan(guild, link.discordUserId());
+                if (link != null) leaving.put(name, link);
+            } catch (Exception e) {
+                log.warn("Couldn't read the link of '{}' leaving the clan", name, e);
+            }
+        }
+        if (leaving.isEmpty()) return joined;
+        // T-1160: a name with a change waiting on the hub was renamed, not lost: its player keeps their roles until an admin decides
+        // (linked: HubNameChanges gives the new name the roles; rejected from Discord: the Name Changes button takes them off)
+        Set<String> waiting;
+        try {
+            waiting = nameChanges.waitingOldNames(getClanName(guildId));
+        } catch (RuntimeException e) {
+            log.warn("Couldn't read the hub's waiting name changes for guild {} ({}); leaving the roles of {} departed member(s) alone this time.",
+                    guildId, e.getMessage(), leaving.size());
+            return joined;
+        }
+        leaving.forEach((name, link) -> {
+            if (waiting.contains(name.toLowerCase(java.util.Locale.ROOT))) return;
+            try {
+                roleSyncService.syncLeftClan(guild, link.discordUserId());
             } catch (Exception e) {
                 log.warn("Couldn't update roles for '{}' leaving the clan", name, e);
             }
-        }
+        });
         return joined;
     }
 
@@ -392,7 +389,7 @@ public class ClanSyncService {
 
     /**
      * What the "send now" tools report for a server's clan: every currently-active roster member counts as polled, because the hub keeps
-     * them current on its own (the bot polls nothing). Doesn't touch the roster itself or run rename detection, that is
+     * them current on its own (the bot polls nothing). Doesn't touch the roster itself, that is
      * {@link #syncAndPoll}'s job, once a day.
      */
     public RosterPollResult pollActiveRosterOnly(long guildId, Duration window) {
@@ -402,13 +399,8 @@ public class ClanSyncService {
 
     private record PollTally(int polled, int pollFailed) {}
 
-    /**
-     * Shared by {@link #syncAndPoll} and {@link #refreshRosterIfStale}: the hub keeps every roster member current (T-851), so there is nothing
-     * to queue and every name counts as polled; the rename check reads the hub's snapshots itself, so a name that just appeared gets an
-     * "unavailable" result here.
-     */
-    private PollTally pollRsns(List<String> rsns, Set<String> newLower, Map<String, ProfileResult> newMemberResultsOut) {
-        for (String rsn : rsns) if (newLower.contains(rsn.toLowerCase())) newMemberResultsOut.put(rsn.toLowerCase(), new ProfileResult.Unavailable());
+    /** {@link #syncAndPoll}'s tally: the hub keeps every roster member current (T-851), so there is nothing to queue and every name counts as polled. */
+    private PollTally pollRsns(List<String> rsns) {
         return new PollTally(rsns.size(), 0);
     }
 }
